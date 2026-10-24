@@ -1,0 +1,247 @@
+# Lanes and contracts (M0a)
+
+English digest of `docs/games/tu-tien/M0A_PLAN.md` §3–6 in the parent repo; the
+plan and the canon win when this file disagrees. Each lane writes only the
+paths it owns. Step 0 left a stub for every lane file with its exported
+signatures and a `TODO(<lane>)` body (most stubs throw); fill the bodies, keep
+the signatures (or report a change), add new files only inside your own paths.
+Numbers come from `src/content/rules.ts` (each key names its canon section),
+never from literals in systems.
+
+## Order
+
+```text
+Step 0  scaffold, parent wiring check, data contract, every World field        (done 25/10)
+  ├─ Lane 1  1a: renderer, Projector, procedural crowd (for Lane 6)  →  1b: VAT, impostor, swords, VFX, walker-rig, bench, GPU matrix → HN0 verdict
+  ├─ Lane 2  core sim + local player ──┐
+  ├─ Lane 8  Tĩnh Tu trial (independent) │
+  │                                       ▼ once createWorld, step, emit run
+  ├─ Lane 3  Bàn Quyết, typing, learning
+  ├─ Lane 4  swords skills, combat, formation, mechanisms, economy
+  ├─ Lane 5  beasts, elites, boss, telegraphs
+  ├─ Lane 6  grey-box view, HUD, silent sound hooks (on Lane 1's renderer)
+  └─ Lane 7  bots, balance, golden, scenarios (harness from day one, gates at the end)
+Integration (step 0 owner) → M0a gate round → independent review → fix → close
+```
+
+Lanes 3–7 start on the stubs and wait only for Lane 2's `createWorld`, `step`,
+`emit`. The HN0 verdict blocks M0b art, not M0a gameplay; until VAT lands
+Lane 6 draws the crowd in `procedural` mode.
+
+## Owned paths
+
+| Lane | Owns |
+|---|---|
+| **Step 0 / Integration** | Repo scaffold (`package.json`, `pnpm-workspace.yaml`, `tsconfig.json`, `vitest.config.ts`, `vite.config.ts`, `kit.config.json`, `.gitignore`, `index.html`, `bench.html`, `tinh-tu.html`, `README.md`, `AGENTS.md`, `LANES.md`, `docs/README.md`), `src/main.ts`, `src/app/{app,loop,input-router,contracts,save,storage}.ts`, `tests/boundary.test.ts`, `tests/app/**`; `src/kit/**` only through the parent's kit sync. Wrote `src/content/{types,rules}.ts` and `docs/SYNC_DEBT.md`, handed to Lane 2 |
+| **1 Bench 3D (HN0)** | `src/view/{renderer,crowd,vat,impostor,swords,trails,hitfx,walker-rig}.ts`, `src/view/bench/**`, `src/content/model-contracts.ts`, `scripts/visual/scenarios/ic-bench.mjs` (self-contained, no `lib/**`), `scripts/models/**`, `tests/view/{renderer,crowd,vat,impostor,swords,hitfx,walker-rig}*.test.ts`; the verdict table of canon §20.4 |
+| **2 Core sim + local player** | `src/content/{types,rules}.ts` (from now on), `src/content/data/{stage-m0a,waves}.ts`, `src/sim/{fixed,hash,events,world,waves,spawn,director,pace,field}.ts`, `src/local/**`, `tests/content/**`, `tests/sim/core-*.test.ts`, `tests/local/**`, `docs/SYNC_DEBT.md` |
+| **3 Bàn Quyết, typing, learning** | `src/typing/**`, `src/sim/{words,cast}.ts`, `src/ui/{ban-quyet,learning-frame,ime-banner,learn-ahead,review-card,word-book}.ts`, `src/app/{learning,typing-pace,pace-card}.ts`, `tests/typing/**`, `tests/ui/{ban-quyet,learning}*.test.ts` |
+| **4 Skills, combat, formation, mechanisms, economy** | `src/sim/{combat,shares,skills,wards,chan-nguyen,formation,mechanisms,economy,shop,consumables}.ts`, `src/content/data/{school-kiem,mechanisms,consumables,economy}.ts`, `tests/sim/{combat,combat-kill-invariants,skills,wards,formation,mechanisms,economy,shop,consumables}*.test.ts` |
+| **5 Beasts, elites, boss, telegraphs** | `src/sim/{beasts,targeting,elites,posture,telegraph,boss,pressure}.ts`, `src/content/data/{beasts,elites,boss,telegraphs}.ts`, `tests/sim/{beasts,targeting,elites,posture,telegraph,telegraph-floor,boss,pressure}*.test.ts` |
+| **6 Grey-box view, HUD, sound hooks** | `src/view/{stage,ground,actors,player-view,telegraphs,fx,pickups,feedback-profile}.ts`, `src/ui/{hud,wave-card,shop-strip,shop-mode,results,menu,skin,screen-zones}.ts`, `src/ui/styles/**`, `src/audio/**`, `tests/ui/{hud,wave-card,shop,results,menu,screen-zones}*.test.ts`, `tests/view/{stage,actors,telegraphs,fx}*.test.ts`, `tests/audio/**` |
+| **7 Bots, balance, golden, scenarios** | `scripts/balance/**`, `tests/golden/**`, `tests/sim/bot-*.test.ts`, `scripts/visual/scenarios/ic-*.mjs` except `ic-bench.mjs` (incl. `ic-hitstop-keys.mjs`), `scripts/visual/scenarios/lib/**` |
+| **8 Tĩnh Tu trial** | `src/tinh-tu/**`, `tests/tinh-tu/**`, `scripts/tinh-tu/**`, `scripts/visual/scenarios/tt-*.mjs` |
+
+Nobody edits `src/kit/**`. There is no `scripts/visual/cdp-run.mjs`: use the
+kit's `src/kit/tools/cdp-run.mjs`.
+
+## Shared types: who owns them
+
+- `src/content/types.ts` declares **every** state field of `World` and of the
+  `local` layer (canon §23.3, PB-36), every command, event and content def.
+  Step 0 wrote it; **Lane 2 owns it from now on**, with `rules.ts`.
+- A lane that needs a new field in its **own** state (`WordsState` for Lane 3,
+  `SkillsState` for Lane 4, `TelegraphsState` for Lane 5, …) adds it by module
+  augmentation in its own file and reports it; Lane 2 folds it into types.ts:
+
+  ```ts
+  declare module "../content/types" {
+    interface WordsState { jamTicks: number }
+  }
+  ```
+
+  A field other lanes read, a new type or a changed type: declare it in your
+  own file, use it there, report it in your result. Never edit another lane's file.
+- `SimEvent` is the only channel out of the sim. A lane that needs a new event
+  writes `// WANT EVENT: …` in its own file and reports it.
+
+## Units and conventions (canon §7.1, M0A_PLAN §3.1)
+
+- Tick 60 Hz. **Data** (`rules.ts`, `data/*.ts`): ms (`…Ms`), mm (`…Mm`),
+  percent (`…Pct`), permille (`…Pm`), W × 100 (`w100`; `WaveDef.summonMaxW100`
+  is canon's `summonMaxW`). **State**: ticks, u, permille, whole HP; `w100`
+  turns into HP at load. No floats in hashed state.
+- Sim space: u, 1 m = 60 000 u (N mm/s = N u per tick). x east, z south, y up;
+  the Trận Tâm at the origin; gates A, B at (∓15 m; −18 m); sky route from
+  (±20 m; −18 m); the camera looks north from the south.
+- `origin` of a command: the player's position rounded to 100 mm = 6 000 u
+  (`rules.ts quantizeOrigin`, never −0).
+- Damage order and half-up rounding of canon §7.2 (`mulDiv` each step); the
+  share ledger adds effective damage only.
+- Randomness only from `world.rng.<stream>`: `spawn`, `combat`, `words`, `ai`,
+  `loot`, `props`. **No `crit` stream use** (canon D09). The deck builder draws
+  from its own stream of the match seed (`app.ts loadMatch`).
+- Pure groups (`src/sim`, `src/local`, `src/typing`, `src/content`,
+  `src/tinh-tu/sim`): no `three`, `window`, `document`, `Date`, `performance`,
+  storage, network, `Math.random`, trig, `pow`, `hypot`, `**`, also through
+  kit chains (import kit files directly, not the `kit/platform` barrel).
+  Directions by table, lengths by `isqrt`. Wall time (`nowMs`) comes in as an argument.
+- `hashWorld` walks the world except `HASH_SKIP` (`stage`, `header`, `field`,
+  `wall`, `events`); `hashLocal` walks `local` except `outbox` and `events`.
+  Create objects with fields in a fixed order. Replays write both every 600
+  ticks and at the end (canon §23.2).
+- Copied files: one line `// Source: games/<repo>/<path> @<commit> (adapted: …)`
+  and a row in `docs/SYNC_DEBT.md`.
+- Code comments English and short; docs and changelogs Vietnamese with
+  diacritics, one `docs/changelog/<date>-m0a-<lane>.md` per lane.
+
+## The world and the step (`src/sim/world.ts`, Lane 2)
+
+```ts
+createWorld(stage: StageDef, seed: number, header: ReplayHeader): World
+step(world: World, commands: readonly SimCommand[]): void       // one 60 Hz tick
+applyCommand(world, command): void
+runLog(header, log: ReplayEntry[], untilTick): { world, local } // canon §23.2
+allocBeast(world): BeastState; beastAt(world, { slot, serial }): BeastState | null
+emit(world, body)                                               // sim/events.ts
+```
+
+Step order (fixed): commands → `stepWords` → `stepWaves` → `stepSpawn` →
+`stepDirector` → `stepBeasts` → `stepCasts` → `stepSkills` → `stepWards` →
+`stepConsumables` → `stepAutoHits` → `stepMechanisms` → `stepBeastAttacks` →
+`stepBoss` → `stepPosture` → `stepFormation` → `stepEconomy` → cleanup (per
+dead beast: `words.onBeastGone`, `combat.onBeastKilled`,
+`economy.onBeastKilled`, `waves.onBeastGone`; then wave end, defeat) → tick + 1.
+
+Every system file exports `create<X>State(init: WorldInit)` for its part of the
+world and `step<X>(world)`.
+
+The `local` layer runs before each world tick: inputs → movement → last
+tick's strikes on itself (`ward` blocks → `ward-use`) → its own đan phù effects
+→ down → `auto`; its commands go into the next tick with `origin`. It reads
+the world's last tick through `world.events.lastTick()`. The replay records
+local inputs (`move-to`, `arrows`) and commands. Hit-stop slows the world,
+never the keys.
+
+## Contracts between systems
+
+| Call | Owner | Callers |
+|---|---|---|
+| `createWorld`, `step`, `applyCommand`, `hashWorld`, `hashLocal`, `runLog`, `emit`, `allocBeast`, `beastAt` | 2 `world.ts`, `hash.ts`, `events.ts` | every lane, bots |
+| `scheduleWave`, `spawnGroup`, `liveCount`, `liveRoom`, `onBeastGone`, `isWaveOver` (every group spawned and 0 alive) | 2 `waves.ts`, `spawn.ts` | 5 (Tru Đàn, Gọi Đàn only when `liveRoom` fits), cleanup |
+| `fieldStep(world, beast)`, `fieldDistance(world, gate, cell)` | 2 `field.ts` | 5 (movement, "nearest the heart"), 7 (route share Q) |
+| `paceFor(profile)`, `kForSeat(world, seat)`, `scaleTicks`, `applyPaceUpdate` | 2 `pace.ts` (kit `paceK`, `effectiveE`) | 5 (charge), 2 (spawn gaps), 4 (Chân Nguyên, Dưỡng × 1/k), step 0 (`loadMatch`) |
+| `createLocal(seat, stage, gPm)`, `stepLocal(local, world, inputs)`, `drainLocalCommands(local)`, `playerPos(local)` | 2 `local/**` | integration, 6, 7 |
+| `dealSlotWord`, `dealSeal`, `dealCleanse`, `releaseWord`, `isBanQuyetLive` | 3 `words.ts` | 4 (slot ready, node capture), 5 (elites, boss), integration (router) |
+| `emitCast(world, cast)` → `resolveCast(world, cast)` | 3 `cast.ts` → 4 `skills.ts` | 3 |
+| `createNewWordLedger(snapshot)`: `remaining(nowMs)`, `take(wordId, nowMs, channel)`, `snapshot()` (pure) | 3 `typing/new-word-ledger.ts` | step 0 (`loadMatch`, storage), 3, 8 |
+| `buildDeck(records, level, allowance, rng)` (cold start, floor 40) | 3 `typing/deck.ts` | step 0 (`loadMatch`), 7 |
+| `damageBeast(world, beast, amount, type, by)` | 4 `combat.ts` | 4, 5, mechanisms, đan phù |
+| `damageFormation`, `inBarrier`, `nodeState`, `occupyNode`, `pillarOnSegment`, `hitPillar`, `applyDown` | 4 `formation.ts` | 5, world (`down`) |
+| `wardAt(world, seat)`, `wardCrosses(world, seat, a, b)`, `createWard`, `useWard` | 4 `wards.ts` | 5 (half a Thiết Bối Xung, bots, nodes), `local` (own blocks) |
+| `addChanNguyen(world, seat, grade, isSeal)` (resolved only, × 1/k) | 4 `chan-nguyen.ts` | 3 |
+| `earn`, `spend`, `payWaveEnd`, `payLearning`, `payKill` | 4 `economy.ts` | 2 (wave end), 3 (Học trước, Thẻ Ôn), 4 |
+| `bucketAdd(world, source, amount)`, `shares(world)` | 4 `shares.ts` | 4, 7 |
+| `chooseTarget`, `nearestToHeart`, `densestPoint` (canon §10.1, §23.3 ties) | 5 `targeting.ts` | 5, 4 (ground skills), 2 (`local/auto.ts`) |
+| `postureHit(world, beast, delta, source)`, `isBroken` | 5 `posture.ts` | 3 (Ấn), 4 (skills), mechanisms |
+| `telegraph(world, def, source, from, to)`, `chargeTicks(def, preset, kPm)`, `T(preset, letters, channelMs)` | 5 `telegraph.ts` | 5, 7 (`ic-telegraphs`), CB5 |
+| `initBeast(world, beast, species, elite)`, `applyElite` | 5 `beasts.ts`, `elites.ts` | 2 (`spawn.ts`) |
+| `createRenderer(host, quality)`, `Projector`, `createCrowd(renderer, mode)`, `createSwords`, `createHitFx`, `createDamageNumbers`, `createInkSmoke`, `createWalker` | 1 `view/**` | 6 |
+| `Presenter { onEvents(events, world); frame(world, info); dispose() }`, `FrameInfo.local`, `CommandSink`, `LocalSink`, `Projector`, `ActionHandler` | step 0 `app/contracts.ts` | 1, 3, 6 |
+| `KeyPanel`, `ShopModePanel`, `createInputRouter` (order of canon §5.1, M0A_PLAN §6.9) | step 0 `app/input-router.ts` | 3 (learning panels), 6 (`shop-mode.ts`, menu) |
+| `loadKey`, `saveKey`, `migrate`, `loadSkill`, `gameStorage` for `.save`, `.skill`, `.newwords`, `.settings` | step 0 `app/storage.ts` | integration, 3, 8 |
+| `loadMatch`, `createReplayHeader`, `newWordAllowance`, `matchRulesHash` | step 0 `app/app.ts` | integration, 7 |
+
+- **Cast:** the last right letter in `words.ts` → `emitCast` (once per
+  `wordId`, `actionId` per seat) → Lane 4's `resolveCast` looks for a target.
+  None: `held` 3 s at no cooldown; then `fizzled`, the slot takes its next
+  word. Chân Nguyên, Dưỡng and practice points only for `resolved`.
+- **Ground skills:** the point is the `aim` of the last key; with no `aim` on
+  the field Lane 4 takes the densest cluster in range (ties: canon §23.3).
+- **Hộ thân:** Lane 4 creates a `ward` when an ô 3 Cast resolves; Lane 5 asks
+  `wardCrosses` at the strike tick of Thiết Bối Xung and of hits on bots and
+  nodes; `local` (Lane 2) reads wards from the world and sends `ward-use`.
+- **Đan phù:** Lane 4 checks counts, cooldown, Linh Sa, emits
+  `consumable{seat, kind}` and applies world effects; Lane 2
+  (`local/consumables.ts`) applies self effects.
+- **Learning:** the app calls the ledger's `take(wordId, Date.now(), channel)`
+  on `word-first-seen` and saves `.newwords` through `storage.ts`.
+
+## Commands (`SimCommand`, `src/content/types.ts`)
+
+`key{seat, letter 0–25, ms, origin, aim}` (`ms` wall clock, learning only, never
+hashed) · `backspace{seat}` · `release{seat}` · `soft-target{seat, beast | null}`
+· `auto{seat, beast, origin}` · `down{seat, origin}` · `ward-use{seat, wardId}`
+· `consumable{seat, slot 0–2, origin, aim}` · `buy{seat, item}` ·
+`place{seat, slot, mech}` · `upgrade{seat, slot}` · `sell{seat, slot}` ·
+`loadout{seat, guard, tamPhap}` · `start` · `continue` ·
+`learn-ahead{seat, wordId, correct}` · `review-card{seat, wordId, correct}` ·
+`pace-update{seat, kPm}`.
+
+Letter keys become `key` only while the Bàn Quyết is live (wave warning to
+wave end, boss phase; canon §6.1, D42); in prep, breaks and while down they
+go to the open panel or are dropped. Local-only inputs (replayed, never sent
+to the world): `move-to{point}`, `arrows{mask}` (up 1, down 2, left 4, right 8).
+
+## Events (`SimEvent`, drained once a frame by the app)
+
+| Event | Emitted by | Read by |
+|---|---|---|
+| `phase`, `wave-start`, `wave-end`, `victory`, `defeat` | waves, world | ui (wave card, Thu Hoạch), sound hooks |
+| `spawn`, `death` (cluster flags, feedback tier) | spawn, cleanup | crowd view, fx, Bàn Quyết (Ấn) |
+| `hit` (amount, type, bucket, source, grade, tier T0–T5) | combat | fx, damage numbers, sound hooks |
+| `cast` (`held`, `resolved`, `fizzled`; slot, `actionId`, `wordId`, `origin`) | cast | Bàn Quyết, fx, `local` (dash) |
+| `skill-fx` (volley, line, zone open/close, ultimate, auto) | skills | sword view, fx |
+| `telegraph` (`start`, `strike`, `cancel`; shape, answers, ticks) | telegraph | telegraph view, `local` (strikes), HUD |
+| `posture` (`change`, `break`, `recover`) | posture | Thế bar, fx |
+| `formation` (Trận Lực, node off/on, Linh Dịch) · `pillar` (`hit`, `crack`) | formation | HUD, view |
+| `mechanism` (`trigger`, `built`, `upgraded`, `sold`) | mechanisms, shop | view, shop, HUD |
+| `consumable{seat, kind}` | consumables (sim) | `local/consumables.ts`, view, HUD |
+| `ward` (`start`, `block`, `end`; `wardId`, `origin`, charges) | wards | `local`, view |
+| `linh-sa` | economy | HUD, motes |
+| `word-assigned`, `word-progress`, `word-complete`, `word-released`, `grade`, `word-first-seen` | words | Bàn Quyết, learning frame, `app/learning` |
+| `pace` · `pace-update` | director · pace | debug, reports, Bàn Quyết |
+| `rejected` | every command handler | ui (soft notice) |
+| `player-hit`, `player-down`, `player-up` | `local` (its own list) | HUD, player view |
+
+Beast positions: the view reads `world.beasts` each frame, no events (60 live
+at M0a; the path must hold 300 like the bench).
+
+## What step 0 gives each lane
+
+- **All lanes:** `pnpm check` green on the stubs; `tests/boundary.test.ts`;
+  every `World`/`LocalState` field, command, event and content def in
+  `types.ts`; every canon number in `rules.ts` (with `TT_TIERS`, `TT_BUDGETS`,
+  `REF_OUTPUT`, `CROWD_MODE`, `KEYS`, `quantizeOrigin`, `contentHash`).
+- **Lane 1 (1a first):** `bench.html` → `src/view/bench/main.ts` (an empty
+  frame now), `contracts.ts` `Projector`/`Quality`, `TT_TIERS` (4 keys,
+  StageTier shape), `TT_BUDGETS`, `TT_LIMITS`, `CROWD_MODE`, `CAMERA`,
+  `SIZES_PX_1080`; three 0.170.0 in its own chunk; stubs of every view file.
+- **Lane 2:** `types.ts` and `rules.ts` to own; `ReplayHeader`, `ReplayEntry`,
+  `LocalInput`, `LocalState`, `WorldInit`, `EventSink` (with `lastTick()`);
+  `HASH_SKIP` in the `world.ts` stub; `app.ts loadMatch` calls `paceFor(profile).kPm`.
+- **Lane 3:** `storage.ts` (`.newwords` read/write with the 20-minute prune,
+  `.skill` through `loadSkill`, `gameStorage` for the learning queue);
+  `NewWordsSnapshot`, `DeckWord`, `WordRecord`, `WordsState`, `CastsState`,
+  `LiveWord`, `DeckUse`; `SLOTS`, `LETTERS`, `SEAL_WORDS`, `CLEANSE_WORDS`,
+  `NEW_WORDS`, `DECK`, `GRADE`, `LENGTH_BY_E`; the router's `KeyPanel` for Học
+  trước and Thẻ Ôn; `loadMatch` wiring of `buildDeck` and the ledger.
+- **Lane 5:** `BeastDef`, `GeneralDef`, `BossDef`, `EliteTraitDef`,
+  `TelegraphDef` (with `sizeMm.reach/width` for the floor rule), `BeastState`
+  (posture, slows, hard control, howls, seal, telegraph), `TelegraphsState`,
+  `BossState`, `TargetRef`; `TELEGRAPH`, `POSTURE`, `ELITES`, `GENERAL`,
+  `BOSS`, `PRESSURE`, `BEAST_TIERS`, `PRESETS`.
+- **Lane 8:** `tinh-tu.html` → `src/tinh-tu/main.ts` (an empty frame now),
+  `src/tinh-tu/sim` in the pure group, `TINH_TU`, the ledger contract (Lane 3)
+  and `storage.ts` for `.newwords`; `Date.now()` only in its UI layer.
+
+## Integration (step 0 owner, after the lanes)
+
+`src/app/app.ts startApp`: speed card → prep → world, `local`, loop, router,
+every presenter. Frame order (Rồng LANES "Integration"): drain events →
+`learning.onEvents` → app flow (Thẻ Ôn, queue flush) → every presenter's
+`onEvents` → stage update (camera before DOM projection) → every presenter's
+`frame` → draw. The sim stands still while a learning panel is open, in the
+pause menu, under the focus overlay and in the 3-2-1 after a pause. URL flags:
+`?q=low|medium|high`, `?seed=`, `?preset=`, `?wpm=`, `?motion=`,
+`?prelearn=0`, `?speed=N` (dev only), `?debug=1` → `window.__ic`.
