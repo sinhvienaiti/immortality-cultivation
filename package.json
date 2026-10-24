@@ -1,0 +1,33 @@
+{
+  "name": "immortality-cultivation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tu Tiên Thủ Ải: hold the pass against beast tides; typed English words cast the cultivator's skills.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 3008 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 3008 --strictPort",
+    "test": "vitest run",
+    "check": "node src/kit/verify-kit.mjs && pnpm test && pnpm build",
+    "ic:balance": "tsx scripts/balance/run.ts",
+    "ic:golden:update": "tsx scripts/balance/golden.ts --update",
+    "ic:calibrate": "tsx scripts/balance/calibrate.ts",
+    "tt:bots": "tsx scripts/tinh-tu/bots.ts",
+    "visual": "node src/kit/tools/cdp-run.mjs"
+  },
+  "dependencies": {
+    "@fontsource/be-vietnam-pro": "^5.3.0",
+    "@fontsource/noto-sans": "^5.3.0",
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "@types/three": "0.170.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.2",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@11.21.0"
+}

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tu Tiên Thủ Ải: tu sĩ giữ ải trước thú triều, gõ khẩu quyết tiếng Anh để xuất chiêu." />
+    <title>Tu Tiên Thủ Ải</title>
+    <!-- No favicon file yet (no media in Git): an empty icon keeps the console free of a 404. -->
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <div id="ic-app" class="ic-app">
+      <!-- WebGL canvas host (src/view/**). -->
+      <div id="ic-canvas" class="ic-canvas" aria-hidden="true"></div>
+      <!-- DOM overlay: HUD, wave card, shop, learning frame, results (src/ui/**). -->
+      <div id="ic-overlay" class="ic-overlay"></div>
+      <!-- Bàn Quyết: the typing bar, outside the canvas (src/ui/ban-quyet.ts). -->
+      <div id="ic-quyet" class="ic-quyet"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
