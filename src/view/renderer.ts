@@ -14,7 +14,7 @@
 import * as THREE from "three";
 import { Stage3D, type StageLights } from "../kit/three/stage";
 import type { Projector, Quality, ScreenPoint } from "../app/contracts";
-import { FIELD, TT_TIERS } from "../content/rules";
+import { CAMERA, FIELD, TT_TIERS } from "../content/rules";
 
 export interface RenderInfo {
   readonly drawCalls: number;
@@ -68,11 +68,12 @@ export const FIELD_M = {
 } as const;
 
 /**
- * This round's pick inside canon §21.1's ranges (tilt 50–55°, FOV 25–30°):
- * 52° and 28°. `marginNdc` keeps a thin band round the field; `headroomM`
- * keeps a beast standing on the far edge inside the frame.
+ * Inside canon §21.1's ranges (tilt 50–55°, FOV 25–30°): the tilt is rules.ts
+ * CAMERA.defaultTiltDeg (55°, canon D48); FOV 28° is this round's pick.
+ * `marginNdc` keeps a thin band round the field; `headroomM` keeps a beast
+ * standing on the far edge inside the frame.
  */
-export const VIEW = { tiltDeg: 52, fovDeg: 28, marginNdc: 0.03, headroomM: 2.5, near: 1, far: 400 } as const;
+export const VIEW = { tiltDeg: CAMERA.defaultTiltDeg, fovDeg: 28, marginNdc: 0.03, headroomM: 2.5, near: 1, far: 400 } as const;
 
 export interface CameraFit {
   readonly tiltDeg: number;

@@ -52,7 +52,9 @@ describe("tier table (canon §20.2, PB-35)", () => {
 });
 
 describe("fixed 3/4 camera (canon §21.1)", () => {
-  it("picks a tilt and FOV inside the canon ranges", () => {
+  it("picks a tilt and FOV inside the canon ranges; the tilt is the D48 default", () => {
+    expect(CAMERA.defaultTiltDeg).toBe(55);
+    expect(VIEW.tiltDeg).toBe(CAMERA.defaultTiltDeg);
     expect(VIEW.tiltDeg).toBeGreaterThanOrEqual(CAMERA.tiltDeg[0]);
     expect(VIEW.tiltDeg).toBeLessThanOrEqual(CAMERA.tiltDeg[1]);
     expect(VIEW.fovDeg).toBeGreaterThanOrEqual(CAMERA.fovDeg[0]);

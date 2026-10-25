@@ -733,8 +733,17 @@ export const DEATH_TIER: Readonly<Record<BeastTier, FeedbackTier>> = { swarm: 1,
 /** canon §21.1: smallest on-screen sizes at 1080p, px. */
 export const SIZES_PX_1080 = { player: 64, swarm: 20, swarmCluster: 60, small: 36, medium: 48, general: 80, boss: 160 } as const;
 
-/** canon §21.1: fixed 3/4 camera (no rotate, no zoom at MVP). */
-export const CAMERA = { tiltDeg: [50, 55] as readonly [number, number], fovDeg: [25, 30] as readonly [number, number], frameMm: { width: 40_000, depth: 26_000 } } as const;
+/**
+ * canon §21.1: fixed 3/4 camera (no rotate, no zoom at MVP). canon D48 (owner, 25/10): the frame always
+ * holds the whole field and tide; the default tilt is 55°.
+ */
+export const CAMERA = {
+  tiltDeg: [50, 55] as readonly [number, number],
+  /** canon D48: default tilt inside the §21.1 range. */
+  defaultTiltDeg: 55,
+  fovDeg: [25, 30] as readonly [number, number],
+  frameMm: { width: 40_000, depth: 26_000 },
+} as const;
 
 /** canon §21.1: semantic colours of the kit (never misused). */
 export const COLOURS = { danger: "#FF4A4A", urgent: "#FFB020", money: "#FFC83A", typing: "#7FF5E0" } as const;
