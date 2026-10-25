@@ -12,13 +12,19 @@ Dev port 3008, host `tutien.typing-game.local`; `gameId` `immortality-cultivatio
 
 - Authoritative design (Vietnamese): `docs/games/tu-tien/` in the parent repo
   (`../..` from this repo's root). `00-canon.md` holds every rule and number
-  and wins when documents disagree (decisions D01–D46); `M0A_PLAN.md` is the
-  build plan (step 0, lanes, contracts, gates); `DANH_GIA_2026-10-24.md` gives
-  the reasons.
+  and wins when documents disagree (decisions D01–D49: D47 the noble style,
+  D48 the camera frames the whole pass and every beast, default tilt 55°,
+  D49 the character roster); `M0A_PLAN.md` is the build plan (step 0, lanes,
+  contracts, gates); `DANH_GIA_2026-10-24.md` gives the reasons.
 - Current milestone: **M0a** grey box (full core rules, primitive placeholders,
   procedural ground) + the HN0 3D bench + the Tĩnh Tu trial page. State
   (25/10): step 0 done (scaffold, data contract, storage, boundary test, key
-  router, match header); lanes 1–8 build on the stubs (`TODO(<lane>)`).
+  router, match header); part A done (lanes 1a, 2, 3, 5, 8) with its review
+  fixes (`docs/changelog/2026-10-25-m0a-part-a-fixes.md`); part B (lanes 1b,
+  4, 6, 7, integration) builds on the remaining stubs (`TODO(<lane>)`).
+- Camera (canon §21.1, D48): fixed 3/4, the whole field, both gates, the sky
+  route and every beast in frame, no zoom; tilt 55° (`rules.ts`
+  `CAMERA.defaultTiltDeg`, read by `src/view/renderer.ts` `VIEW`), FOV 28°.
 - Never judge a shared gate (`docs/games/BALANCE.md`) by a game-only band
   (canon D15): print the shared band, which is the gate of record.
 - Rule numbers live in `src/content/rules.ts`, each pointing to its canon
@@ -44,8 +50,9 @@ contracts, the event list and how to ask for a shared type change.
 - `src/sim`, `src/local`, `src/typing`, `src/content`, `src/tinh-tu/sim` are
   pure deterministic TypeScript at a fixed 60 Hz: integer state, seeded RNG
   (`world.rng.<stream>`, never `crit`), no `three`, `window`, `document`,
-  `Date`, `performance`, `localStorage`, `fetch`, `Math.random`, trig, `pow`,
-  `hypot` or `**`, also through kit import chains. Wall clock enters only as
+  `Date`, `performance`, `localStorage`, `fetch`, `process`, `Intl`,
+  `toLocale*`, `structuredClone`, `queueMicrotask`, `Math.random` (or any
+  `Math[…]`), trig, `pow`, `hypot` or `**`, also through kit import chains. Wall clock enters only as
   an argument (`nowMs`). Real-player positions stay in `src/local` (canon D28,
   D34); the world never reads them.
 - `src/app/storage.ts` is the only file that touches browser storage.
@@ -58,7 +65,9 @@ contracts, the event list and how to ask for a shared type change.
   by hand: it is copied by `node scripts/sync-game-kit.mjs --target
   games/immortality-cultivation` (run in the parent repo) and sha256-checked by
   `src/kit/verify-kit.mjs`. Kit gaps stay local and go into `docs/SYNC_DEBT.md`.
-- `tests/boundary.test.ts` enforces the four rules above.
+- `tests/boundary.test.ts` enforces the four rules above (storage also by
+  member or element access; the sound ban over `src`, `scripts`, `tests` and
+  the root configs; only `src/sim/world.ts` of `src/sim` imports `src/local`).
 - Bots never send learning events; they build dry-run drafts only (canon D43).
 - No destructive git (`reset --hard`, `checkout -- .`, `clean -f`, bare
   `stash`, force push). Never push. Never run `sudo`, `scripts/setup-nginx.sh`,
@@ -70,7 +79,11 @@ contracts, the event list and how to ask for a shared type change.
   at a time under `flock /tmp/tg-heavy.lock` with `VITEST_MAX_THREADS=4`; bots
   `--jobs=4` (WSL has 7 GB).
 - On the Dell, Vite in WSL does not see files edited from Windows: restart it
-  after a change, or run it with `CHOKIDAR_USEPOLLING=1`.
+  after a change, or run it with `CHOKIDAR_USEPOLLING=1`. On `/mnt/*` the
+  dependency cache lives on WSL's own disk (`vite.config.ts` `cacheDir`,
+  default `$HOME/.cache/vite/immortality-cultivation`, `IC_VITE_CACHE_DIR`
+  overrides), because renaming `node_modules/.vite/deps` there fails with
+  EACCES and the page stays blank.
 - Browser checks: Vite on port 3008 with `--strictPort`; scenarios through the
   kit runner `node src/kit/tools/cdp-run.mjs <scenario.mjs>`; functional runs
   may use Chrome for Testing in WSL, anything timing or GPU uses Windows Chrome

@@ -1,7 +1,7 @@
 # Lanes and contracts (M0a)
 
 English digest of `docs/games/tu-tien/M0A_PLAN.md` §3–6 in the parent repo; the
-plan and the canon win when this file disagrees. Each lane writes only the
+plan and the canon (decisions D01–D49) win when this file disagrees. Each lane writes only the
 paths it owns. Step 0 left a stub for every lane file with its exported
 signatures and a `TODO(<lane>)` body (most stubs throw); fill the bodies, keep
 the signatures (or report a change), add new files only inside your own paths.
@@ -73,7 +73,9 @@ kit's `src/kit/tools/cdp-run.mjs`.
   turns into HP at load. No floats in hashed state.
 - Sim space: u, 1 m = 60 000 u (N mm/s = N u per tick). x east, z south, y up;
   the Trận Tâm at the origin; gates A, B at (∓15 m; −18 m); sky route from
-  (±20 m; −18 m); the camera looks north from the south.
+  (±20 m; −18 m); the camera looks north from the south, fixed 3/4 with the
+  whole field and every beast in frame (canon D48), tilt 55° by default
+  (`rules.ts` `CAMERA.defaultTiltDeg`; `renderer.ts` `VIEW` reads it), no zoom.
 - `origin` of a command: the player's position rounded to 100 mm = 6 000 u
   (`rules.ts quantizeOrigin`, never −0).
 - Damage order and half-up rounding of canon §7.2 (`mulDiv` each step); the
@@ -83,8 +85,10 @@ kit's `src/kit/tools/cdp-run.mjs`.
   from its own stream of the match seed (`app.ts loadMatch`).
 - Pure groups (`src/sim`, `src/local`, `src/typing`, `src/content`,
   `src/tinh-tu/sim`): no `three`, `window`, `document`, `Date`, `performance`,
-  storage, network, `Math.random`, trig, `pow`, `hypot`, `**`, also through
-  kit chains (import kit files directly, not the `kit/platform` barrel).
+  storage, network, `process`, `Intl`, `toLocale*`, `structuredClone`,
+  `queueMicrotask`, `Math.random` or `Math[…]`, trig, `pow`, `hypot`, `**`,
+  also through kit chains (import kit files directly, not the `kit/platform`
+  barrel). Of `src/sim`, only the match driver `world.ts` imports `src/local`.
   Directions by table, lengths by `isqrt`. Wall time (`nowMs`) comes in as an argument.
 - `hashWorld` walks the world except `HASH_SKIP` (`stage`, `header`, `field`,
   `wall`, `events`); `hashLocal` walks `local` except `outbox` and `events`.
