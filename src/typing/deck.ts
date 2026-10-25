@@ -5,6 +5,9 @@
  * child profiles); groups (known, learning, due, new, weak) by learning record.
  * Cold start: ≤ 40 base words (one level below, `assumed: true`) + new words
  * within `allowance`; a short group shrinks the deck (floor 40), never relabels.
+ * Base words come only from the base level and below (canon §17.1): when those
+ * run short the deck shrinks (the picker repeats sooner) rather than flag a
+ * harder word, at or above the profile level, as assumed known.
  *
  * `records` come in vocabulary list order (most frequent first), one per
  * candidate word, with the group the learning record gives (no record:
@@ -56,10 +59,13 @@ function usable(records: readonly WordRecord[], options: DeckOptions): WordRecor
   });
 }
 
-/** Unrecorded words by level, nearest the base level first: the base level, lower ones (easiest first), then higher ones. */
-function byLevelFrom(pool: readonly WordRecord[], level: number): WordRecord[] {
+/**
+ * Unrecorded words by level, nearest `level` first: that level, lower ones (easiest first), then
+ * higher ones unless `orBelow` (base words never come from above the base level, canon §17.1).
+ */
+function byLevelFrom(pool: readonly WordRecord[], level: number, orBelow = false): WordRecord[] {
   const levels = [...new Set(pool.map((record) => record.level))].sort((a, b) => a - b);
-  const order = [level, ...levels.filter((value) => value < level), ...levels.filter((value) => value > level)];
+  const order = [level, ...levels.filter((value) => value < level), ...(orBelow ? [] : levels.filter((value) => value > level))];
   return order.flatMap((value) => pool.filter((record) => record.level === value));
 }
 
@@ -85,8 +91,9 @@ export function buildDeck(records: readonly WordRecord[], level: number, allowan
   };
   const unrecorded = pool.filter((record) => record.group === "new");
   const takeBase = (count: number): void => {
-    // Base words: the most frequent words one level below the profile (A1's first words at the lowest level).
-    for (const record of byLevelFrom(unrecorded, Math.max(1, profileLevel - 1))) {
+    // Base words: the most frequent words one level below the profile (A1's first words at the lowest level),
+    // only from that level and below; short there, the deck shrinks instead of borrowing harder words.
+    for (const record of byLevelFrom(unrecorded, Math.max(1, profileLevel - 1), true)) {
       if (count <= 0) break;
       if (taken.has(record.wordId)) continue;
       add(record, "known", true);

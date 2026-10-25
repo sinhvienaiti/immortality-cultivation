@@ -49,13 +49,37 @@ describe("buildDeck: cold start (no learning record, every M0a match)", () => {
     }
   });
 
-  it("takes A1's first words at the lowest level, and fills a short base level from the next ones", () => {
+  it("takes A1's first words at the lowest level; a short base level shrinks the deck, never borrows harder words", () => {
     const low = buildDeck(pool, 1, 4, rng());
     expect(new Set(low.filter((w) => w.assumed).map((w) => w.wordId))).toEqual(new Set(level1.slice(0, 40).map((r) => r.wordId)));
     const short = [...records(25, 1), ...records(30, 2, "new", 100)];
     const deck = buildDeck(short, 2, 8, rng());
-    expect(deck.filter((w) => w.assumed)).toHaveLength(40);
-    expect(deck).toHaveLength(48);
+    // canon §17.1: base words only from the base level (1) and below; 25 there, so the deck is 25 + 8 new.
+    expect(new Set(deck.filter((w) => w.assumed).map((w) => w.wordId))).toEqual(new Set(short.slice(0, 25).map((r) => r.wordId)));
+    expect(deck).toHaveLength(33);
+    expect(newWordsOf(deck)).toHaveLength(8);
+  });
+
+  it("never flags a word at or above the profile level as a base word (part A review)", () => {
+    // Profile level 3: base level 2, then 1; levels 3 and 4 are never assumed even when the base levels are short.
+    const pool3 = [...records(10, 1, "new", 0), ...records(12, 2, "new", 100), ...records(50, 3, "new", 200), ...records(50, 4, "new", 300)];
+    const level = new Map(pool3.map((r) => [r.wordId, r.level]));
+    for (const allowance of [0, 4, 8]) {
+      const deck = buildDeck(pool3, 3, allowance, rng(allowance));
+      const base = deck.filter((w) => w.assumed);
+      expect(base).toHaveLength(22);
+      expect(base.every((w) => level.get(w.wordId)! <= 2)).toBe(true);
+      // The new words come from the profile level first; nothing relabelled; the deck shrinks to 22 + allowance.
+      expect(newWordsOf(deck).every((w) => level.get(w.wordId) === 3)).toBe(true);
+      expect(deck).toHaveLength(22 + allowance);
+      for (const w of deck) expect(w.assumed ? w.group === "known" : w.group === "new").toBe(true);
+    }
+    // The base level comes first, then the lower one: with room for all, both levels are in.
+    const enough = [...records(30, 1, "new", 0), ...records(30, 2, "new", 100), ...records(20, 3, "new", 200)];
+    const deck = buildDeck(enough, 3, 0, rng());
+    const levels = deck.filter((w) => w.assumed).map((w) => enough.find((r) => r.wordId === w.wordId)!.level);
+    expect(levels.filter((value) => value === 2)).toHaveLength(30);
+    expect(levels.filter((value) => value === 1)).toHaveLength(10);
   });
 
   it("leaves out sensitive words always and mature words for child profiles", () => {
