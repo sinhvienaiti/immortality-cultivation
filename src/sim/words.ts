@@ -50,51 +50,7 @@ import { meaningShown, slotLengths, takesFreshNew, takesRemeetings, type SlotAsk
 import { emitCast, nextActionId } from "./cast";
 import type { EventBody } from "./events";
 
-declare module "../content/types" {
-  interface WordsState {
-    /** kit typing session per seat: first letters, router, live words. */
-    readonly sessions: TypingSession[];
-    /** kit live-word ledger per seat (sources: slot, seal, urgent; typing/fallback.ts SOURCES). */
-    readonly ledgers: BudgetLedger[];
-    /** kit deck index → header deck index, and back (−1: not dealable). */
-    readonly deckOf: number[];
-    readonly kitOf: number[];
-    /** Picker bags: `bags[b]` is the order (header deck indexes), `bagKeys[b]` its key, `bagNext[b]` words dealt this round. */
-    readonly bagKeys: string[];
-    readonly bagNext: number[];
-    /** Per seat: Chớp E_eff × 1000, E for word lengths (WPM), whether the Bàn Quyết is awake. */
-    readonly flashE: number[];
-    readonly wpm: number[];
-    readonly awake: boolean[];
-    /** Per seat: no fresh new word for the rest of this wave (a new word took > 1.5 s to start); 0 none. */
-    readonly newPauseWave: number[];
-    /** Per seat: tick of the last letter key while the Bàn Quyết was live (−1 none): a new word's recognition time counts from it. */
-    readonly lastKeyTick: number[];
-  }
-  interface LiveWord {
-    /** Word slot in the seat's kit session (−1: not live). */
-    kitSlot: number;
-    /** Tick it went live (−1: not live). */
-    born: number;
-    /** The meaning or IPA shows while it is typed: reported as `hintUsed`. */
-    hint: boolean;
-    /** The entry waits in a jam (counted once per jam). */
-    jammed: boolean;
-    /** Fallback step it was dealt at. */
-    step: FallbackStep;
-    /** Its first key came (the recognition time of a new word is measured once). */
-    firstLocked: boolean;
-  }
-  interface SeatHeader {
-    /** Chớp E_eff × 1000 after the 5-session floor (app/typing-pace.ts); the profile's E_eff when absent. */
-    readonly flashEX1000?: number;
-  }
-  interface WallState {
-    /** Per live word index: wall ms of its first and last key (learning only). */
-    wordFirstMs?: number[];
-    wordLastMs?: number[];
-  }
-}
+// WordsState, LiveWord, SeatHeader.flashEX1000 and WallState word times live in content/types.ts (folded in, part A fixes).
 
 /** Bàn Quyết entries per seat: 5 slots, 2 Ấn, 1 Tẩy. */
 export const ENTRIES_PER_SEAT = 8;

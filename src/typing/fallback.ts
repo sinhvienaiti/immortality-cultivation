@@ -10,7 +10,7 @@
  * Owner: Lane 3.
  */
 import { LETTERS } from "../content/rules";
-import type { DeckWord, Preset } from "../content/types";
+import type { DeckWord, FallbackStep, Preset } from "../content/types";
 import { POOL, type BudgetSource, type LetterBudget } from "../kit/typing/budget";
 import { FAMILIARITY, kindAccepts, slotGroups, slotLengths, type SlotAsk } from "./slots";
 
@@ -48,7 +48,8 @@ export const SOURCES: readonly BudgetSource[] = [
 ];
 export const SOURCE = { slot: 0, seal: 1, urgent: 2 } as const;
 
-export type FallbackStep = "exact" | "length" | "familiar" | "jam";
+/** Declared in content/types.ts (LiveWord.step); re-exported here for the lane's importers. */
+export type { FallbackStep };
 
 export interface FallbackStage {
   readonly step: Exclude<FallbackStep, "jam">;

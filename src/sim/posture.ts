@@ -14,12 +14,7 @@ import { emit } from "./events";
 import { isqrt, msToTicks } from "./fixed";
 import { cancelSourceTelegraphs } from "./telegraph";
 
-// Lane 5 field (reported for Lane 2 to fold into types.ts): typed HP not yet turned into Thế.
-declare module "../content/types" {
-  interface PostureState {
-    typedHp?: number;
-  }
-}
+// PostureState.typedHp (typed HP not yet turned into Thế) lives in content/types.ts.
 
 export function createPosture(max: number): PostureState {
   return { value: max, max, brokenUntil: -1, immuneUntil: -1, typedHp: 0 };

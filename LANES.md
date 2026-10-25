@@ -166,6 +166,13 @@ never the keys.
   (`local/consumables.ts`) applies self effects.
 - **Learning:** the app calls the ledger's `take(wordId, Date.now(), channel)`
   on `word-first-seen` and saves `.newwords` through `storage.ts`.
+- **Linh Dịch:** Lane 2's `director.ts` applies it (one a wave: +5 % Trận
+  Lực and the `formation` event `linh-dich`). Lane 4's `formation.ts` must
+  **not** apply it again, although M0A_PLAN §6.4 lists Linh Dịch there (it
+  would heal twice).
+- **Replay header:** `SeatHeader.flashEX1000` (optional) carries the Chớp
+  floor of canon §6.5 (`app/typing-pace.ts flashFloorFor`); words.ts falls
+  back to the profile's E_eff when it is absent.
 
 ## Commands (`SimCommand`, `src/content/types.ts`)
 

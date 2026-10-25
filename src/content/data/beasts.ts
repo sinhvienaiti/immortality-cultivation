@@ -7,31 +7,10 @@
  * section are this round's proposals (docs/changelog/2026-10-25-m0a-lane-5.md).
  * Owner: Lane 5.
  */
-import type { BeastDef, BeastId, GeneralDef, GeneralId } from "../types";
+import type { BeastActDef, BeastDef, BeastId, GeneralDef, GeneralId } from "../types";
 
-/**
- * Behaviour of a species beyond the canon's `BeastDef` fields (Lane 5). `aim`:
- * "heart" walks to the heart edge and bites; "alternate" aims at the heart on
- * an even serial and at the Tâm nhãn on an odd one (no RNG draw). An attack
- * starts within `rangeMm` of its target point (the heart centre or the node
- * point); the next may start `everyMs` after the last one started.
- */
-export interface BeastActDef {
-  readonly aim: "heart" | "alternate";
-  readonly heartAttack: string | null;
-  readonly nodeAttack: string | null;
-  readonly rangeMm: number;
-  readonly everyMs: number;
-  /** Flight height, mm (0: ground). */
-  readonly flyMm: number;
-}
-
-// Lane 5 field on BeastDef (reported for Lane 2 to fold into types.ts); in the def so rulesHash covers it.
-declare module "../types" {
-  interface BeastDef {
-    readonly act?: BeastActDef;
-  }
-}
+// BeastActDef and BeastDef.act live in content/types.ts (in the def so rulesHash covers it); re-exported for old importers.
+export type { BeastActDef };
 
 /** Walks to the heart edge and bites; no telegraphed attack. */
 export const BITE_ONLY: BeastActDef = { aim: "heart", heartAttack: null, nodeAttack: null, rangeMm: 0, everyMs: 0, flyMm: 0 };

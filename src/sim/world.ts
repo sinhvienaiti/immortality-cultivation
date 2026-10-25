@@ -48,16 +48,10 @@ import { createSpawnState, stepSpawn } from "./spawn";
 import { createTelegraphsState } from "./telegraph";
 import { createWardsState, stepWards, useWard } from "./wards";
 import { checkWaves, continueBreak, createWaveState, onBeastGone as wavesOnGone, openPrep, startMatch, stepWaves } from "./waves";
-import * as wordsModule from "./words";
-import { createWordsState, onBeastGone as wordsOnGone, onSeatDown, releaseLock, stepWords, typeBackspace, typeKey } from "./words";
+import { createWordsState, onBeastGone as wordsOnGone, onLearnAhead, onSeatDown, releaseLock, stepWords, typeBackspace, typeKey } from "./words";
 
 /** Keys hashWorld skips: static config, wall clock, events (M0A_PLAN §3.1). */
 export { HASH_SKIP } from "./hash";
-
-/** Lane 3's `onLearnAhead` (sim/words.ts, its change request), read off the module so world.ts builds before it lands. */
-interface LearnAheadHook {
-  onLearnAhead(world: World, command: Extract<SimCommand, { type: "learn-ahead" }>): void;
-}
 
 /** A new world at tick 0 from the stage, the seed and the replay header (canon §23.2), in prep. */
 export function createWorld(stage: StageDef, seed: number, header: ReplayHeader): World {
@@ -256,8 +250,8 @@ export function applyCommand(world: World, command: SimCommand): void {
       return continueBreak(world);
     case "learn-ahead":
       if (world.phase !== "prep") return rejected(world, command, "phase");
-      // Lane 3 books a new word's first meeting (canon §6.4) before the pay; optional until words.ts exports it.
-      (wordsModule as unknown as Partial<LearnAheadHook>).onLearnAhead?.(world, command);
+      // Lane 3 books a new word's first meeting (canon §6.4) before the pay.
+      onLearnAhead(world, command);
       if (command.correct) payLearning(world, command.seat, "learn-ahead");
       return;
     case "review-card":

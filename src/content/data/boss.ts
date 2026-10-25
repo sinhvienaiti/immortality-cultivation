@@ -9,27 +9,11 @@
  * and cadence numbers the canon leaves open (proposals, lane 5 changelog).
  * Owner: Lane 5.
  */
-import type { BossDef, BossId } from "../types";
+import type { BossActDef, BossDef, BossId } from "../types";
 import { BITE_ONLY } from "./beasts";
 
-/** Where the Vương stands and how often it pounces (Lane 5); it enters at gate A (canon §13.3, waves.ts). */
-export interface BossActDef {
-  /** P1: walks to this distance of the Tâm nhãn so the 6 m Vồ Xé cone reaches it. */
-  readonly meleeMm: number;
-  /** P2, P3: holds this far from the heart centre to charge (a Trận Trụ may stand on the line). */
-  readonly chargeFromMm: number;
-  /** Vồ Xé every this many ms in P1. */
-  readonly voXeEveryMs: number;
-  readonly voXe: string;
-  readonly charge: string;
-  readonly summonCall: string;
-}
-
-declare module "../types" {
-  interface BossDef {
-    readonly bossAct?: BossActDef;
-  }
-}
+// BossActDef and BossDef.bossAct live in content/types.ts; re-exported for old importers.
+export type { BossActDef };
 
 export const BOSSES: Readonly<Record<BossId, BossDef>> = {
   "thiet-boi-lang-vuong": {

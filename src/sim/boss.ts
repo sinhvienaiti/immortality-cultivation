@@ -35,19 +35,7 @@ import { cancelSourceTelegraphs, cancelTelegraph, dueTelegraphs, findTelegraph, 
 import { releaseWord } from "./words";
 import { beastAt } from "./world";
 
-// Lane 5 fields (reported for Lane 2 to fold into types.ts).
-declare module "../content/types" {
-  interface BossState {
-    /** The Vương died (Lane 2's victory check may read it). */
-    defeated?: boolean;
-    /** Live Gọi Đàn and Thiết Bối Xung telegraph ids (−1: none). */
-    summonTelegraph?: number;
-    chargeTelegraph?: number;
-    /** Tru Đàn W × 100 called in wave `waveSummonWave` (≤ its WaveDef.summonMaxW100). */
-    waveSummonWave?: number;
-    waveSummonW100?: number;
-  }
-}
+// BossState.{defeated, summonTelegraph, chargeTelegraph, waveSummonWave, waveSummonW100} live in content/types.ts.
 
 export function createBossState(_init: WorldInit): BossState {
   return { beast: null, phase: 0, roarUntil: -1, nextSummon: -1, nextCharge: -1, summonedW100: 0, defeated: false, summonTelegraph: -1, chargeTelegraph: -1, waveSummonWave: 0, waveSummonW100: 0 };

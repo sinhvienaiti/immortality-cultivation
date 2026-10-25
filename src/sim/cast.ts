@@ -22,15 +22,6 @@ import { postureHit } from "./posture";
 import { resolveCast } from "./skills";
 import { liveBeast, onCastSettled } from "./words";
 
-declare module "../content/types" {
-  interface CastsState {
-    /** Per seat: n of the last Cast emitted (actionId = seat × 2^20 + n); a Cast at or below it is a duplicate. */
-    readonly lastAction: number[];
-    /** Duplicate Casts dropped (CB6: always 0 in a healthy run). */
-    duplicates: number;
-  }
-}
-
 const HELD_TICKS = Math.round((CAST.heldMs * SIM.tickHz) / 1000);
 
 function out(world: World, body: EventBody): void {

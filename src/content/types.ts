@@ -12,10 +12,13 @@
  * in its own state adds it by module augmentation in its own file
  * (`declare module "../content/types" { interface WordsState { … } }`) and
  * reports it; Lane 2 folds it in here. Never edit another lane's section.
+ * Part A's augmentations (Lanes 3 and 5) are folded in (part A fixes, 25/10).
  */
 import type { PaceDirector } from "../kit/balance/director";
 import type { FlowMeter } from "../kit/balance/flow";
 import type { Rng } from "../kit/platform/rng";
+import type { BudgetLedger } from "../kit/typing/budget";
+import type { TypingSession } from "../kit/typing/session";
 
 // ── Basics ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +146,24 @@ export interface BeastDef {
   /** Thế (canon §10.7): 0 for plain beasts (elites get ELITES.posture). */
   readonly posture: number;
   readonly placeholder: PlaceholderDef;
+  /** Lane 5 behaviour numbers the canon leaves to the beast lane (in the def so rulesHash covers it). */
+  readonly act?: BeastActDef;
+}
+
+/**
+ * Behaviour of a species beyond the canon's `BeastDef` fields (Lane 5, data/beasts.ts). `aim`:
+ * "heart" walks to the heart edge and bites; "alternate" aims at the heart on an even serial and at
+ * the Tâm nhãn on an odd one (no RNG draw). An attack starts within `rangeMm` of its target point
+ * (the heart centre or the node point); the next may start `everyMs` after the last one started.
+ */
+export interface BeastActDef {
+  readonly aim: "heart" | "alternate";
+  readonly heartAttack: string | null;
+  readonly nodeAttack: string | null;
+  readonly rangeMm: number;
+  readonly everyMs: number;
+  /** Flight height, mm (0: ground). */
+  readonly flyMm: number;
 }
 
 /** One tinh anh trait (canon §10.3). */
@@ -180,6 +201,21 @@ export interface BossDef extends BeastDef {
   readonly phases: readonly BossPhaseDef[];
   /** One Gọi Đàn: these groups (1 Thạch Thử cluster + 2 Phong Lang). */
   readonly summon: readonly { readonly species: BeastId; readonly count: number; readonly cluster: boolean }[];
+  /** Lane 5 movement and cadence numbers the canon leaves open (data/boss.ts). */
+  readonly bossAct?: BossActDef;
+}
+
+/** Where the Vương stands and how often it pounces (Lane 5); it enters at gate A (canon §13.3, waves.ts). */
+export interface BossActDef {
+  /** P1: walks to this distance of the Tâm nhãn so the 6 m Vồ Xé cone reaches it. */
+  readonly meleeMm: number;
+  /** P2, P3: holds this far from the heart centre to charge (a Trận Trụ may stand on the line). */
+  readonly chargeFromMm: number;
+  /** Vồ Xé every this many ms in P1. */
+  readonly voXeEveryMs: number;
+  readonly voXe: string;
+  readonly charge: string;
+  readonly summonCall: string;
 }
 
 // ── Content: telegraphs (canon §10.6, §23.3) ────────────────────────────────
@@ -433,6 +469,11 @@ export interface SeatHeader {
   readonly profile: SeatProfile;
   /** Pace k × 1000 at load (canon §7.5). */
   readonly kPm: number;
+  /**
+   * Chớp E_eff × 1000 after the 5-session floor (canon §6.5, §23.2; app/typing-pace.ts flashFloorFor);
+   * words.ts uses the profile's E_eff when absent.
+   */
+  readonly flashEX1000?: number;
 }
 
 export interface Loadout {
@@ -790,6 +831,8 @@ export interface PostureState {
   brokenUntil: number;
   /** No Thế loss until this tick (15 s after a break). */
   immuneUntil: number;
+  /** Typed HP carried below one whole W (Lane 5 posture.ts postureFromTypedHp: 1 Thế per whole W). */
+  typedHp?: number;
 }
 
 /** One slow on a beast (canon §7.2: different sources multiply, same source keeps the strongest, total ≤ 60 %). */
@@ -859,6 +902,8 @@ export interface BeastState {
   /** Thú tướng: Tru Đàn uses this wave and the next ready tick. */
   howls: number;
   howlReadyAt: number;
+  /** Bite remainder carried between bites, ‰ of one Trận Lực point (Lane 5 pressure.ts). */
+  biteCarryPm?: number;
 }
 
 export interface BeastStore {
@@ -1003,7 +1048,23 @@ export interface LiveWord {
   until: number;
   /** Next word shown dim at 50 % while cooling down (deck index, −1 none). */
   next: number;
+  // Lane 3 words.ts.
+  /** Word slot in the seat's kit session (−1: not live). */
+  kitSlot: number;
+  /** Tick it went live (−1: not live). */
+  born: number;
+  /** The meaning or IPA shows while it is typed: reported as `hintUsed`. */
+  hint: boolean;
+  /** The entry waits in a jam (counted once per jam). */
+  jammed: boolean;
+  /** Fallback step it was dealt at (typing/fallback.ts). */
+  step: FallbackStep;
+  /** Its first key came (the recognition time of a new word is measured once). */
+  firstLocked: boolean;
 }
+
+/** Fallback order of canon §6.2 (typing/fallback.ts): exact, length ±1, more familiar kind, then jam. */
+export type FallbackStep = "exact" | "length" | "familiar" | "jam";
 
 /** Per deck word use in this match (canon §6.4 meetings, §17 one scored event). */
 export interface DeckUse {
@@ -1036,6 +1097,25 @@ export interface WordsState {
   liveCap: number;
   /** kit WordPicker bag (deck indexes) per slot kind. */
   readonly bags: number[][];
+  // Lane 3 words.ts.
+  /** kit typing session per seat: first letters, router, live words. */
+  readonly sessions: TypingSession[];
+  /** kit live-word ledger per seat (sources: slot, seal, urgent; typing/fallback.ts SOURCES). */
+  readonly ledgers: BudgetLedger[];
+  /** kit deck index → header deck index, and back (−1: not dealable). */
+  readonly deckOf: number[];
+  readonly kitOf: number[];
+  /** Picker bags: `bags[b]` is the order (header deck indexes), `bagKeys[b]` its key, `bagNext[b]` words dealt this round. */
+  readonly bagKeys: string[];
+  readonly bagNext: number[];
+  /** Per seat: Chớp E_eff × 1000, E for word lengths (WPM), whether the Bàn Quyết is awake. */
+  readonly flashE: number[];
+  readonly wpm: number[];
+  readonly awake: boolean[];
+  /** Per seat: no fresh new word for the rest of this wave (a new word took > 1.5 s to start); 0 none. */
+  readonly newPauseWave: number[];
+  /** Per seat: tick of the last letter key while the Bàn Quyết was live (−1 none): a new word's recognition time counts from it. */
+  readonly lastKeyTick: number[];
 }
 
 /** One Cast (canon §6.1). */
@@ -1064,6 +1144,10 @@ export interface CastsState {
   readonly nextAction: number[];
   resolved: number;
   fizzled: number;
+  /** Per seat: n of the last Cast emitted (actionId = seat × 2^20 + n); a Cast at or below it is a duplicate. */
+  readonly lastAction: number[];
+  /** Duplicate Casts dropped (CB6: always 0 in a healthy run). */
+  duplicates: number;
 }
 
 /** A hit scheduled for its hit tick (Lane 4 skills.ts, canon §12.1). */
@@ -1248,6 +1332,14 @@ export interface BossState {
   nextCharge: number;
   /** W × 100 called by Gọi Đàn so far (≤ 30 % W_Vương). */
   summonedW100: number;
+  /** The Vương died (Lane 2's victory check may read it). */
+  defeated?: boolean;
+  /** Live Gọi Đàn and Thiết Bối Xung telegraph ids (−1: none). */
+  summonTelegraph?: number;
+  chargeTelegraph?: number;
+  /** Tru Đàn W × 100 called in wave `waveSummonWave` (≤ its WaveDef.summonMaxW100). */
+  waveSummonWave?: number;
+  waveSummonW100?: number;
 }
 
 /** Counters the bots and reports read (Lane 7). */
@@ -1281,6 +1373,9 @@ export interface RunStats {
 export interface WallState {
   /** Last key `ms` per seat. */
   readonly lastKeyMs: number[];
+  /** Per live word index: wall ms of its first and last key (learning only; Lane 3 words.ts). */
+  wordFirstMs?: number[];
+  wordLastMs?: number[];
 }
 
 export interface World {

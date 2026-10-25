@@ -20,21 +20,15 @@
  */
 import { BOSSES } from "../content/data/boss";
 import { ELITE_TRAITS } from "../content/data/elites";
-import type { BeastActDef } from "../content/data/beasts";
 import { DAMAGE, FIELD, FORMATION, LINH_SA, PRESETS, PRESSURE, SIM } from "../content/rules";
-import type { BeastState, BossId, EliteTraitId, GeneralDef, PointU, SpeciesId, World } from "../content/types";
+import type { BeastActDef, BeastState, BossId, EliteTraitId, GeneralDef, PointU, SpeciesId, World } from "../content/types";
 import { applyElite, maxHpOf, stepElites } from "./elites";
 import { fieldStep } from "./field";
 import { isqrt, mmToU, within } from "./fixed";
 import { createPosture, isBroken } from "./posture";
 import { actOf, aimNode, capturableNode, chooseTarget, speciesDef, speciesW100, straightDistance, targetPoint } from "./targeting";
 
-// Lane 5 field (reported for Lane 2 to fold into types.ts): bite damage below one HP carried to the next bite (‰ HP).
-declare module "../content/types" {
-  interface BeastState {
-    biteCarryPm?: number;
-  }
-}
+// BeastState.biteCarryPm (bite damage below one HP carried to the next bite, ‰ HP) lives in content/types.ts.
 
 /**
  * ĐĐ × 100 (canon §14.2): the beast's own W at K0 Cân bằng (elite W × 1.6 +
