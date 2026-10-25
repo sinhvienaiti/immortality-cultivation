@@ -27,7 +27,7 @@ import {
   type TinhTuSession,
   type TinhTuTier,
 } from "../../src/tinh-tu/sim/session";
-import { TRIAL_LESSONS, TRIAL_WORDS } from "../../src/tinh-tu/sim/trial-set";
+import { TRIAL_LESSONS, TRIAL_TOPIC_WORDS as TRIAL_WORDS } from "../../src/content/data/trial-set";
 
 export type TtPolicy = "standard" | "no-type" | "type-all";
 

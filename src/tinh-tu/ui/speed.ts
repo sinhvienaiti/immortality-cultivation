@@ -5,6 +5,7 @@
  * an unspoken 35). Missing a or CV read as 95 % and 0.25 (canon §7.5).
  * Owner: Lane 8.
  */
+import { PACE, TINH_TU } from "../../content/rules";
 import { effectiveE } from "../../kit/balance/pace";
 import { blendSkill, type SkillProfile } from "../../kit/balance/profile";
 
@@ -15,9 +16,9 @@ export interface Speed {
   readonly source: "flag" | "profile" | "choice";
 }
 
-/** Choices on the Tĩnh Thất speed row; 0 is "chưa biết" (25 WPM). */
-export const SPEED_CHOICES: readonly number[] = [0, 15, 25, 35, 50, 70, 90];
-export const UNKNOWN_WPM = 25;
+/** Choices on the Tĩnh Thất speed row (rules.ts TINH_TU.speedChoices); 0 is "chưa biết" (rules.ts PACE.unknownWpm, 25 WPM). */
+export const SPEED_CHOICES: readonly number[] = TINH_TU.speedChoices;
+export const UNKNOWN_WPM: number = PACE.unknownWpm;
 const DEFAULT_A = 0.95;
 const DEFAULT_CV = 0.25;
 

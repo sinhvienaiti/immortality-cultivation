@@ -5,7 +5,7 @@
  *    `mature` for child profiles) and the learning core's records through the
  *    portal bridge (`lookup`, 2 s); no portal or no records: a cold start
  *    (every M0a match, canon §25); no vocabulary: the labelled fallback set
- *    (typing/trial-deck.ts);
+ *    (content/data/trial-set.ts, match-deck part);
  *  - learning events: one scored event per word per match (the sim's
  *    `word-complete.scored`, a fizzled Cast's word too), the activity type of
  *    canon §17, `hintUsed` as the sim reports it (the meaning or IPA was on
@@ -29,7 +29,7 @@ import type { VocabularyEntry } from "../kit/vocab/types";
 import { loadVocabularyIndex, loadVocabularyLevel } from "../kit/vocab/vocabulary";
 import { groupForRecord, isDeckText } from "../typing/deck";
 import type { NewWordLedger } from "../typing/new-word-ledger";
-import { TRIAL_WORDS } from "../typing/trial-deck";
+import { TRIAL_DECK_WORDS } from "../content/data/trial-set";
 import { gameStorage } from "./storage";
 
 // ── Rules of a learning event (canon §17) ───────────────────────────────────
@@ -180,7 +180,7 @@ export interface DeckSource {
   readonly gloss: ReadonlyMap<string, Gloss>;
   /** Words due in the records (canon §6.4: > 80 due caps the new words at 4). */
   readonly dueCount: number;
-  /** The vocabulary did not load: typing/trial-deck.ts stands in. */
+  /** The vocabulary did not load: content/data/trial-set.ts (match-deck part) stands in. */
   readonly fallback: boolean;
 }
 
@@ -280,7 +280,7 @@ export async function loadDeckSource(level: number, options: DeckSourceOptions =
     console.warn("immortality-cultivation: vocabulary did not load; using the fallback set", error);
   }
   const fallback = entries.length === 0;
-  if (fallback) entries = TRIAL_WORDS.map((word, index) => ({ id: "trial-" + index, en: word.en, vi: word.vi, ipa: word.ipa, level: word.level }));
+  if (fallback) entries = TRIAL_DECK_WORDS.map((word, index) => ({ id: "trial-" + index, en: word.en, vi: word.vi, ipa: word.ipa, level: word.level }));
   const ids = [...new Set(entries.map((entry) => normalizeLearningEntityId(entry.en)).filter(isDeckText))].slice(0, 200);
   let core = new Map<string, CoreRecord>();
   if (!fallback && ids.length > 0) {

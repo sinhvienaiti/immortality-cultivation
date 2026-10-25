@@ -62,8 +62,8 @@ function fnv(text: string): number {
   return hash >>> 0;
 }
 
-/** Fallback trial records (no portal): about 1 word in 3 known (mastery 80), the rest due (mastery 45); lesson words stay new. */
-export const PRETEND = { knownEvery: 3, knownMastery: 80, dueMastery: 45 } as const;
+/** Fallback trial records (no portal): about 1 word in 3 known (mastery 80), the rest due (mastery 45); lesson words stay new (rules.ts TINH_TU.pretend). */
+export const PRETEND = TINH_TU.pretend;
 
 export function pretendRecords(words: readonly CatalogWord[], lessons: readonly LessonDef[]): Map<string, WordRecord> {
   const lessonTexts = new Set(lessons.flatMap((lesson) => lesson.words.map((word) => word.text)));
@@ -78,8 +78,8 @@ export function pretendRecords(words: readonly CatalogWord[], lessons: readonly 
 
 const DECK_TEXT = /^[a-z]{3,8}$/;
 
-/** Most Thường of the lesson's group and of other groups a session carries. */
-export const POOL_CAPS = { sameGroup: 12, otherGroup: 6, tamMa: 12 } as const;
+/** Most Thường of the lesson's group and of other groups, and Tâm ma, a session carries (rules.ts TINH_TU.poolCaps). */
+export const POOL_CAPS = TINH_TU.poolCaps;
 
 export interface SessionPools {
   readonly thuong: readonly SessionWord[];
@@ -163,6 +163,12 @@ export function minutesUntilWords(snapshot: NewWordsSnapshot, nowMs: number, nee
   if (mustLeave <= 0) return 0;
   const freeAt = inWindow[mustLeave - 1]! + NEW_WORDS.windowMs;
   return Math.max(1, Math.ceil((freeAt - nowMs) / 60_000));
+}
+
+/** Every word of the lesson is already counted in the ledger's window: opening it again takes nothing (moved from the removed ui/ledger.ts). */
+export function lessonCounted(snapshot: NewWordsSnapshot, words: readonly string[], nowMs: number): boolean {
+  const from = nowMs - NEW_WORDS.windowMs;
+  return words.every((word) => snapshot.entries.some((entry) => entry.wordId === word && entry.firstSeenMs > from));
 }
 
 /** Distance of a Tâm ma word from the lesson (end screen: "cách bài N bậc"). */

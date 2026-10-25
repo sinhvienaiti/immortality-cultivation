@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { SIM, TINH_TU } from "../../src/content/rules";
 import { KEY } from "../../src/kit/typing/router";
-import { TRIAL_LESSONS } from "../../src/tinh-tu/sim/trial-set";
+import { TRIAL_LESSONS } from "../../src/content/data/trial-set";
 import {
   currentResult,
   drainEvents,

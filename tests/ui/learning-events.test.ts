@@ -5,7 +5,7 @@ import {
 } from "../../src/app/learning";
 import type { DeckWord, SimEvent, World } from "../../src/content/types";
 import { createNewWordLedger } from "../../src/typing/new-word-ledger";
-import { TRIAL_WORDS } from "../../src/typing/trial-deck";
+import { TRIAL_DECK_WORDS as TRIAL_WORDS } from "../../src/content/data/trial-set";
 
 /** canon §17, D17, D43, §6.4: learning events, dry-run drafts, the queue guard, Thẻ Ôn and Sổ Từ. */
 

@@ -99,11 +99,11 @@ export function senseCount(vi: string): number {
 }
 
 /**
- * Polysemous for Tĩnh Tu: a gloss of ≥ 3 senses. shared/vocabulary marks no
- * polysemy; this cut is this round's proposal (it drops "wash: rửa; giặt; lớp
- * sơn mỏng" and keeps "lạnh; rét").
+ * Polysemous for Tĩnh Tu: a gloss of ≥ 3 senses (rules.ts TINH_TU.polysemyMinSenses).
+ * shared/vocabulary marks no polysemy; this cut is this round's proposal (it
+ * drops "wash: rửa; giặt; lớp sơn mỏng" and keeps "lạnh; rét").
  */
-export const POLYSEMY_MIN_SENSES = 3;
+export const POLYSEMY_MIN_SENSES = TINH_TU.polysemyMinSenses;
 export const isPolysemous = (vi: string): boolean => senseCount(vi) >= POLYSEMY_MIN_SENSES;
 
 /** Thường and Tâm ma take only words of exactly one group, not polysemous (canon §16, PB-13). */

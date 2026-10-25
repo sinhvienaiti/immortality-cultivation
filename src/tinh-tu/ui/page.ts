@@ -20,6 +20,7 @@ import {
   addSessionScore,
   buildPools,
   canOpenLesson,
+  lessonCounted,
   minutesUntilWords,
   sessionInit,
   tamMaDistance,
@@ -43,10 +44,10 @@ import {
   type TinhTuSession,
   type TinhTuTier,
 } from "../sim/session";
-import { TRIAL_LESSONS, TRIAL_WORDS } from "../sim/trial-set";
+import { TRIAL_LESSONS, TRIAL_TOPIC_WORDS as TRIAL_WORDS } from "../../content/data/trial-set";
 import { topicGroup } from "../sim/topics";
+import { createNewWordLedger } from "../../typing/new-word-ledger";
 import { ICONS } from "./icons";
-import { lessonCounted, openLedger } from "./ledger";
 import { loadRecords } from "./records";
 import { createLearningSender } from "./sender";
 import { SPEED_CHOICES, UNKNOWN_WPM, choiceSpeed, eEffX10, flagSpeed, profileSpeed, type Speed } from "./speed";
@@ -136,8 +137,8 @@ export function startTinhTu(doc: Document): void {
 
   const bridge = createLearningBridge({ gameId: GAME_ID, storage: gameStorage });
   const sender = createLearningSender(bridge, (message) => console.error(message));
-  const opened = openLedger(loadKey("newwords").value);
-  const ledger = opened.ledger;
+  // Lane 3's new-word ledger (canon §6.4, D39), read and written through storage.ts (`.newwords`).
+  const ledger = createNewWordLedger(loadKey("newwords").value);
   const fixedSpeed: Speed | null = flagSpeed(search) ?? profileSpeed(loadSkill("adult", "balanced"));
 
   const glosses = new Map<string, Gloss>();
@@ -186,7 +187,7 @@ export function startTinhTu(doc: Document): void {
 
   function renderStatus(): void {
     const left = ledger.remaining(Date.now());
-    topStatus.textContent = "Sổ từ mới: còn " + left + "/" + NEW_WORDS.perWindow + " từ trong 20 phút" + (opened.interim ? " · sổ tạm của trang" : "");
+    topStatus.textContent = "Sổ từ mới: còn " + left + "/" + NEW_WORDS.perWindow + " từ trong 20 phút";
   }
 
   // ── Tĩnh Thất ─────────────────────────────────────────────────────────────
@@ -209,8 +210,7 @@ export function startTinhTu(doc: Document): void {
     rows.push('<li class="tt-row" data-row="' + SPEED_ROW + '"><span class="tt-num">·</span><span class="tt-choice">Tốc độ gõ: ' + (fixedSpeed === null ? "‹ " : "") + "<b>" + escapeHtml(speedLabel()) + "</b>" + (fixedSpeed === null ? " ›" : "") + "</span></li>");
     main.innerHTML =
       '<section class="tt-home" data-screen="home"><h1>Tĩnh Thất</h1><p class="tt-muted">Lĩnh ngộ công pháp: 100 điểm Tĩnh Tu, cộng dồn qua các phiên. Phiên 60 s; gõ Minh và Thường, tránh Tâm ma.</p>' +
-      '<p class="tt-source">' + (recordSource === "portal" ? "Bản ghi học: từ portal." : "Bộ thử dự phòng (không có portal): độ thuộc của Thường và Tâm ma là giả định, chỉ để thử.") +
-      (opened.interim ? " Sổ cái từ mới: bản tạm của trang (chờ Làn 3 giao typing/new-word-ledger.ts)." : "") + "</p>" +
+      '<p class="tt-source">' + (recordSource === "portal" ? "Bản ghi học: từ portal." : "Bộ thử dự phòng (không có portal): độ thuộc của Thường và Tâm ma là giả định, chỉ để thử.") + "</p>" +
       '<ol class="tt-rows">' + rows.join("") + '</ol><p class="tt-note" role="status">' + escapeHtml(notice) + "</p></section>";
     main.querySelector('[data-row="' + row + '"]')?.classList.add("is-selected");
     setKeys("<kbd>↑</kbd><kbd>↓</kbd> chọn · <kbd>←</kbd><kbd>→</kbd> đổi bậc, tốc độ · <kbd>1</kbd>–<kbd>4</kbd> chọn nhanh · <kbd>Enter</kbd> vào");
@@ -606,7 +606,6 @@ export function startTinhTu(doc: Document): void {
         tier,
         notice,
         remaining: ledger.remaining(Date.now()),
-        interimLedger: opened.interim,
         records: recordSource,
         khauQuyet: kq === null ? null : { index: kq.index, words: kq.lesson.words.map((word) => word.text) },
         session:

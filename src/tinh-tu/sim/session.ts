@@ -76,21 +76,18 @@ export interface SessionResult {
 }
 
 /**
- * Scheduling numbers the canon leaves open (this round's proposal; to fold
- * into rules.ts TINH_TU by Lane 2). Patterns: m Minh, t Thường, x Tâm ma;
- * "opening" runs until every Minh has shown TINH_TU.minhPerSession times.
+ * Scheduling numbers the canon leaves open (this round's proposal), read from
+ * rules.ts TINH_TU.schedule. Patterns: m Minh, t Thường, x Tâm ma; "opening"
+ * runs until every Minh has shown TINH_TU.minhPerSession times.
  */
-export const TT_SCHEDULE = {
-  firstMs: 600,
-  /** Next paper this soon when fewer than the low live count are up. */
-  refillMs: 300,
-  /** Otherwise a seeded gap in [lo, hi] after the last paper. */
-  gapMs: [700, 1300] as readonly [number, number],
-  /** Opening plan (planOwedMinh): every owed Minh appearance shows at least this long before the end, even if nothing is typed. */
-  minhTailMs: 3000,
-  opening: { "nhap-mon": "mmmtmmmx", "tham-ngo": "mmxmmt" } as Readonly<Record<TinhTuTier, string>>,
-  later: { "nhap-mon": "mtmx", "tham-ngo": "mxmt" } as Readonly<Record<TinhTuTier, string>>,
-} as const;
+export const TT_SCHEDULE: {
+  readonly firstMs: number;
+  readonly refillMs: number;
+  readonly gapMs: readonly [number, number];
+  readonly minhTailMs: number;
+  readonly opening: Readonly<Record<TinhTuTier, string>>;
+  readonly later: Readonly<Record<TinhTuTier, string>>;
+} = TINH_TU.schedule;
 
 /** Kit typing rules of Tĩnh Tu: tier-1 letters only, 1 s letter rest, 1.2 s lock grace, Esc keeps errors (D19). */
 export const TT_TYPING: TypingRules = compileTyping(

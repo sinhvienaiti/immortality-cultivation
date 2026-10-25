@@ -618,6 +618,29 @@ export const TINH_TU = {
   topicDistance: 3,
   topics: 15,
   tamMaUnlabelledPm: 333,
+  // Numbers canon §16 leaves open: Lane 8's proposals (đề xuất của vòng này, chờ chủ dự án xác nhận;
+  // docs/changelog/2026-10-25-m0a-lane-8.md), moved here from src/tinh-tu (part A fixes).
+  /**
+   * Paper spawn timing (session.ts): first paper, refill when below the low live count, a seeded gap
+   * [lo, hi] otherwise, and every owed Minh shown at least `minhTailMs` before the end. Patterns:
+   * m Minh, t Thường, x Tâm ma; "opening" runs until every Minh showed `minhPerSession` times.
+   */
+  schedule: {
+    firstMs: 600,
+    refillMs: 300,
+    gapMs: [700, 1300] as readonly [number, number],
+    minhTailMs: 3000,
+    opening: { "nhap-mon": "mmmtmmmx", "tham-ngo": "mmxmmt" },
+    later: { "nhap-mon": "mtmx", "tham-ngo": "mxmt" },
+  },
+  /** Most Thường of the lesson's group, of other groups, and Tâm ma a session carries (lesson.ts). */
+  poolCaps: { sameGroup: 12, otherGroup: 6, tamMa: 12 },
+  /** Fallback trial records without the portal (lesson.ts): 1 word in 3 known (mastery 80), the rest due (45). */
+  pretend: { knownEvery: 3, knownMastery: 80, dueMastery: 45 },
+  /** A gloss of ≥ 3 senses is polysemous: neither Thường nor Tâm ma (topics.ts). */
+  polysemyMinSenses: 3,
+  /** Tĩnh Thất speed row, WPM (ui/speed.ts); 0 is "chưa biết" = PACE.unknownWpm (canon §4.3, D18). */
+  speedChoices: [0, 15, 25, 35, 50, 70, 90] as readonly number[],
 } as const;
 
 // ── Gates and budgets (canon §18.4, §20) ────────────────────────────────────

@@ -1,7 +1,7 @@
 // The Tĩnh Tu page's pure parts: speed (canon §16 E_eff, D18), portal records, glosses. Lane 8.
 import { describe, expect, it } from "vitest";
 import { effectiveE } from "../../src/kit/balance/pace";
-import { TRIAL_LESSONS, TRIAL_WORDS } from "../../src/tinh-tu/sim/trial-set";
+import { TRIAL_LESSONS, TRIAL_TOPIC_WORDS as TRIAL_WORDS } from "../../src/content/data/trial-set";
 import { loadRecords, parseLookup } from "../../src/tinh-tu/ui/records";
 import { SPEED_CHOICES, UNKNOWN_WPM, choiceSpeed, eEffX10, flagSpeed } from "../../src/tinh-tu/ui/speed";
 

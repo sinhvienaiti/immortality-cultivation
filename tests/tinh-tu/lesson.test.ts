@@ -8,15 +8,19 @@ import {
   addSessionScore,
   buildPools,
   canOpenLesson,
+  lessonCounted,
   minutesUntilWords,
   pretendRecords,
   sessionInit,
   type WordRecord,
 } from "../../src/tinh-tu/sim/lesson";
 import { DISTANCE_TABLE, GROUP_IDS, TOPIC_MAP, farGroups, isPolysemous, senseCount, topicDistance, wordFitsPools } from "../../src/tinh-tu/sim/topics";
-import { TRIAL_LESSONS, TRIAL_WORDS } from "../../src/tinh-tu/sim/trial-set";
-import { lessonCounted, openLedger } from "../../src/tinh-tu/ui/ledger";
+import { TRIAL_LESSONS, TRIAL_TOPIC_WORDS as TRIAL_WORDS } from "../../src/content/data/trial-set";
+import { createNewWordLedger } from "../../src/typing/new-word-ledger";
 import { RECORDS } from "./helpers";
+
+/** Lane 3's ledger (the page's interim stand-in is gone, part A fixes). */
+const openLedger = (snapshot: NewWordsSnapshot) => ({ ledger: createNewWordLedger(snapshot) });
 
 const MIN = 60_000;
 
