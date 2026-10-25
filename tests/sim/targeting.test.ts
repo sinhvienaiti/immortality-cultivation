@@ -41,6 +41,7 @@ describe("nearest the heart (canon §23.3)", () => {
   });
 
   it("measures flyers straight and ground beasts along their field", () => {
+    // field.ts heartDistance is the one measure; this fake field walks straight (the real field: core-heart-distance.test.ts).
     const { world } = makeWorld();
     const nha = addBeast(world, "hoa-nha", { x: U(5), z: U(-5) }); // 7.07 m straight
     const lang = addBeast(world, "phong-lang", { x: U(0), z: U(-7.4) });

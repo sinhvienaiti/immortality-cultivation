@@ -13,7 +13,7 @@ import { BOSSES } from "../content/data/boss";
 import { ELITE_TRAITS } from "../content/data/elites";
 import { ELITES } from "../content/rules";
 import type { BeastDef, BeastState, EliteTraitId, NodeId, NodeState, PointU, SpeciesId, TargetRef, World } from "../content/types";
-import { fieldDistance } from "./field";
+import { heartDistance } from "./field";
 import { dist2, isqrt, mmToU, within } from "./fixed";
 
 const HEART: PointU = { x: 0, z: 0 };
@@ -93,15 +93,7 @@ export function straightDistance(ax: number, az: number, bx: number, bz: number)
   return isqrt(dist2(ax, az, bx, bz));
 }
 
-/** How far `beast` is from the heart: along its gate's flow field on the ground, straight in the air or off the grid. */
-export function heartDistance(world: World, beast: BeastState): number {
-  if (!speciesDef(beast.species).flying && beast.gate !== "sky" && beast.cell >= 0) {
-    const path = fieldDistance(world, beast.gate, beast.cell);
-    // −1: no way from that cell (a body pushed into an obstacle): straight instead.
-    if (path >= 0) return path;
-  }
-  return straightDistance(beast.x, beast.z, 0, 0);
-}
+// "How far from the heart" is field.ts heartDistance, the one measure of canon §23.3 (part A fixes).
 
 /** a is nearer the heart than b (ties: smaller beastId). */
 function nearer(a: BeastState, aDist: number, b: BeastState | null, bDist: number): boolean {

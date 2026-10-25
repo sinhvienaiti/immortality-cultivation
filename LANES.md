@@ -129,7 +129,7 @@ never the keys.
 |---|---|---|
 | `createWorld`, `step`, `applyCommand`, `hashWorld`, `hashLocal`, `runLog`, `emit`, `allocBeast`, `beastAt` | 2 `world.ts`, `hash.ts`, `events.ts` | every lane, bots |
 | `scheduleWave`, `spawnGroup`, `liveCount`, `liveRoom`, `onBeastGone`, `isWaveOver` (every group spawned and 0 alive) | 2 `waves.ts`, `spawn.ts` | 5 (Tru Đàn, Gọi Đàn only when `liveRoom` fits), cleanup |
-| `fieldStep(world, beast)`, `fieldDistance(world, gate, cell)` | 2 `field.ts` | 5 (movement, "nearest the heart"), 7 (route share Q) |
+| `fieldStep(world, beast)`, `fieldDistance(world, gate, cell)`, `heartDistance(world, beast)` (the one "distance to the heart" of canon §23.3: ground along the field, flyers straight) | 2 `field.ts` | 5 (movement, `nearestToHeart`, elites), 2 (director Q), 7 (route share Q) |
 | `paceFor(profile)`, `kForSeat(world, seat)`, `scaleTicks`, `applyPaceUpdate` | 2 `pace.ts` (kit `paceK`, `effectiveE`) | 5 (charge), 2 (spawn gaps), 4 (Chân Nguyên, Dưỡng × 1/k), step 0 (`loadMatch`) |
 | `createLocal(seat, stage, gPm)`, `stepLocal(local, world, inputs)`, `drainLocalCommands(local)`, `playerPos(local)` | 2 `local/**` | integration, 6, 7 |
 | `dealSlotWord`, `dealSeal`, `dealCleanse`, `releaseWord`, `isBanQuyetLive` | 3 `words.ts` | 4 (slot ready, node capture), 5 (elites, boss), integration (router) |
@@ -142,7 +142,7 @@ never the keys.
 | `addChanNguyen(world, seat, grade, isSeal)` (resolved only, × 1/k) | 4 `chan-nguyen.ts` | 3 |
 | `earn`, `spend`, `payWaveEnd`, `payLearning`, `payKill` | 4 `economy.ts` | 2 (wave end), 3 (Học trước, Thẻ Ôn), 4 |
 | `bucketAdd(world, source, amount)`, `shares(world)` | 4 `shares.ts` | 4, 7 |
-| `chooseTarget`, `nearestToHeart`, `densestPoint` (canon §10.1, §23.3 ties) | 5 `targeting.ts` | 5, 4 (ground skills), 2 (`local/auto.ts`) |
+| `chooseTarget`, `nearestToHeart` (field.ts `heartDistance`, ties: smaller beastId), `densestPoint` (canon §10.1, §23.3 ties) | 5 `targeting.ts` | 5, 4 (ground skills), 2 (`local/auto.ts`) |
 | `postureHit(world, beast, delta, source)`, `isBroken` | 5 `posture.ts` | 3 (Ấn), 4 (skills), mechanisms |
 | `telegraph(world, def, source, from, to)`, `chargeTicks(def, preset, kPm)`, `T(preset, letters, channelMs)` | 5 `telegraph.ts` | 5, 7 (`ic-telegraphs`), CB5 |
 | `initBeast(world, beast, species, elite)`, `applyElite` | 5 `beasts.ts`, `elites.ts` | 2 (`spawn.ts`) |

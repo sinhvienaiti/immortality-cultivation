@@ -162,6 +162,10 @@ export const fakeField = {
     const at = cellCentre(cell);
     return dist(at.x, at.z, 0, 0);
   },
+  /** field.ts heartDistance on this fake field: every way is straight at the heart. */
+  heartDistance(_world: World, beast: BeastState): number {
+    return dist(beast.x, beast.z, 0, 0);
+  },
 };
 
 // ── Spawn: whole groups at the gate point, never past the live cap ──────────

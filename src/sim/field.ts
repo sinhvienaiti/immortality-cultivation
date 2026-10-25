@@ -14,8 +14,10 @@
  * beasts walk the mirror image of gate B's.
  * Owner: Lane 2.
  */
+import { BEASTS, GENERALS } from "../content/data/beasts";
+import { BOSSES } from "../content/data/boss";
 import { FIELD } from "../content/rules";
-import type { BeastState, FieldRuntime, FlowField, GateId, PointU, StageDef, World } from "../content/types";
+import type { BeastDef, BeastState, FieldRuntime, FlowField, GateId, PointU, StageDef, World } from "../content/types";
 import { dist, dist2, mmToU, mulDiv, mulDivSym, stepTowards } from "./fixed";
 
 /** Waypoint value: walk straight at the heart's centre. */
@@ -323,9 +325,21 @@ export function fieldDistance(world: World, gate: GateId, cell: number): number 
   return flowOf(field, gate).pathU[cell] ?? -1;
 }
 
-/** A beast's own distance to the heart's centre, u: along its field for ground beasts, straight for flyers. */
+/** Flying species (canon §10.2): measured straight even when pulled down (Phong Ấn Võng) or off the sky route. */
+const FLYING: ReadonlySet<string> = new Set(
+  ([...Object.values(BEASTS), ...Object.values(GENERALS), ...Object.values(BOSSES)] as BeastDef[]).filter((def) => def.flying).map((def) => def.id),
+);
+
+/**
+ * The one "distance to the heart" of canon §23.3, u: a ground beast along its
+ * gate's flow field from where it stands (to its cell's waypoint, then that
+ * waypoint's path), a flyer (sky route or flying species) and a beast with no
+ * way on the field in a straight line. Ties are broken by the caller with the
+ * smaller beastId (serial): targeting.ts nearestToHeart, elites.ts, director.ts
+ * (I/Q measures) and, through nearestToHeart, local/auto.ts all read this.
+ */
 export function heartDistance(world: World, beast: BeastState): number {
-  if (isFlyer(beast)) return dist(beast.x, beast.z, 0, 0);
+  if (isFlyer(beast) || FLYING.has(beast.species)) return dist(beast.x, beast.z, 0, 0);
   const field = world.field;
   const flow = flowOf(field, beast.gate);
   const wp = flow.waypoint[cellAt(field, beast.x, beast.z)]!;

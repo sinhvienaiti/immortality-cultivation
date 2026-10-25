@@ -12,9 +12,10 @@
 import { ELITE_TRAITS } from "../content/data/elites";
 import { BOSS, ELITES, LETTERS, PRESETS, SIM, beastHp } from "../content/rules";
 import type { BeastState, EliteTraitId, SpeciesId, World } from "../content/types";
+import { heartDistance } from "./field";
 import { msToTicks } from "./fixed";
 import { createPosture, postureLocked } from "./posture";
-import { heartDistance, speciesDef, speciesW100 } from "./targeting";
+import { speciesDef, speciesW100 } from "./targeting";
 import { dealSeal, isBanQuyetLive } from "./words";
 
 /** Max HP of a species at this world's realm and preset (canon §7.1, D38); swarm and small ignore the preset factor (§13.4). */
