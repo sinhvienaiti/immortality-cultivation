@@ -7,7 +7,7 @@ và một dòng trong bảng dưới. Không import chéo repo. Chủ tệp này
 
 | Tệp của game | Tệp nguồn | Commit nguồn | Đổi gì khi chép |
 |---|---|---|---|
-| `vite.config.ts` | `games/dragon-hold/vite.config.ts` | `06cd4e6` | Cổng 3008, host mặc định `tutien.typing-game.local`, 3 trang (`index`, `bench`, `tinh-tu`), `server.watch.usePolling` khi `CHOKIDAR_USEPOLLING=1` |
+| `vite.config.ts` | `games/dragon-hold/vite.config.ts` | `06cd4e6` | Cổng 3008, host mặc định `tutien.typing-game.local`, 3 trang (`index`, `bench`, `tinh-tu`), `server.watch.usePolling` khi `CHOKIDAR_USEPOLLING=1`; trong WSL trên `/mnt/*` đặt `cacheDir` ở đĩa riêng của WSL (`$HOME/.cache/vite/immortality-cultivation`, đổi bằng `IC_VITE_CACHE_DIR`) vì bộ tối ưu phụ thuộc đổi tên `node_modules/.vite/deps` lỗi EACCES |
 | `src/app/contracts.ts` | `games/dragon-hold/src/app/contracts.ts` | `06cd4e6` | `FrameInfo.local` (lớp `local`), `LocalSink`; `Quality` lấy từ `content/types.ts` |
 | `src/app/loop.ts` | `games/dragon-hold/src/app/loop.ts` | `06cd4e6` | Trả `LoopTiming`; app ghép `local` thành `FrameInfo` |
 | `src/app/input-router.ts` | `games/dragon-hold/src/app/input-router.ts` | `06cd4e6` | Bảng phím canon §5.1 (không camera, không Alt); chế độ cửa hàng `` ` ``; lệnh mang `seat`, `origin`, `aim`; phím chữ chỉ thành lệnh khi Bàn Quyết sống; mũi tên thành `arrows` của `local`; chuột phải `move-to`, chuột trái `soft-target`; đổi phím theo `.settings` |

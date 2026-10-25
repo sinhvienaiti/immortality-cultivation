@@ -1,4 +1,5 @@
-// Source: games/dragon-hold/vite.config.ts @06cd4e6 (adapted: port 3008, host tutien., three pages, polling watch)
+// Source: games/dragon-hold/vite.config.ts @06cd4e6 (adapted: port 3008, host tutien., three pages, polling watch, WSL cacheDir)
+import { homedir, release } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
@@ -14,8 +15,15 @@ const env = (name: string): string | undefined => process.env[name]?.trim() || u
 // nginx host. A plain `pnpm dev` on 127.0.0.1:3008 keeps Vite's own HMR socket.
 const hmrHost = env("DEV_HMR_HOST");
 
+// In WSL on a Windows drive (/mnt/*) the dependency optimizer's rename of
+// node_modules/.vite/deps fails with EACCES (blank page, no console error):
+// keep Vite's cache on WSL's own disk there. IC_VITE_CACHE_DIR overrides.
+const onWslMount = process.platform === "linux" && root.startsWith("/mnt/") && (Boolean(env("WSL_DISTRO_NAME")) || /microsoft/i.test(release()));
+const cacheDir = env("IC_VITE_CACHE_DIR") ?? (onWslMount ? join(homedir(), ".cache", "vite", "immortality-cultivation") : undefined);
+
 export default defineConfig({
   base: "/",
+  ...(cacheDir === undefined ? {} : { cacheDir }),
   plugins: [serveSharedFolders({ sharedRoot })],
   server: {
     host: env("DEV_HOST") ?? "127.0.0.1",
