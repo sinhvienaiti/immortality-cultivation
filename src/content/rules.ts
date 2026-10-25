@@ -238,13 +238,20 @@ export const SHARES = {
 
 /**
  * canon §7.4, D13: D_ref and D_đơn of the reference school (Kiếm, K0) in W × 100
- * a minute. Trial numbers until Lane 7's calibrate.ts measures them; wave and
- * boss HP follow these.
+ * a minute. Lane 7 measured them (scripts/balance/calibrate.ts, 25/10: the
+ * Chuẩn bot with the average kit, 20 seeds × 5 min): D_ref 90.8 W/min on the
+ * mixed test field, D_đơn 71.5 W/min on a held Thú Vương. The wave plan
+ * (data/waves.ts, sim/waves.ts analytics) and the Vương's W still stand on the
+ * trial numbers `dRefW100PerMin`, `dSingleW100PerMin` until the owner decides
+ * the re-plan (đề xuất của vòng này, chờ chủ dự án xác nhận:
+ * docs/changelog/2026-10-25-m0a-lane-7-gates.md).
  */
 export const REF_OUTPUT = {
   school: "kiem",
   realm: 0,
-  measured: false,
+  measured: true,
+  measuredDRefW100PerMin: 9080,
+  measuredDSingleW100PerMin: 7150,
   dRefW100PerMin: 7500,
   dSingleW100PerMin: 4600,
   /** The estimate behind D_ref (canon §7.4, §12.1): typed 47 (ô 1 ~10, ô 2 ~18, ô 4 ~11, ultimate ~8), auto ~12, support ~16. */
