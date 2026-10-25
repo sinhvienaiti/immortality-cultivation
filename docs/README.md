@@ -21,3 +21,4 @@ Trong repo này:
 - `src/content/rules.ts`: số của luật, mỗi khóa trỏ về mục trong `00-canon.md`.
 - `docs/SYNC_DEBT.md`: vé nợ đồng bộ — mã chép từ game khác, commit nguồn, chỗ cố ý khác nguồn.
 - `docs/changelog/`: mỗi lần cập nhật một tệp `<ngày>-<chủ đề>.md` (M0a: `<ngày>-m0a-<làn>.md`).
+- Trang `/` là game (từ 25/10, tích hợp M0a): thẻ tốc độ, Học trước, bày trận, 6 đợt, Thú Vương, Thu Hoạch. Cờ URL và `?debug=1` → `window.__ic` (cho kịch bản của Làn 7): `LANES.md` mục "Integration".

@@ -20,8 +20,10 @@ Dev port 3008, host `tutien.typing-game.local`; `gameId` `immortality-cultivatio
   procedural ground) + the HN0 3D bench + the Tĩnh Tu trial page. State
   (25/10): step 0 done (scaffold, data contract, storage, boundary test, key
   router, match header); part A done (lanes 1a, 2, 3, 5, 8) with its review
-  fixes (`docs/changelog/2026-10-25-m0a-part-a-fixes.md`); part B (lanes 1b,
-  4, 6, 7, integration) builds on the remaining stubs (`TODO(<lane>)`).
+  fixes (`docs/changelog/2026-10-25-m0a-part-a-fixes.md`); part B lanes 4 and
+  6 done, Lane 1b in progress; integration done (`src/app/app.ts startApp`,
+  the game plays at `/`, `docs/changelog/2026-10-25-m0a-integration.md`);
+  Lane 7's gates and scenarios come next (they read `window.__ic`, LANES.md).
 - Camera (canon §21.1, D48): fixed 3/4, the whole field, both gates, the sky
   route and every beast in frame, no zoom; tilt 55° (`rules.ts`
   `CAMERA.defaultTiltDeg`, read by `src/view/renderer.ts` `VIEW`), FOV 28°.
@@ -104,5 +106,6 @@ contracts, the event list and how to ask for a shared type change.
 | `pnpm tt:bots` | Tĩnh Tu bots and HC4–HC7 (`scripts/tinh-tu/bots.ts`, Lane 8) |
 | `pnpm visual <scenario.mjs>` | Real-browser scenario over CDP (`src/kit/tools/cdp-run.mjs`) |
 
-Pages: `/` the game ("Đang dựng" until integration), `/bench.html` the HN0
-bench (Lane 1), `/tinh-tu.html` the Tĩnh Tu trial (Lane 8).
+Pages: `/` the game (speed card, Học trước, prep, 6 waves, Thú Vương, Thu
+Hoạch; flags and `?debug=1` → `window.__ic` in LANES.md "Integration"),
+`/bench.html` the HN0 bench (Lane 1), `/tinh-tu.html` the Tĩnh Tu trial (Lane 8).

@@ -32,7 +32,7 @@ Lane 6 draws the crowd in `procedural` mode.
 
 | Lane | Owns |
 |---|---|
-| **Step 0 / Integration** | Repo scaffold (`package.json`, `pnpm-workspace.yaml`, `tsconfig.json`, `vitest.config.ts`, `vite.config.ts`, `kit.config.json`, `.gitignore`, `index.html`, `bench.html`, `tinh-tu.html`, `README.md`, `AGENTS.md`, `LANES.md`, `docs/README.md`), `src/main.ts`, `src/app/{app,loop,input-router,contracts,save,storage}.ts`, `tests/boundary.test.ts`, `tests/app/**`; `src/kit/**` only through the parent's kit sync. Wrote `src/content/{types,rules}.ts` and `docs/SYNC_DEBT.md`, handed to Lane 2 |
+| **Step 0 / Integration** | Repo scaffold (`package.json`, `pnpm-workspace.yaml`, `tsconfig.json`, `vitest.config.ts`, `vite.config.ts`, `kit.config.json`, `.gitignore`, `index.html`, `bench.html`, `tinh-tu.html`, `README.md`, `AGENTS.md`, `LANES.md`, `docs/README.md`), `src/main.ts`, `src/app/{app,match,debug,loop,input-router,contracts,save,storage}.ts`, `tests/boundary.test.ts`, `tests/app/**`; `src/kit/**` only through the parent's kit sync. Wrote `src/content/{types,rules}.ts` and `docs/SYNC_DEBT.md`, handed to Lane 2 |
 | **1 Bench 3D (HN0)** | `src/view/{renderer,crowd,vat,impostor,swords,trails,hitfx,walker-rig}.ts`, `src/view/bench/**`, `src/content/model-contracts.ts`, `scripts/visual/scenarios/ic-bench.mjs` (self-contained, no `lib/**`), `scripts/models/**`, `tests/view/{renderer,crowd,vat,impostor,swords,hitfx,walker-rig}*.test.ts`; the verdict table of canon §20.4 |
 | **2 Core sim + local player** | `src/content/{types,rules}.ts` (from now on), `src/content/data/{stage-m0a,waves}.ts`, `src/sim/{fixed,hash,events,world,waves,spawn,director,pace,field}.ts`, `src/local/**`, `tests/content/**`, `tests/sim/core-*.test.ts`, `tests/local/**`, `docs/SYNC_DEBT.md` |
 | **3 Bàn Quyết, typing, learning** | `src/typing/**`, `src/sim/{words,cast}.ts`, `src/ui/{ban-quyet,learning-frame,ime-banner,learn-ahead,review-card,word-book}.ts`, `src/app/{learning,typing-pace,pace-card}.ts`, `tests/typing/**`, `tests/ui/{ban-quyet,learning}*.test.ts` |
@@ -156,7 +156,8 @@ never the keys.
 | `Presenter { onEvents(events, world); frame(world, info); dispose() }`, `FrameInfo.local`, `CommandSink`, `LocalSink`, `Projector`, `ActionHandler` | step 0 `app/contracts.ts` | 1, 3, 6 |
 | `KeyPanel`, `ShopModePanel`, `createInputRouter` (order of canon §5.1, M0A_PLAN §6.9) | step 0 `app/input-router.ts` | 3 (learning panels), 6 (`shop-mode.ts`, menu) |
 | `loadKey`, `saveKey`, `migrate`, `loadSkill`, `gameStorage` for `.save`, `.skill`, `.newwords`, `.settings` | step 0 `app/storage.ts` | integration, 3, 8 |
-| `loadMatch`, `createReplayHeader`, `newWordAllowance`, `matchRulesHash` | step 0 `app/app.ts` | integration, 7 |
+| `loadMatch`, `createReplayHeader` (with `flashEX1000`), `newWordAllowance`, `matchRulesHash` | step 0 `app/app.ts` | integration, 7 |
+| `createMatchRunner(header)` (`send`, `input`, `tick`, `drain`, `stop`, `replay`), `rebuild`, `replayCheck`, `officialCheck` | integration `app/match.ts` | integration, 7 |
 
 - **Cast:** the last right letter in `words.ts` → `emitCast` (once per
   `wordId`, `actionId` per seat) → Lane 4's `resolveCast` looks for a target.
@@ -248,13 +249,52 @@ at M0a; the path must hold 300 like the bench).
   `src/tinh-tu/sim` in the pure group, `TINH_TU`, the ledger contract (Lane 3)
   and `storage.ts` for `.newwords`; `Date.now()` only in its UI layer.
 
-## Integration (step 0 owner, after the lanes)
+## Integration (step 0 owner, done 25/10)
 
-`src/app/app.ts startApp`: speed card → prep → world, `local`, loop, router,
-every presenter. Frame order (Rồng LANES "Integration"): drain events →
-`learning.onEvents` → app flow (Thẻ Ôn, queue flush) → every presenter's
-`onEvents` → stage update (camera before DOM projection) → every presenter's
-`frame` → draw. The sim stands still while a learning panel is open, in the
-pause menu, under the focus overlay and in the 3-2-1 after a pause. URL flags:
-`?q=low|medium|high`, `?seed=`, `?preset=`, `?wpm=`, `?motion=`,
-`?prelearn=0`, `?speed=N` (dev only), `?debug=1` → `window.__ic`.
+`src/app/app.ts startApp` (the page `/`): speed card (unless `?wpm=` or a
+measured `.skill`) → Học trước → prep (shop mode on `` ` ``, Enter starts) →
+waves, Thẻ Ôn in the breaks → Thú Vương → Thu Hoạch (Enter plays again).
+Frame order (Rồng LANES "Integration"): drain events → `learning.onEvents` →
+app flow (pace-update after wave 1, Thẻ Ôn, finish) → every presenter's
+`onEvents` → every presenter's `frame` (the camera is fixed, placed before any
+DOM projection) → draw. Presenters in order: the grey-box scene
+(`createGreyBoxView`: stage, beasts, player, telegraphs, effects, motes), the
+silent sound hooks, the Bàn Quyết, the learning frame, HUD, wave card, shop
+strip, shop mode, Học trước, Thẻ Ôn, Thu Hoạch.
+
+- **Commands go into the world at once** (`app/match.ts`): a key is applied
+  when it comes (a hit-stop slows the world, never the keys, canon §6.1,
+  §20.2) and logged with the tick it entered. Before the first command of a
+  tick the local layer takes that tick's step, so the order is always the one
+  `runLog` replays (local step, the tick's commands, the local layer's own
+  commands, the world step). The tail holds both hashes every 600 ticks and at
+  the end. `tests/app/match-runner.test.ts` checks it against `runLog`.
+- **The sim stands still** while Học trước or Thẻ Ôn is open (the break clock
+  with it), in the pause menu, on the speed card, under the focus veil (blur,
+  hidden tab) and in the 3-2-1 after a pause in a live phase. Thẻ Ôn opens
+  0.8 s after a wave ends (letters still in flight never answer it).
+- **Tier:** `?q=`, else `.settings` quality, else by GPU (canon §20.1: discrete
+  High, Apple Medium, else Low); after 10 s of play an over-budget frame only
+  shows a hint.
+- **Pronunciation:** Học trước, Thẻ Ôn "nghe rồi gõ" and listen buttons use the
+  browser's English voice (kit `speech`); `?speech=0` turns it off. No game
+  sound plays (silent hooks).
+- **URL flags:** `?q=low|medium|high`, `?seed=`, `?preset=relax|balanced|challenge|learn`,
+  `?wpm=`, `?motion=full|reduce`, `?prelearn=0`, `?review=0`, `?speech=0`,
+  `?guard=ward|dash`, `?tam=kiem-tam|tich-kiem`, `?speed=N` (dev builds only,
+  0.25–16, rules unchanged), `?debug=1` → `window.__ic` (also on in dev builds).
+
+`window.__ic` (`IcHandle` in app.ts) for Lane 7's scenarios:
+
+| Member | Gives |
+|---|---|
+| `ready`, `state()` | phase, wave, tick, Trận Lực, Linh Sa, live beasts, words, grades, Casts, the open panel (`menu`, `learn-ahead`, `review`, `results`, `shop`), `paused`, `veil`, `countdown`, `imeBanner`, `outcome`, router stats, learning queue counts |
+| `send(command)`, `action(name)` | a command into the world (logged), a command key's action in router order |
+| `replayCheck()` | rebuild from header and log through the same path (partial tick included): `same` for `hashWorld` and `hashLocal`; `official`: Lane 2's `runLog` on the last tail entry |
+| `replay()`, `hash()` | the replay (canon §23.2: header, body, tail; B9 export); both hashes now |
+| `frame()` | ic-camera-frame: field corners, gates, sky entries, heart projected; every live beast's drawn base and top (`actors.locate`, so flyers and edge bodies as drawn); `outside`, `beastsOut`; `band` = top of the Bàn Quyết band |
+| `foeSizes()` | ic-scale: drawn height and width (px) of every live beast and the player |
+| `words()`, `review()` | ic-words: the Bàn Quyết view and each cell's box; the open Thẻ Ôn's questions (text, kind, right choice) |
+| `events()` | event tally, Cast states, telegraph charge by def (min ms: ic-telegraphs), frames slowed by hit-stop, silent mixer counts |
+| `perf()` | ic-perf: frame interval mean, p95, max; CPU part of a frame; draw calls, triangles, GPU string; key → next frame and last letter → Cast stroke latency (ic-hitstop-keys) |
+| `world()`, `local()`, `setSpeed(n)` (dev), `restart()` | |
