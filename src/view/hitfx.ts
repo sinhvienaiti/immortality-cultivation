@@ -34,6 +34,9 @@ class FloatUniform {
   }
 }
 
+/** Event calls made at load so V8 compiles spark() and puff() before the first blow (an unoptimised function boxes every float). */
+const WARM_EVENTS = 400;
+
 /** Draws in a random table (a power of two): read `table[(cursor = (cursor + 1) & RANDOM_MASK)]`. */
 export const RANDOM_SIZE = 4096;
 export const RANDOM_MASK = RANDOM_SIZE - 1;
@@ -163,6 +166,14 @@ class HitFxImpl implements HitFx {
     this.mesh.renderOrder = 6;
     this.mesh.name = "hit-sparks";
     renderer.layers.fx.add(this.mesh);
+    // Warm-up (swords.ts warm()): spark() compiled at load, then the pool emptied.
+    for (let k = 0; k < WARM_EVENTS; k += 1) this.spark(k % 5, 0.5, -k % 7, 1 + (k % 3));
+    this.life.fill(0);
+    this.a.fill(0);
+    this.b.fill(0);
+    this.cursor = 0;
+    this.high = 0;
+    this.rc = 0;
   }
 
   get live(): number {
@@ -307,8 +318,8 @@ interface Ink {
 }
 
 const finite = (value: number | undefined): value is number => value !== undefined && Number.isFinite(value);
-const SCRATCH_A: Rect = { x: 0, y: 0, w: 0, h: 0 };
-const SCRATCH_B: Rect = { x: 0, y: 0, w: 0, h: 0 };
+// Fractional starts: the fields are doubles from the first write.
+const SCRATCH_A: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
 
 /**
  * kit/feedback's NumberField with a box as big as what the sprites draw (Rồng
@@ -319,15 +330,23 @@ const SCRATCH_B: Rect = { x: 0, y: 0, w: 0, h: 0 };
  * in shared/game-kit feedback/numbers.ts.
  */
 export class DrawnNumberField extends NumberField {
-  private ink: Ink | null = null;
+  /** The atlas ink (Ink fields in order: digitHalf, digitTop, digitBottom, labelWidth, labelUp, labelDown), measured once. */
+  private readonly inkv = new Float64Array(6);
+  private inkReady = false;
+  /** This update's step, seconds. */
+  private stepS = 0.5;
+  /** Each live number's drawn box for one settle pass. */
+  private readonly bx = new Float32Array(this.alive.length);
+  private readonly by = new Float32Array(this.alive.length);
+  private readonly bw = new Float32Array(this.alive.length);
+  private readonly bh = new Float32Array(this.alive.length);
 
   constructor(profile: FeedbackProfile) {
     super(profile);
   }
 
-  /** The atlas ink, measured once with the atlas fonts; without a canvas, the whole quads. */
-  private inkOf(): Ink {
-    if (this.ink !== null) return this.ink;
+  /** Measures the atlas ink once with the atlas fonts (without a canvas: the whole quads) into inkv. */
+  private measureInk(): void {
     const label = this.profile.numbers.label;
     let ink: Ink = { digitHalf: A.minCellW / 2, digitTop: 0, digitBottom: A.cellH, labelWidth: Math.min(A.width - 8, label.length * 26 + 16), labelUp: A.labelRowH / 2, labelDown: A.labelRowH / 2 };
     const canvas = globalThis.document?.createElement("canvas");
@@ -356,62 +375,149 @@ export class DrawnNumberField extends NumberField {
         };
       }
     }
-    this.ink = ink;
-    return ink;
+    const v = this.inkv;
+    v[0] = ink.digitHalf;
+    v[1] = ink.digitTop;
+    v[2] = ink.digitBottom;
+    v[3] = ink.labelWidth;
+    v[4] = ink.labelUp;
+    v[5] = ink.labelDown;
+    this.inkReady = true;
   }
 
-  /** One settle pass of the kit can leave a lifted number on another: passes run until no two boxes touch (at most 4). */
+  /**
+   * The kit's settle() with its rule (the younger of two touching numbers
+   * merges into the older when both are below T3 and of one style, else it
+   * moves above it), over boxes computed once a pass instead of once a pair
+   * (the kit's loop calls box() for every pair, every frame); passes run
+   * until no two boxes touch (at most 4), since one pass can leave a lifted
+   * number on another.
+   */
   override settle(): void {
-    for (let pass = 0; pass < 4; pass += 1) {
-      super.settle();
-      if (!this.anyTouching()) return;
-    }
+    for (let pass = 0; pass < 4; pass += 1) if (!this.settlePass()) return;
   }
 
-  private anyTouching(): boolean {
-    const a = SCRATCH_A;
-    const b = SCRATCH_B;
+  /**
+   * The kit's update() (age, drift with drag, pop, a number over a protected
+   * rectangle dropped, then settle) with its numbers, the step read from a
+   * field: the drag is worked out once a frame, and the protected test runs
+   * only when the HUD has published rectangles (the kit's `for … of` over them
+   * builds an iterator a call).
+   */
+  override update(dt: number): void {
+    this.stepS = dt > 0 ? dt : 0;
+    const step = this.stepS;
+    const drag = Math.exp(-4 * step);
+    const guarded = this.protected.length > 0;
     for (let i = 0; i < this.alive.length; i += 1) {
-      if (this.alive[i] !== 1) continue;
-      this.box(i, a);
-      for (let j = i + 1; j < this.alive.length; j += 1) {
-        if (this.alive[j] !== 1) continue;
-        this.box(j, b);
-        if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) return true;
+      if (this.alive[i] === 0) continue;
+      this.age[i] = this.age[i]! + step;
+      if (this.age[i]! >= this.life[i]!) {
+        this.kill(i);
+        continue;
       }
+      this.vx[i] = this.vx[i]! * drag;
+      this.vy[i] = this.vy[i]! * drag;
+      this.x[i] = this.x[i]! + this.vx[i]! * step;
+      this.y[i] = this.y[i]! + this.vy[i]! * step;
+      this.pop[i] = Math.max(0, this.pop[i]! - step * 7);
+      if (guarded && this.overlapsProtected(i)) {
+        this.kill(i);
+        this.dropped += 1;
+      }
+    }
+    this.settle();
+  }
+
+  /** Whether number `i`'s drawn box covers a protected rectangle (the kit's covers()). */
+  private overlapsProtected(i: number): boolean {
+    const box = this.box(i, SCRATCH_A);
+    for (let k = 0; k < this.protected.length; k += 1) {
+      const rect = this.protected[k]!;
+      if (box.x < rect.x + rect.w && box.x + box.w > rect.x && box.y < rect.y + rect.h && box.y + box.h > rect.y) return true;
     }
     return false;
   }
 
-  /** The drawn box (kit box() widened by the ink), computed in place: no float crosses a call. */
-  override box(i: number, out: Rect, x = this.x[i]!, y = this.y[i]!): Rect {
-    const row = tierRow(this.tier[i]!, this.profile.tiers);
-    const pop = 1 + ((row.number?.pop ?? 1) - 1) * this.pop[i]!;
+  /** Box `i` into the cache arrays. */
+  private cache(i: number): void {
+    this.measure(i);
+  }
+
+  /** One pass; true when two boxes touched (and were merged or moved). */
+  private settlePass(): boolean {
+    const alive = this.alive;
+    const n = alive.length;
+    for (let i = 0; i < n; i += 1) if (alive[i] === 1) this.cache(i);
+    let touched = false;
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 1; j < n && alive[i] === 1; j += 1) {
+        if (alive[j] !== 1) continue;
+        if (!(this.bx[i]! < this.bx[j]! + this.bw[j]! && this.bx[i]! + this.bw[i]! > this.bx[j]! && this.by[i]! < this.by[j]! + this.bh[j]! && this.by[i]! + this.bh[i]! > this.by[j]!)) continue;
+        touched = true;
+        const older = this.born[i]! <= this.born[j]! ? i : j;
+        const younger = older === i ? j : i;
+        if (this.style[i] === this.style[j] && this.tier[i]! < 3 && this.tier[j]! < 3) {
+          // The kit's own merge (TypeScript-private in kit/feedback/numbers.ts).
+          (this as unknown as { absorb(other: number, slot: number): number }).absorb(older, younger);
+          if (alive[older] === 1) this.cache(older);
+        } else {
+          this.y[younger] = this.y[younger]! - (this.by[younger]! + this.bh[younger]! - this.by[older]!) - 2;
+          this.cache(younger);
+        }
+      }
+    }
+    return touched;
+  }
+
+  /**
+   * The drawn box (kit box() widened by the ink), from measure(): a box does
+   * not depend on where the number stands, so a box at (atX, atY) is the
+   * measured one moved there. Optional parameters read into locals (a default
+   * parameter value, `x = this.x[i]`, makes Chrome's V8 box the double on
+   * every call).
+   */
+  override box(i: number, out: Rect, atX?: number, atY?: number): Rect {
+    this.measure(i);
+    out.x = atX === undefined ? this.bx[i]! : this.bx[i]! + (atX - this.x[i]!);
+    out.y = atY === undefined ? this.by[i]! : this.by[i]! + (atY - this.y[i]!);
+    out.w = this.bw[i]!;
+    out.h = this.bh[i]!;
+    return out;
+  }
+
+  /** Number `i`'s drawn box where it stands, into bx, by, bw, bh (typed arrays: no object written per call). */
+  private measure(i: number): void {
+    const x = this.x[i]!;
+    const y = this.y[i]!;
+    // `row.number?.pop ?? 1` would be boxed on every call (Chrome's V8): an explicit null test is not.
+    const number = tierRow(this.tier[i]!, this.profile.tiers).number;
+    const pop = number === null ? 1 : 1 + (number.pop - 1) * this.pop[i]!;
     const px = this.fontPx * this.size[i]! * pop;
     const perfect = this.style[i] === STYLE.perfect;
-    const ink = this.inkOf();
+    if (!this.inkReady) this.measureInk();
+    const ink = this.inkv;
     const advance = A.advance * px;
     const glyphs = this.text(i).length;
     const column = (advance * A.glyphQuadW) / A.refCellW;
     const rowPx = (px * A.glyphQuadH) / A.cellH;
-    let width = glyphs * advance + 2 * Math.max(0, ink.digitHalf * column - advance / 2);
+    let width = glyphs * advance + 2 * Math.max(0, ink[0]! * column - advance / 2);
     const lh = px * A.label;
-    if (perfect) width = Math.max(width, (lh * ink.labelWidth) / A.refCellW);
+    if (perfect) width = Math.max(width, (lh * ink[3]!) / A.refCellW);
     width += PAD_PX;
-    out.x = x - width / 2;
-    out.w = width;
     const glyphTop = y - px / 2;
-    let top = glyphTop + ink.digitTop * rowPx;
-    let bottom = glyphTop + ink.digitBottom * rowPx;
+    let top = glyphTop + ink[1]! * rowPx;
+    let bottom = glyphTop + ink[2]! * rowPx;
     if (perfect) {
       const middle = glyphTop - A.labelMidUp * lh;
       const labelRow = (lh * A.labelQuadH) / A.cellH;
-      top = Math.min(top, middle - ink.labelUp * labelRow);
-      bottom = Math.max(bottom, middle + ink.labelDown * labelRow);
+      top = Math.min(top, middle - ink[4]! * labelRow);
+      bottom = Math.max(bottom, middle + ink[5]! * labelRow);
     }
-    out.y = top - PAD_PX / 2;
-    out.h = bottom - top + PAD_PX;
-    return out;
+    this.bx[i] = x - width / 2;
+    this.bw[i] = width;
+    this.by[i] = top - PAD_PX / 2;
+    this.bh[i] = bottom - top + PAD_PX;
   }
 }
 
@@ -570,8 +676,8 @@ export class IcNumberSprites {
       const style = field.style[i]!;
       const k = field.age[i]! / field.life[i]!;
       this.qa = Math.min(1, (1 - k) * 3.5);
-      const row = tierRow(field.tier[i]!, field.profile.tiers);
-      const px = field.fontPx * field.size[i]! * (1 + ((row.number?.pop ?? 1) - 1) * field.pop[i]!);
+      const number = tierRow(field.tier[i]!, field.profile.tiers).number;
+      const px = field.fontPx * field.size[i]! * (number === null ? 1 : 1 + (number.pop - 1) * field.pop[i]!);
       const color = this.colors[style] ?? this.colors[0]!;
       const advance = px * A.advance;
       let x = field.x[i]! - (text.length * advance) / 2;
@@ -662,20 +768,21 @@ class DamageNumbersImpl implements DamageNumbers, Overlay {
     return this.field.live;
   }
 
-  show(target: number, amount: number, x: number, y: number, z: number, tier: number, style: number = STYLE.normal): void {
+  show(target: number, amount: number, x: number, y: number, z: number, tier: number, style?: number): void {
     const row = tierRow(tier, this.field.profile.tiers);
     if (row.number === null || amount <= 0) return;
     this.renderer.project(x, y + 0.4, z, this.screen);
     if (!this.screen.visible) return;
-    this.field.spawn(target, this.screen.x, this.screen.y, amount, style, tier, row.number.size, row.number.life, 0, -1, this.now);
+    this.field.spawn(target, this.screen.x, this.screen.y, amount, style === undefined ? STYLE.normal : style, tier, row.number.size, row.number.life, 0, -1, this.now);
   }
 
   update(dt: number): void {
     this.now += Math.max(0, dt);
     // Rồng's UI scale: 20 px at 1600 × 900, kept within 0.8–1.2.
-    const ui = Math.max(0.8, Math.min(1.2, Math.min(this.width / 1600, this.height / 900)));
-    this.field.fontPx = 20 * ui;
-    this.field.update(Math.max(0, dt));
+    const fontPx = 20 * Math.max(0.8, Math.min(1.2, Math.min(this.width / 1600, this.height / 900)));
+    if (fontPx !== this.field.fontPx) this.field.fontPx = fontPx;
+    // The caller's own number goes on (the field clamps it): a new double passed to a call is boxed.
+    this.field.update(dt);
   }
 
   draw(gl: THREE.WebGLRenderer, width: number, height: number): void {
@@ -803,6 +910,13 @@ class InkSmokeImpl implements InkSmoke {
     this.mesh.renderOrder = 2;
     this.mesh.name = "ink-smoke";
     renderer.layers.fx.add(this.mesh);
+    // Warm-up (swords.ts warm()): puff() compiled at load, then the pool emptied.
+    for (let k = 0; k < WARM_EVENTS; k += 1) this.puff(k % 5, 0, -k % 7, 1 + (k % 3) * 0.25);
+    this.life.fill(0);
+    this.a.fill(0);
+    this.b.fill(0);
+    this.cursor = 0;
+    this.rc = 0;
   }
 
   get live(): number {

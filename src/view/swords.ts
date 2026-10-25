@@ -91,6 +91,9 @@ const Phase = { Free: 0, Waiting: 1, Flying: 2, Holding: 3, Gathering: 4, Launch
 /** Volleys a cast still has to send (fixed queue). */
 const QUEUE = 16;
 
+/** Calls that warm an event function at load (see warm()). */
+export const WARM_CALLS = 600;
+
 class SwordPoolImpl implements SwordPool {
   readonly capacity: number;
   readonly impactX: Float32Array;
@@ -161,6 +164,26 @@ class SwordPoolImpl implements SwordPool {
     this.samples = options.trailSamples ?? VAN_KIEM.trailSamples;
     this.trails = options.trails === false ? null : createTrails(renderer, n, this.samples);
     this.setVfxShare(options.vfxShare ?? 1);
+    this.warm();
+  }
+
+  /**
+   * Draws up a few hundred flights on slot 0 and frees it again: V8 compiles
+   * launch() at load, not during the first "vạn kiếm" (an unoptimised function
+   * boxes every float it computes, a few hundred swords at once).
+   */
+  private warm(): void {
+    for (let k = 0; k < WARM_CALLS; k += 1) {
+      this.order[0] = k % 7;
+      this.order[1] = 1.6;
+      this.order[2] = -7.5;
+      this.order[3] = -10;
+      this.launch(0);
+    }
+    this.phase[0] = Phase.Free;
+    this.t[0] = 0;
+    this.trails?.reset(0);
+    this.rc = 0;
   }
 
   get live(): number {
@@ -236,8 +259,9 @@ class SwordPoolImpl implements SwordPool {
     this.trails?.reset(i);
   }
 
-  cast(x: number, z: number, toX: number, toZ: number, share = 1): number {
-    const each = Math.floor((this.capacity * Math.min(1, Math.max(0, share))) / VAN_KIEM.volleys);
+  cast(x: number, z: number, toX: number, toZ: number, share?: number): number {
+    const part = share === undefined ? 1 : Math.min(1, Math.max(0, share));
+    const each = Math.floor((this.capacity * part) / VAN_KIEM.volleys);
     for (let v = 0; v < VAN_KIEM.volleys && this.qLen < QUEUE; v += 1) {
       const q = this.qLen++;
       this.qT[q] = v * VAN_KIEM.volleyGapS;

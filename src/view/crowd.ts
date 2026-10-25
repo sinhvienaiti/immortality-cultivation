@@ -544,16 +544,17 @@ export interface ModeSwitchState {
  * wanted it for MODE_SWITCH.holdS without a break, then the beast crossfades
  * over MODE_SWITCH.blendS (a reversal mid-blend turns the fade round).
  */
-export function stepModeSwitch(state: ModeSwitchState, want: number, dt: number, holdS: number = MODE_SWITCH.holdS, blendS: number = MODE_SWITCH.blendS): ModeSwitchState {
+export function stepModeSwitch(state: ModeSwitchState, want: number, dt: number): ModeSwitchState {
+  // The crowd's per-frame loop writes the same steps inline (stepKinds): no float crosses a call there.
   if (want !== state.mode) {
     state.pending += dt;
-    if (state.pending >= holdS - 1e-9) {
+    if (state.pending >= MODE_SWITCH.holdS - 1e-9) {
       state.mode = want;
       state.fade = 1 - state.fade;
       state.pending = 0;
     }
   } else state.pending = 0;
-  if (state.fade < 1) state.fade = Math.min(1, state.fade + (blendS > 0 ? dt / blendS : 1));
+  if (state.fade < 1) state.fade = Math.min(1, state.fade + dt / MODE_SWITCH.blendS);
   return state;
 }
 
@@ -1457,11 +1458,23 @@ class CrowdImpl implements Crowd {
         const imp =
           rule.kind === "swarm" ? layer.look.gait === "swarm" : rule.kind === "plain" ? plain : plain && rec.screen > threshold;
         const want = imp ? KIND.impostor : KIND.vat;
+        const sw = rec.sw;
         if (rec.fresh) {
-          rec.sw.mode = want;
-          rec.sw.fade = 1;
-          rec.sw.pending = 0;
-        } else stepModeSwitch(rec.sw, want, dt);
+          sw.mode = want;
+          sw.fade = 1;
+          sw.pending = 0;
+        } else {
+          // stepModeSwitch, inline.
+          if (want !== sw.mode) {
+            sw.pending += dt;
+            if (sw.pending >= MODE_SWITCH.holdS - 1e-9) {
+              sw.mode = want;
+              sw.fade = 1 - sw.fade;
+              sw.pending = 0;
+            }
+          } else sw.pending = 0;
+          if (sw.fade < 1) sw.fade = Math.min(1, sw.fade + dt / MODE_SWITCH.blendS);
+        }
         this.placeKinds(rec);
       }
       rec.fresh = false;

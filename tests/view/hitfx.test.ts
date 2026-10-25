@@ -4,7 +4,7 @@ import { TT_BUDGETS } from "../../src/content/rules";
 import { TIERS } from "../../src/kit/feedback/tiers";
 import type { ScreenPoint } from "../../src/app/contracts";
 import type { Overlay, Renderer3D } from "../../src/view/renderer";
-import { IC_NUMBERS, RANDOM_SIZE, STYLE, createDamageNumbers, createHitFx, createInkSmoke, randomTable } from "../../src/view/hitfx";
+import { DrawnNumberField, IC_NUMBERS, RANDOM_SIZE, STYLE, createDamageNumbers, createHitFx, createInkSmoke, randomTable } from "../../src/view/hitfx";
 
 interface FakeRenderer extends Renderer3D {
   overlays: Overlay[];
@@ -99,6 +99,31 @@ describe("damage numbers (kit NumberField with Rồng's drawn box; canon §20.3)
     expect(numbers.live).toBe(0);
     expect(numbers.drawCalls()).toBe(0);
     numbers.dispose();
+  });
+});
+
+describe("drawn number boxes (Rồng's DrawnNumberField, settled over cached boxes)", () => {
+  it("leaves no two live numbers touching: the younger merges (same style, below T3) or moves above", () => {
+    const field = new DrawnNumberField(IC_NUMBERS);
+    // A pile on one spot: plain blows (merge), Perfect ones and T3+ (stack above).
+    for (let k = 0; k < 24; k += 1) field.spawn(100 + k, 640 + (k % 3) * 6, 360 + (k % 4) * 5, 10 + k * 13, k % 5 === 0 ? STYLE.perfect : STYLE.normal, 1 + (k % 4), 1.3, 1.5, 0, -1, 0.5 + k * 0.01);
+    for (let frame = 0; frame < 20; frame += 1) {
+      field.update(1 / 60);
+      const boxes: { x: number; y: number; w: number; h: number }[] = [];
+      for (let i = 0; i < field.alive.length; i += 1) if (field.alive[i] === 1) boxes.push({ ...field.box(i, { x: 0, y: 0, w: 0, h: 0 }) });
+      for (let a = 0; a < boxes.length; a += 1)
+        for (let b = a + 1; b < boxes.length; b += 1) {
+          const p = boxes[a]!;
+          const q = boxes[b]!;
+          expect(p.x < q.x + q.w && p.x + p.w > q.x && p.y < q.y + q.h && p.y + p.h > q.y, "frame " + frame).toBe(false);
+        }
+    }
+    expect(field.live).toBeGreaterThan(1);
+    // A box at another point is the same box moved there.
+    const i = field.alive.indexOf(1);
+    const here = field.box(i, { x: 0, y: 0, w: 0, h: 0 });
+    const there = field.box(i, { x: 0, y: 0, w: 0, h: 0 }, field.x[i]! + 50, field.y[i]! - 20);
+    expect([there.x - here.x, there.y - here.y, there.w - here.w, there.h - here.h].map((v) => Math.round(v * 1000) / 1000)).toEqual([50, -20, 0, 0]);
   });
 });
 

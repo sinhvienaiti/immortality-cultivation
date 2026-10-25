@@ -55,12 +55,27 @@ interface Layer {
   readonly action: THREE.AnimationAction;
   readonly duration: number;
   weight: number;
+  /** The weight three.js has (written only when it changes). */
+  applied: number;
   target: number;
   fadeIn: number;
   fadeOut: number;
 }
 
-const approach = (current: number, target: number, step: number): number => (current < target ? Math.min(target, current + step) : Math.max(target, current - step));
+/**
+ * Every layer from this one site, its number fields doubles from the start: loops and one-shots
+ * share one hidden class, so the per-frame loops stay monomorphic and V8 stores the floats in place.
+ */
+function layerOf(action: THREE.AnimationAction, duration: number, fadeIn: number, fadeOut: number): Layer {
+  const layer: { -readonly [K in keyof Layer]: Layer[K] } = { action, duration: 0.5, weight: 0.5, applied: 0.5, target: 0.5, fadeIn: 0.5, fadeOut: 0.5 };
+  layer.duration = duration;
+  layer.weight = 0;
+  layer.applied = 0;
+  layer.target = 0;
+  layer.fadeIn = fadeIn;
+  layer.fadeOut = fadeOut;
+  return layer;
+}
 
 class WalkerImpl implements Walker {
   readonly root = new THREE.Group();
@@ -97,7 +112,7 @@ class WalkerImpl implements Walker {
       action.setEffectiveTimeScale(options.rates?.[state] ?? (state === "dash" && !clip.name.includes("Dash") ? 1.6 : 1));
       action.setEffectiveWeight(0);
       action.play();
-      return { action, duration: clip.duration, weight: 0, target: 0, fadeIn: WALKER_BLEND.loopS, fadeOut: WALKER_BLEND.loopS };
+      return layerOf(action, clip.duration, WALKER_BLEND.loopS, WALKER_BLEND.loopS);
     });
     for (const clip of clips) {
       const action = this.mixer.clipAction(clip);
@@ -106,7 +121,7 @@ class WalkerImpl implements Walker {
       action.clampWhenFinished = true;
       action.enabled = true;
       action.setEffectiveWeight(0);
-      this.shots.set(clip.name, { action, duration: clip.duration, weight: 0, target: 0, fadeIn: WALKER_BLEND.fadeInS, fadeOut: WALKER_BLEND.fadeOutS });
+      this.shots.set(clip.name, layerOf(action, clip.duration, WALKER_BLEND.fadeInS, WALKER_BLEND.fadeOutS));
     }
     this.loopWeight[0] = 1;
     const idle = this.loops[0];
@@ -162,10 +177,14 @@ class WalkerImpl implements Walker {
       const layer = this.playing[index]!;
       if (layer.duration - layer.action.time <= layer.fadeOut) layer.target = 0;
       const fade = layer.target > layer.weight ? layer.fadeIn : layer.fadeOut;
-      layer.weight = approach(layer.weight, layer.target, step / Math.max(0.01, fade));
+      // approach(), written out: a call V8 does not inline boxes its float arguments and result.
+      const move = step / Math.max(0.01, fade);
+      layer.weight = layer.weight < layer.target ? Math.min(layer.target, layer.weight + move) : Math.max(layer.target, layer.weight - move);
       if (layer.target === 0 && layer.weight <= 0) {
         layer.action.stop();
-        this.playing.splice(index, 1);
+        // Out of the list in place (splice builds an array of what it removed).
+        for (let m = index; m < this.playing.length - 1; m += 1) this.playing[m] = this.playing[m + 1]!;
+        this.playing.pop();
         continue;
       }
       shotSum += layer.weight;
@@ -175,24 +194,34 @@ class WalkerImpl implements Walker {
     let loopSum = 0;
     for (let k = 0; k < 3; k += 1) {
       const target = LOCOMOTIONS[k] === this.locomotion ? 1 : 0;
-      this.loopWeight[k] = approach(this.loopWeight[k]!, target, step / WALKER_BLEND.loopS);
+      const current = this.loopWeight[k]!;
+      const move = step / WALKER_BLEND.loopS;
+      this.loopWeight[k] = current < target ? Math.min(target, current + move) : Math.max(target, current - move);
       loopSum += this.loopWeight[k]!;
     }
-    // Weights go to three.js only when they change (a settled walker passes no float to a call).
+    // Weights go to three.js only when they change, into the action's `weight` field (what
+    // setEffectiveWeight sets; the mixer reads it into the effective weight every update): a
+    // double passed to a call is boxed by V8 every time. No three.js weight fades are used.
     for (let k = 0; k < 3; k += 1) {
       const loop = this.loops[k];
       if (loop === null || loop === undefined) continue;
       const weight = (baseShare * this.loopWeight[k]!) / Math.max(loopSum, 1e-4);
-      if (weight !== loop.weight) {
-        loop.weight = weight;
-        loop.action.setEffectiveWeight(weight);
+      if (weight !== loop.applied) {
+        loop.applied = weight;
+        loop.action.weight = weight;
       }
     }
     for (let k = 0; k < this.playing.length; k += 1) {
       const layer = this.playing[k]!;
-      layer.action.setEffectiveWeight(layer.weight * shotScale);
+      const weight = layer.weight * shotScale;
+      if (weight !== layer.applied) {
+        layer.applied = weight;
+        layer.action.weight = weight;
+      }
     }
-    this.mixer.update(step);
+    // The caller's own number goes on as it came (a new double passed to a call is boxed by V8
+    // every frame; even `dt > 0 ? dt : 0` makes one): a step below 0 is the caller's bug.
+    this.mixer.update(dt);
   }
 
   dispose(): void {
