@@ -1,18 +1,30 @@
 /**
- * bench.html entry: the HN0 bench (canon §20.3). `?case=base|crowd-proc` runs
- * a case (milestone 1a; crowd-vat, vankiem, impostor, skinned answer "1b"):
- * `?q=` tier, `?count=` N (60 / 120 / 300), `?seconds=` (10), `?warmup=` (2),
- * `?motion=full` (set when measuring: the Dell's Windows reports reduce).
- * The result lands on `window.__icBench`; `__icBenchStop()` ends the page's
- * loop, `__icBenchCamera(preset)` moves the camera for pictures. Without
- * `?case=` the page lists the cases. Driven by scripts/visual/scenarios/ic-bench.mjs.
+ * bench.html entry: the HN0 bench (canon §20.3). `?case=` runs a case:
+ * base (0), crowd-proc (A), crowd-vat (B), vankiem (C: B + a "vạn kiếm" every
+ * 4 s from the tier's sword pool, ~60 hits a second with sparks and damage
+ * numbers, ink smoke on deaths), impostor (D: C with the crowd as impostors),
+ * skinned (E: C + the tier's SkinnedMesh cap through walker-rig). `?q=` tier,
+ * `?count=` N (60 / 120 / 300), `?seconds=` (10), `?warmup=` (2), `?vat=` a
+ * baked VAT for the confirmation pass (`{q}` becomes the tier), `?steps=`
+ * ladder steps, `?motion=full` (set when measuring: the Dell's Windows
+ * reports reduce). The result lands on `window.__icBench`; `__icBenchStop()`
+ * ends the page's loop, `__icBenchCamera(preset)` moves the camera for
+ * pictures (55° like the game, canon D48). Without `?case=` the page lists the
+ * cases. Driven by scripts/visual/scenarios/ic-bench.mjs.
  * Owner: Lane 1.
  */
+import * as THREE from "three";
 import { createRenderer, fitCamera, placeCamera, type Renderer3D } from "../renderer";
-import { createCrowd, type Crowd } from "../crowd";
-import { BENCH_COUNTS, BENCH_CASE_IDS, BUILT_CASES, benchUrl, parseBenchCase, type BenchCase } from "./cases";
+import { CLIP, CROWD_LOOKS, createCrowd, type Crowd, type CrowdKindCounts, type ImpostorRule } from "../crowd";
+import { disposeVat, loadVat, type VatAsset } from "../vat";
+import { createSwords, type SwordPool } from "../swords";
+import { STYLE, createDamageNumbers, createHitFx, createInkSmoke, type DamageNumbers, type HitFx, type InkSmoke } from "../hitfx";
+import { createWalker, type Walker } from "../walker-rig";
+import { CAMERA, TT_BUDGETS } from "../../content/rules";
+import { BENCH_COUNTS, BENCH_CASE_IDS, BENCH_VANKIEM, BUILT_CASES, L4_KEEP, benchUrl, crowdModeOf, hasSwords, parseBenchCase, type BenchCase } from "./cases";
 import { buildBenchField } from "./field";
-import { benchRandom, Herd } from "./herd";
+import { benchRandom, HERD_MIX, Herd } from "./herd";
+import { buildPlaceholderRig, skinnedRoles, type RigKind } from "./rigs";
 import { budgetOf, FrameMeter, GpuTimer, heapMb, reducedMotion, round2, sceneTextureBytes, softwareRenderer, targetBytes, type BenchResult } from "./meter";
 
 export type BenchCameraPreset = "default" | "close" | "heart";
@@ -59,7 +71,7 @@ function showMenu(host: HTMLElement): void {
   title.textContent = "Bench HN0 (canon §20.3)";
   title.style.cssText = "font-size:22px;margin:0 0 8px";
   const note = document.createElement("p");
-  note.textContent = "Mốc 1a: ca 0 (nền) và A (đám đông procedural). Ca B–E ở mốc 1b. Đo thật: scripts/visual/scenarios/ic-bench.mjs trên Chrome Windows có GPU.";
+  note.textContent = "Ca 0 nền, A đám đông procedural, B VAT, C vạn kiếm, D impostor, E có xương. Đo thật: scripts/visual/scenarios/ic-bench.mjs trên Chrome Windows có GPU.";
   note.style.color = "#aab3c5";
   const list = document.createElement("ul");
   const origin = location.origin;
@@ -70,7 +82,7 @@ function showMenu(host: HTMLElement): void {
         const item = document.createElement("li");
         const link = document.createElement("a");
         link.href = benchUrl(origin, { id, quality, count: id === "base" ? undefined : count, motion: "full" });
-        link.textContent = quality + " · " + id + (id === "base" ? "" : " · N " + count) + (BUILT_CASES.includes(id) ? "" : " (1b)");
+        link.textContent = quality + " · " + id + (id === "base" ? "" : " · N " + count);
         link.style.color = BUILT_CASES.includes(id) ? "#7ff5e0" : "#6b7385";
         item.append(link);
         list.append(item);
@@ -85,20 +97,258 @@ function showError(host: HTMLElement, error: string): void {
   label(host, "Bench HN0: " + error);
 }
 
+/** The impostor rule the ladder steps ask for (L5 over L4 over L3). */
+function ruleOf(c: BenchCase): ImpostorRule {
+  if (c.steps.includes("L5")) return { kind: "plain" };
+  if (c.steps.includes("L4")) return { kind: "far", keep: L4_KEEP[c.quality] };
+  if (c.steps.includes("L3")) return { kind: "swarm" };
+  return { kind: "none" };
+}
+
+/** A walking rig of case E and its little routine (view only). */
+interface Actor {
+  readonly walker: Walker;
+  readonly kind: RigKind;
+  readonly role: number;
+  x: number;
+  z: number;
+  /** Home spot and a second spot it walks to and from. */
+  readonly ax: number;
+  readonly az: number;
+  readonly bx: number;
+  readonly bz: number;
+  t: number;
+  leg: number;
+}
+
+/** Where each role stands and walks (m): the player circles near the heart, the others shuttle. */
+const ACTOR_SPOTS: readonly (readonly [number, number, number, number])[] = [
+  [0, 1.6, 0, 1.6],
+  [-4, 2.5, -4, -1.5],
+  [4, 2.5, 4, -1.5],
+  [-12, -14, -5.5, -6],
+  [7.5, -11, 7.5, -11],
+  [-7, 4.5, -2.5, 5.5],
+  [7, 4.5, 2.5, 5.5],
+  [-10, 0, -10, -4],
+  [10, 0, 10, -4],
+  [0, 5.5, 0, 3.5],
+];
+
+/** Everything a case draws besides the field, updated once a frame. */
+class BenchScene {
+  crowd: Crowd | null = null;
+  herd: Herd | null = null;
+  swords: SwordPool | null = null;
+  sparks: HitFx | null = null;
+  numbers: DamageNumbers | null = null;
+  smoke: InkSmoke | null = null;
+  readonly actors: Actor[] = [];
+  vat: VatAsset | null = null;
+  private readonly struck = { index: -1, tier: 0 };
+  private readonly random: () => number;
+  private hitCarry = 0.5;
+  /** The first cast lands in the warm-up (0.25 s in), then every 4 s: 3 casts in a 10 s window. */
+  private castClock = BENCH_VANKIEM.everyS - 0.25;
+  private zone = 0;
+  readonly stats = { swordsMax: 0, sparksMax: 0, numbersMax: 0, smokeMax: 0, hits: 0, casts: 0 };
+  readonly kinds: CrowdKindCounts = { procedural: 0, vat: 0, impostor: 0 };
+
+  constructor(private readonly c: BenchCase) {
+    this.random = benchRandom(c.seed + 3);
+  }
+
+  async build(renderer: Renderer3D): Promise<void> {
+    const c = this.c;
+    const mode = crowdModeOf(c.id);
+    if (mode !== null) {
+      if (c.vat !== null && mode !== "procedural") {
+        const url = c.vat.replace("{q}", c.quality === "ultra" ? "high" : c.quality);
+        this.vat = await loadVat(url);
+      }
+      const vat = this.vat;
+      this.crowd = createCrowd(renderer, mode, {
+        capacity: c.count + 8,
+        lodTris: c.lodTris,
+        seed: c.seed,
+        ...(vat !== null ? { vat: () => vat } : {}),
+        impostorRule: ruleOf(c),
+      });
+      // Bakes (VAT, atlases) before the clock starts.
+      for (const species of HERD_MIX) this.crowd.prepare(species);
+      this.herd = new Herd(this.crowd, c.count, benchRandom(c.seed));
+      this.herd.update(0);
+      this.crowd.update(0);
+    }
+    if (hasSwords(c.id)) {
+      const budget = TT_BUDGETS[c.quality];
+      const l1 = c.steps.includes("L1");
+      this.swords = createSwords(renderer, c.swords, { seed: c.seed, vfxShare: l1 ? 0.5 : 1 });
+      // Sparks share the tier's particle budget with the ink smoke (canon §20.2).
+      this.sparks = createHitFx(renderer, { capacity: Math.round(budget.particles * 0.75), share: l1 ? 0.5 : 1, seed: c.seed });
+      this.numbers = createDamageNumbers(renderer, budget.numbers);
+      this.smoke = createInkSmoke(renderer, Math.round(budget.particles * 0.25), c.seed);
+    }
+    if (c.id === "skinned") {
+      skinnedRoles(c.skinned).forEach((kind, role) => {
+        const rig = buildPlaceholderRig(kind);
+        const walker = createWalker(rig.object, rig.clips);
+        const spot = ACTOR_SPOTS[role % ACTOR_SPOTS.length]!;
+        walker.root.position.set(spot[0], 0, spot[1]);
+        renderer.layers.actors.add(walker.root);
+        this.actors.push({ walker, kind, role, x: spot[0], z: spot[1], ax: spot[0], az: spot[1], bx: spot[2], bz: spot[3], t: role * 0.37, leg: 0 });
+      });
+    }
+  }
+
+  /** Rigs drawn, their triangles and bones (case E). */
+  skinnedSummary(): BenchResult["skinned"] {
+    if (this.actors.length === 0) return null;
+    let triangles = 0;
+    let bones = 0;
+    for (const actor of this.actors) {
+      triangles += actor.walker.triangles;
+      bones += actor.walker.bones;
+    }
+    return { count: this.actors.length, triangles, bones, kinds: this.actors.map((a) => a.kind + " " + Math.round(a.walker.triangles / 2) + " tam giác thân, " + a.walker.bones + " xương") };
+  }
+
+  update(dt: number, measuring: boolean): void {
+    const herd = this.herd;
+    if (herd !== null) herd.update(dt);
+    if (this.swords !== null && herd !== null) this.vankiem(dt, herd, measuring);
+    this.stepActors(dt);
+    this.crowd?.update(dt);
+    if (this.swords !== null) {
+      this.swords.update(dt);
+      this.sparks!.update(dt);
+      this.numbers!.update(dt);
+      this.smoke!.update(dt);
+      if (measuring) {
+        const s = this.stats;
+        if (this.swords.live > s.swordsMax) s.swordsMax = this.swords.live;
+        if (this.sparks!.live > s.sparksMax) s.sparksMax = this.sparks!.live;
+        if (this.numbers!.live > s.numbersMax) s.numbersMax = this.numbers!.live;
+        if (this.smoke!.live > s.smokeMax) s.smokeMax = this.smoke!.live;
+      }
+    }
+  }
+
+  /** Case C: a cast every 4 s from the caster to one gate's corridor, 60 hits a second, smoke on deaths. */
+  private vankiem(dt: number, herd: Herd, measuring: boolean): void {
+    this.castClock += dt;
+    if (this.castClock >= BENCH_VANKIEM.everyS) {
+      this.castClock -= BENCH_VANKIEM.everyS;
+      this.zone = 1 - this.zone;
+      const caster = this.actors[0];
+      const x = caster !== undefined ? caster.x : 0;
+      const z = caster !== undefined ? caster.z : 1.6;
+      this.swords!.cast(x, z, this.zone === 0 ? -7.5 : 7.5, -10);
+      caster?.walker.play("Cast_Short");
+      if (measuring) this.stats.casts += 1;
+    }
+    this.hitCarry += BENCH_VANKIEM.hitsPerSecond * dt;
+    while (this.hitCarry >= 1) {
+      this.hitCarry -= 1;
+      herd.strike(this.struck);
+      const index = this.struck.index;
+      if (index < 0) continue;
+      const beast = herd.beasts[index]!;
+      const look = CROWD_LOOKS[beast.species];
+      const y = look.hoverM + look.sizeM[1] * 0.6;
+      const tier = this.struck.tier;
+      this.sparks!.spark(beast.x, y, beast.z, tier);
+      const amount = Math.round(20 + this.random() * 380);
+      this.numbers!.show(beast.serial, amount, beast.x, y, beast.z, tier, this.random() < 0.1 ? STYLE.perfect : STYLE.normal);
+      if (measuring) this.stats.hits += 1;
+    }
+    for (let k = 0; k < herd.deaths; k += 1) this.smoke!.puff(herd.deathX[k]!, 0, herd.deathZ[k]!, herd.deathSize[k]!);
+  }
+
+  /** Case E's routines: the player circles and casts, bots and spares shuttle, the general paces a corridor, the Vương roars and bites. */
+  private stepActors(dt: number): void {
+    for (let k = 0; k < this.actors.length; k += 1) {
+      const actor = this.actors[k]!;
+      actor.t += dt;
+      const walker = actor.walker;
+      let vx = 0;
+      let vz = 0;
+      if (actor.role === 0) {
+        const angle = actor.t * 0.6;
+        const nx = actor.ax + Math.sin(angle) * 2.2;
+        const nz = actor.az + Math.cos(angle) * 1.4;
+        vx = nx - actor.x;
+        vz = nz - actor.z;
+        actor.x = nx;
+        actor.z = nz;
+        walker.setLocomotion(Math.sin(actor.t * 0.5) > 0.6 ? "dash" : "run");
+      } else if (actor.kind === "boss") {
+        walker.setLocomotion("idle");
+        if (actor.t > 3) {
+          actor.t -= 3;
+          actor.leg = (actor.leg + 1) % 3;
+          walker.play(actor.leg === 0 ? "Roar" : actor.leg === 1 ? "Attack" : "Stagger");
+        }
+      } else {
+        // Shuttle between the two spots, a breath at each end.
+        const legS = 3;
+        const phase = actor.t % (legS * 2 + 2);
+        const going = phase < legS ? 0 : phase < legS + 1 ? -1 : phase < legS * 2 + 1 ? 1 : -2;
+        if (going === 0 || going === 1) {
+          const u = going === 0 ? phase / legS : (phase - legS - 1) / legS;
+          const fx = going === 0 ? actor.ax : actor.bx;
+          const fz = going === 0 ? actor.az : actor.bz;
+          const tx = going === 0 ? actor.bx : actor.ax;
+          const tz = going === 0 ? actor.bz : actor.az;
+          const nx = fx + (tx - fx) * u;
+          const nz = fz + (tz - fz) * u;
+          vx = nx - actor.x;
+          vz = nz - actor.z;
+          actor.x = nx;
+          actor.z = nz;
+          walker.setLocomotion("run");
+        } else walker.setLocomotion("idle");
+      }
+      walker.root.position.set(actor.x, 0, actor.z);
+      if (vx * vx + vz * vz > 1e-8) walker.root.rotation.y = Math.atan2(vx, vz);
+      else if (actor.kind === "boss") walker.root.rotation.y = Math.atan2(-actor.x, -actor.z);
+      walker.update(dt);
+    }
+  }
+
+  kindsNow(): CrowdKindCounts {
+    if (this.crowd !== null) this.crowd.kinds(this.kinds);
+    return this.kinds;
+  }
+
+  textureBytes(scene: THREE.Object3D): number {
+    const skip = this.crowd?.textures().map((t) => t.uuid) ?? [];
+    return sceneTextureBytes(scene, skip) + (this.crowd?.textureBytes() ?? 0) + (this.numbers?.textureBytes() ?? 0);
+  }
+
+  dispose(): void {
+    this.crowd?.dispose();
+    this.swords?.dispose();
+    this.sparks?.dispose();
+    this.numbers?.dispose();
+    this.smoke?.dispose();
+    for (const actor of this.actors) actor.walker.dispose();
+    // A baked VAT is shared by every layer and owned by the page.
+    if (this.vat !== null) disposeVat(this.vat);
+  }
+}
+
 /** Runs one case; resolves with the result and keeps drawing until __icBenchStop(). */
-export function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> {
+export async function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> {
   const renderer: Renderer3D = createRenderer(host, c.quality);
   const field = buildBenchField(c.seed);
   renderer.layers.ground.add(field);
-  let crowd: Crowd | null = null;
-  let herd: Herd | null = null;
-  if (c.id === "crowd-proc") {
-    crowd = createCrowd(renderer, "procedural", { capacity: c.count + 8, lodTris: c.lodTris, seed: c.seed });
-    herd = new Herd(crowd, c.count, benchRandom(c.seed));
-    herd.update(0);
-    crowd.update(0);
-  }
-  const tag = label(host, "HN0 · " + c.id + " · " + c.quality + (c.count > 0 ? " · N " + c.count : "") + " · " + renderer.stage.size.width + "×" + renderer.stage.size.height);
+  const scene = new BenchScene(c);
+  await scene.build(renderer);
+  const tag = label(
+    host,
+    "HN0 · " + c.id + " · " + c.quality + (c.count > 0 ? " · N " + c.count : "") + " · " + renderer.stage.size.width + "×" + renderer.stage.size.height + (c.steps.length > 0 ? " · " + c.steps.join("+") : "") + (scene.vat !== null ? " · VAT " + scene.vat.id : ""),
+  );
   const gl = renderer.stage.renderer.getContext() as WebGL2RenderingContext;
   const gpuTimer = new GpuTimer(gl);
   // Every material compiled before the clock starts.
@@ -109,16 +359,16 @@ export function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> 
   let manualCamera = false;
   window.__icBenchCamera = (preset) => {
     manualCamera = preset !== "default";
-    // Closer looks for pictures (readability), never measured: gate A's corridor, the heart.
-    if (preset === "close") placeCamera(renderer.camera, 50, 27, -8, -11, 0);
-    else if (preset === "heart") placeCamera(renderer.camera, 52, 26, 0, -3, 0);
+    // Closer looks for pictures (readability), never measured, at the game's tilt: gate A's corridor, the heart.
+    if (preset === "close") placeCamera(renderer.camera, CAMERA.defaultTiltDeg, 27, -8, -11, 0);
+    else if (preset === "heart") placeCamera(renderer.camera, CAMERA.defaultTiltDeg, 26, 0, -3, 0);
     else fitCamera(renderer.camera, renderer.stage.size.width / renderer.stage.size.height);
   };
 
   // Chrome with --js-flags=--expose-gc: one full GC just before the window, so the heap growth
   // starts from a clean heap (live-heap drift). Uncapped, three.js alone allocates a few KB a
   // frame and young-generation GCs run inside the window: allocation per frame is measured by the
-  // scenario's sampling heap profile (ALLOC), not by this growth.
+  // scenario's sampling heap profile (ALLOC), the criterion of record (M0A_PLAN §6.1 note).
   const forceGc = (window as Window & { gc?: () => void }).gc;
   const start = performance.now();
   let last = start;
@@ -136,7 +386,8 @@ export function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> 
     const summary = meter.summary();
     const heapEnd = heapMb();
     const size = renderer.stage.size;
-    const textureBytes = sceneTextureBytes(renderer.scene);
+    const kinds = scene.kindsNow();
+    const swords = scene.swords;
     const result: BenchResult = {
       case: c.id,
       quality: c.quality,
@@ -147,8 +398,13 @@ export function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> 
       drawCalls: meter.lastDrawCalls,
       triangles: meter.lastTriangles,
       drawCallsMax: meter.drawCallsMax,
-      instances: { procedural: crowd?.size ?? 0 },
-      textureMb: round2(textureBytes / MB),
+      instances: { procedural: kinds.procedural, vat: kinds.vat, impostor: kinds.impostor, skinned: scene.actors.length },
+      fx: swords === null ? null : { ...scene.stats, pool: swords.capacity },
+      skinned: scene.skinnedSummary(),
+      vatSource: scene.crowd === null || scene.crowd.mode === "procedural" ? null : (scene.vat?.source ?? "in-page"),
+      crowdTris: scene.crowd === null ? null : (scene.vat?.triangles ?? c.lodTris),
+      steps: c.steps,
+      textureMb: round2(scene.textureBytes(renderer.scene) / MB),
       targetsMb: round2(targetBytes(renderer.stage) / MB),
       heapStartMb: heapStart === null ? null : round2(heapStart),
       heapEndMb: heapEnd === null ? null : round2(heapEnd),
@@ -192,10 +448,7 @@ export function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> 
     }
     const t0 = performance.now();
     const dt = Math.min(0.05, interval / 1000);
-    if (herd !== null && crowd !== null) {
-      herd.update(dt);
-      crowd.update(dt);
-    }
+    scene.update(dt, measuring);
     const query = gpuTimer.begin();
     renderer.render(dt);
     gpuTimer.end(query, measuring);
@@ -216,7 +469,7 @@ export function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> 
     if (!running) return;
     running = false;
     gpuTimer.dispose();
-    crowd?.dispose();
+    scene.dispose();
     renderer.dispose();
   };
   return done;
@@ -233,10 +486,6 @@ function main(): void {
     showError(host, parsed.error);
     return;
   }
-  if (!BUILT_CASES.includes(parsed.id)) {
-    showError(host, "case '" + parsed.id + "' arrives in milestone 1b (Lane 1)");
-    return;
-  }
   const fail = (error: unknown): void => showError(host, String(error instanceof Error ? error.message : error));
   try {
     void runBench(host, parsed).catch(fail);
@@ -244,5 +493,8 @@ function main(): void {
     fail(error);
   }
 }
+
+/** For tests: the clip ids the herd plays (re-exported so the bench keeps one CLIP table). */
+export const BENCH_CLIPS = CLIP;
 
 main();

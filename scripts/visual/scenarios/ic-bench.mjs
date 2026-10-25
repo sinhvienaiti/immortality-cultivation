@@ -5,25 +5,30 @@
  * window.__icBench, keeps the median of RUNS, writes JSON and pictures to
  * OUT_DIR, marks a run invalid when the renderer string is SwiftShader,
  * llvmpipe or software, and prints each part's cost (base, crowd, swords and
- * VFX, skinned) against its sub-budget ("phần vượt"). Milestone 1a draws only
- * `base` and `crowd-proc`; the other cases answer "1b" and are skipped.
+ * VFX, skinned) at every N against its sub-budget ("phần vượt"), with the CPU
+ * p95 and draw-call differences. Every case of canon §20.3 is drawn (1b).
  *
  * Windows Chrome with the GPU (Vite in WSL on 3008):
  *   $env:URL="http://127.0.0.1:3008/"; $env:OUT_DIR="…\tmp\shots\bench"
  *   $env:CHROME_FLAGS="--disable-gpu-vsync --disable-frame-rate-limit --enable-precise-memory-info --js-flags=--expose-gc"
- *   $env:Q="high"; $env:CASE="base,crowd-proc"; $env:COUNT="60,120,300"; $env:RUNS="3"
+ *   $env:Q="high"; $env:CASE="base,crowd-vat,vankiem,impostor,skinned"; $env:COUNT="60,120,300"; $env:RUNS="3"
  *   node src\kit\tools\cdp-run.mjs scripts\visual\scenarios\ic-bench.mjs --width=1920 --height=1080
  * Low 1280×720, Medium 1600×900, High 1920×1080 (canon §20.2).
- * Env: URL, OUT_DIR (tmp/shots/bench), Q (high), CASE (comma list; base,crowd-proc),
- * COUNT (comma list; 60,120,300), SWORDS, SKINNED, SECONDS (10), WARMUP (2),
- * RUNS (3), SHOTS (1; 0 none), TAG (file name suffix).
- * `--js-flags=--expose-gc` lets the page run one full GC before the window, so
- * the heap growth reads from a clean start (PB-35: ≤ 2 MB in 10 s); without it
- * the growth is printed but not judged (`heapOk` null). Uncapped, young-
- * generation GCs still run inside the window, so the growth tells live-heap
- * drift; allocation per frame comes from ALLOC (seconds, default 3; 0 off): one
- * more page load per case under the CDP sampling heap profiler, bytes per
- * frame split into this game's code, the kit copy and three.js.
+ * Env: URL, OUT_DIR (tmp/shots/bench), Q (high), CASE (comma list; every case),
+ * COUNT (comma list; 60,120,300), SWORDS, SKINNED (case E's rigs; the Thất
+ * Tinh run is SKINNED=10 TAG=seven), VAT (a baked VAT's JSON URL for the
+ * confirmation pass, `{q}` = the tier), STEPS (ladder steps, e.g. L3 or
+ * L1,L3), SECONDS (10), WARMUP (2), RUNS (3), SHOTS (1; 0 none), TAG (file
+ * name suffix), ALLOC (seconds, 3; 0 off).
+ * Allocation (M0A_PLAN §6.1 note, đã chọn theo đề xuất 25/10): the criterion of
+ * record is ALLOC, one more page load per case under the CDP sampling heap
+ * profiler: bytes per frame of the game's modules (src/ outside src/view/bench)
+ * plus the kit copy, at most ALLOC_NOISE_B (0 is the rule for hot paths; the
+ * sampler's noise is a few dozen bytes). The bench driver (src/view/bench) and
+ * three.js are printed apart. usedJSHeapSize growth over the window is still
+ * printed (after a full GC when Chrome has `--js-flags=--expose-gc`) as a leak
+ * signal; uncapped, three.js alone allocates kilobytes a frame, so it is not
+ * the verdict.
  * Owner: Lane 1.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -38,39 +43,46 @@ export const BUDGETS = {
 };
 
 export const CASES = ["base", "crowd-proc", "crowd-vat", "vankiem", "impostor", "skinned"];
-export const BUILT = ["base", "crowd-proc"];
+/** Every case is drawn (milestone 1b). */
+export const BUILT = [...CASES];
 
-/** M0A_PLAN §6.1 (PB-35): usedJSHeapSize grows ≤ 2 MB over the 10 s window. */
+/** Leak signal only (M0A_PLAN §6.1 note): usedJSHeapSize growth over the 10 s window, MB. */
 export const HEAP_GROWTH_MB = 2;
 
-/** The heap verdict of one median row: null unless every run had a GC before its window. */
+/** The heap signal of one median row: null unless every run had a GC before its window. */
 export const heapOk = (growthMb, gcBefore) => (gcBefore && typeof growthMb === "number" ? growthMb <= HEAP_GROWTH_MB : null);
 
+/** The allocation criterion of record (M0A_PLAN §6.1 note, 25/10): game modules + kit, bytes per frame, at most the sampler's noise. */
+export const ALLOC_NOISE_B = 64;
+export const allocOk = (bytesPerFrame) => (typeof bytesPerFrame === "number" ? bytesPerFrame <= ALLOC_NOISE_B : null);
+
 /**
- * Who allocated, by the sampled frame's own script: this game's code, the kit copy, three.js (any
- * other script: Vite's pre-bundled deps, wherever its cache lives), or no script at all.
+ * Who allocated, by the sampled frame's own script: this game's modules, the bench driver
+ * (src/view/bench: herd, meter, page loop), the kit copy, three.js (any other script: Vite's
+ * pre-bundled deps, wherever its cache lives), or no script at all.
  */
 export function allocBucket(url) {
   const u = String(url ?? "");
   if (u === "") return "other";
   if (/\/src\/kit\//.test(u)) return "kit";
+  if (/\/src\/view\/bench\//.test(u)) return "bench";
   if (/\/src\//.test(u)) return "game";
   return "three";
 }
 
 /**
- * Bytes per bucket of a CDP sampling heap profile (GC'd objects included) and the top game and kit
- * sites. A native frame (no script URL: a builtin, a WebGL call) counts for the nearest script above it.
+ * Bytes per bucket of a CDP sampling heap profile (GC'd objects included) and the top game, bench and
+ * kit sites. A native frame (no script URL: a builtin, a WebGL call) counts for the nearest script above it.
  */
 export function allocSummary(profile) {
-  const bytes = { game: 0, kit: 0, three: 0, other: 0 };
+  const bytes = { game: 0, bench: 0, kit: 0, three: 0, other: 0 };
   const sites = new Map();
   const walk = (node, owner) => {
     const frame = node.callFrame ?? {};
     const here = frame.url ? { bucket: allocBucket(frame.url), site: (frame.functionName || "(anonymous)") + " " + String(frame.url).replace(/^.*?\/src\//, "src/").replace(/\?.*$/, "") } : owner;
     if (node.selfSize > 0) {
       bytes[here.bucket] += node.selfSize;
-      if (here.bucket === "game" || here.bucket === "kit") sites.set(here.site, (sites.get(here.site) ?? 0) + node.selfSize);
+      if (here.bucket === "game" || here.bucket === "bench" || here.bucket === "kit") sites.set(here.site, (sites.get(here.site) ?? 0) + node.selfSize);
     }
     for (const child of node.children ?? []) walk(child, here);
   };
@@ -101,7 +113,14 @@ async function allocProfile(page, url, seconds) {
   return {
     seconds,
     frames,
-    bytesPerFrame: { game: per(bytes.game), kit: per(bytes.kit), three: per(bytes.three), other: per(bytes.other), total: per(bytes.game + bytes.kit + bytes.three + bytes.other) },
+    bytesPerFrame: {
+      game: per(bytes.game),
+      bench: per(bytes.bench),
+      kit: per(bytes.kit),
+      three: per(bytes.three),
+      other: per(bytes.other),
+      total: per(bytes.game + bytes.bench + bytes.kit + bytes.three + bytes.other),
+    },
     top: top.map((t) => ({ site: t.site, bytesPerFrame: per(t.bytes) })),
   };
 }
@@ -128,9 +147,26 @@ export function medianOf(runs) {
 const diff = (a, b) => (a === null || a === undefined || b === null || b === undefined ? null : Math.round((a - b) * 100) / 100);
 
 /**
+ * The totals of canon §20.2 for one median row (frame mean, p95, CPU p95, draw calls, texture
+ * memory): every failed total by name; empty when it passes (a tier passes HN0 when case E at the
+ * rule's N passes, canon §20.3).
+ */
+export function totalsFailed(m, quality) {
+  const b = BUDGETS[quality] ?? BUDGETS.high;
+  const failed = [];
+  if (!m) return ["no run"];
+  if (b.frameMeanMs !== null && !(m.frameMeanMs <= b.frameMeanMs)) failed.push("frameMean " + m.frameMeanMs + " > " + b.frameMeanMs);
+  if (!(m.frameP95Ms <= b.frameP95Ms)) failed.push("frameP95 " + m.frameP95Ms + " > " + b.frameP95Ms);
+  if (!(m.cpuP95Ms <= b.cpuP95Ms)) failed.push("cpuP95 " + m.cpuP95Ms + " > " + b.cpuP95Ms);
+  if (!(m.drawCallsMax <= b.drawCalls)) failed.push("drawCalls " + m.drawCallsMax + " > " + b.drawCalls);
+  if (!(m.textureMb <= b.textureMb)) failed.push("textureMb " + m.textureMb + " > " + b.textureMb);
+  return failed;
+}
+
+/**
  * Per-part cost at each N (canon §20.3, D36): base = p95(0); crowd = p95(B) − p95(0);
- * swords, VFX, numbers = p95(C) − p95(B); skinned = p95(E) − p95(C). Until B exists
- * (1b) the crowd line uses A (procedural) and says so. Also CPU p95 and draw calls.
+ * swords, VFX, numbers = p95(C) − p95(B); skinned = p95(E) − p95(C). Without B the crowd line
+ * uses A (procedural) as a reference and says so. Also CPU p95 and draw calls.
  * `medians` maps "case@count" to medianOf(); `quality` picks the sub-budgets.
  */
 export function partsOf(medians, quality, counts) {
@@ -157,7 +193,7 @@ export function partsOf(medians, quality, counts) {
   for (const n of counts) {
     const vat = medians["crowd-vat@" + n];
     if (vat) row("crowd", n, vat, base, sub.crowd, "p95(B) − p95(0)");
-    else row("crowd", n, medians["crowd-proc@" + n], base, sub.crowd, "p95(A procedural) − p95(0): tham chiếu 1a, phần chính thức dùng B (VAT) ở 1b");
+    else row("crowd", n, medians["crowd-proc@" + n], base, sub.crowd, "p95(A procedural) − p95(0): chỉ tham chiếu, phần chính thức là B (VAT)");
     row("swords-fx", n, medians["vankiem@" + n], vat, sub.swordsFx, "p95(C) − p95(B)");
     row("skinned", n, medians["skinned@" + n], medians["vankiem@" + n], sub.skinned, "p95(E) − p95(C)");
   }
@@ -166,11 +202,14 @@ export function partsOf(medians, quality, counts) {
 
 const list = (value, fallback) => (value ?? fallback).split(",").map((s) => s.trim()).filter(Boolean);
 
-function caseUrl(base, id, quality, count, env) {
+/** The page URL of one run (the page parses the same names: src/view/bench/cases.ts). */
+export function caseUrl(base, id, quality, count, env) {
   const params = new URLSearchParams({ case: id, q: quality, motion: "full", seconds: String(env.seconds), warmup: String(env.warmup) });
   if (id !== "base") params.set("count", String(count));
   if (env.swords) params.set("swords", env.swords);
   if (env.skinned) params.set("skinned", env.skinned);
+  if (env.vat && id !== "base" && id !== "crowd-proc") params.set("vat", env.vat);
+  if (env.steps) params.set("steps", env.steps);
   return base + "/bench.html?" + params.toString();
 }
 
@@ -178,7 +217,7 @@ export default async function (page) {
   const base = (process.env.URL ?? "http://127.0.0.1:3008/").replace(/\/$/, "");
   const out = resolve(process.env.OUT_DIR ?? "tmp/shots/bench");
   const quality = process.env.Q ?? "high";
-  const cases = list(process.env.CASE, "base,crowd-proc").filter((c) => CASES.includes(c));
+  const cases = list(process.env.CASE, CASES.join(",")).filter((c) => CASES.includes(c));
   const counts = list(process.env.COUNT, "60,120,300").map(Number).filter((n) => n > 0);
   const env = {
     seconds: Number(process.env.SECONDS ?? "10"),
@@ -186,6 +225,8 @@ export default async function (page) {
     runs: Math.max(1, Number(process.env.RUNS ?? "3")),
     swords: process.env.SWORDS ?? "",
     skinned: process.env.SKINNED ?? "",
+    vat: process.env.VAT ?? "",
+    steps: process.env.STEPS ?? "",
     shots: process.env.SHOTS !== "0",
     allocSeconds: process.env.ALLOC === "0" ? 0 : Number(process.env.ALLOC ?? "3"),
   };
@@ -241,22 +282,38 @@ export default async function (page) {
   const valid = runs.length > 0 && runs.every((r) => r.valid);
   const budget = BUDGETS[quality] ?? BUDGETS.high;
   const heapGc = runs.length > 0 && runs.every((r) => r.heapGc === true);
-  const verdictRows = Object.entries(medians).map(([key, m]) => ({
-    key,
-    meanMs: m.frameMeanMs,
-    p95Ms: m.frameP95Ms,
-    maxMs: m.frameMaxMs,
-    cpuP95Ms: m.cpuP95Ms,
-    drawCalls: m.drawCalls,
-    heapGrowthMb: m.heapGrowthMb,
-    heapOk: heapOk(m.heapGrowthMb, heapGc),
-    // Bytes allocated per frame by this game's code and the kit (three.js apart): 0 is the rule for hot paths.
-    gameBytesPerFrame: alloc[key] ? alloc[key].bytesPerFrame.game + alloc[key].bytesPerFrame.kit : null,
-    threeBytesPerFrame: alloc[key] ? alloc[key].bytesPerFrame.three : null,
-    // Totals of canon §20.2 (informative in 1a: the verdict is case E at the rule's N, milestone 1b).
-    withinTotals:
-      (budget.frameMeanMs === null || m.frameMeanMs <= budget.frameMeanMs) && m.frameP95Ms <= budget.frameP95Ms && m.cpuP95Ms <= budget.cpuP95Ms && m.drawCalls <= budget.drawCalls,
-  }));
+  const verdictRows = Object.entries(medians).map(([key, m]) => {
+    const a = alloc[key];
+    const gameKit = a ? a.bytesPerFrame.game + a.bytesPerFrame.kit : null;
+    const failed = totalsFailed(m, quality);
+    return {
+      key,
+      meanMs: m.frameMeanMs,
+      p95Ms: m.frameP95Ms,
+      maxMs: m.frameMaxMs,
+      cpuP95Ms: m.cpuP95Ms,
+      drawCalls: m.drawCallsMax,
+      textureMb: m.textureMb,
+      // Totals of canon §20.2; the tier's verdict reads case E at the rule's N (canon §20.3).
+      withinTotals: failed.length === 0,
+      failed,
+      // Allocation criterion of record: game modules + kit bytes per frame (bench driver and three.js apart).
+      gameKitBytesPerFrame: gameKit,
+      allocOk: allocOk(gameKit),
+      benchBytesPerFrame: a ? a.bytesPerFrame.bench : null,
+      threeBytesPerFrame: a ? a.bytesPerFrame.three : null,
+      // Leak signal only.
+      heapGrowthMb: m.heapGrowthMb,
+      heapOk: heapOk(m.heapGrowthMb, heapGc),
+    };
+  });
+  // Case E at each N (canon §20.3): the tier passes at N when every total of §20.2 holds.
+  const verdict = counts.map((n) => {
+    const m = medians["skinned@" + n];
+    const failed = m ? totalsFailed(m, quality) : null;
+    return { n, ran: m !== undefined, pass: failed === null ? null : failed.length === 0, failed, meanMs: m?.frameMeanMs ?? null, p95Ms: m?.frameP95Ms ?? null, drawCalls: m?.drawCallsMax ?? null };
+  });
+  const over = parts.filter((p) => p.overMs !== null && p.overMs > 0).map((p) => p.part + "@" + p.n + " +" + p.overMs + " ms");
   const report = {
     quality,
     viewport: page.width + "x" + page.height,
@@ -269,6 +326,8 @@ export default async function (page) {
     budget,
     medians,
     parts,
+    over,
+    verdict,
     alloc,
     runs,
     skipped,
@@ -279,5 +338,5 @@ export default async function (page) {
   const file = join(out, "ic-bench-" + tag + ".json");
   writeFileSync(file, JSON.stringify(report, null, 1));
   const allocTop = Object.fromEntries(Object.entries(alloc).map(([key, a]) => [key, { frames: a.frames, bytesPerFrame: a.bytesPerFrame, top: a.top.slice(0, 3) }]));
-  return { file, renderer, valid, heapGc, rows: verdictRows, parts, alloc: allocTop, skipped, badResources, pictures: pictures.length };
+  return { file, renderer, valid, heapGc, verdict, over, rows: verdictRows, parts, alloc: allocTop, skipped, badResources, pictures: pictures.length };
 }

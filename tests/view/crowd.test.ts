@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { COLOURS, CROWD_MODE, SIZES_PX_1080, TT_BUDGETS } from "../../src/content/rules";
 import type { SpeciesId } from "../../src/content/types";
-import { CLIP, CROWD_LOOKS, TINT, TINT_HEX, createCrowd, lodBlock, lookFromPlaceholder, triangleCount, type Crowd, type CrowdInstance } from "../../src/view/crowd";
+import { CLIP, CROWD_LOOKS, KIND, TINT, TINT_HEX, createCrowd, lodBlock, lookFromPlaceholder, selectKth, stepModeSwitch, triangleCount, type Crowd, type CrowdInstance, type ModeSwitchState } from "../../src/view/crowd";
+import { MODE_SWITCH, type ImpostorAtlas } from "../../src/view/impostor";
 import { fitCamera } from "../../src/view/renderer";
 import type { Renderer3D } from "../../src/view/renderer";
 
@@ -39,10 +40,151 @@ describe("crowd modes (canon §20.3)", () => {
     expect(renderer.layers.actors.children).not.toContain(crowd.group);
   });
 
-  it("vat and impostor wait for milestone 1b; bones stays a type only", () => {
-    expect(() => createCrowd(fakeRenderer(), "vat")).toThrow(/1b/);
-    expect(() => createCrowd(fakeRenderer(), "impostor")).toThrow(/1b/);
+  it("bones stays a type only (canon §20.3: not built at M0a)", () => {
     expect(() => createCrowd(fakeRenderer(), "bones")).toThrow(/type only/);
+  });
+
+  it("vat bakes the placeholder gait in the page and draws one VAT layer (and its hull) per species", () => {
+    const crowd = createCrowd(fakeRenderer(), "vat", { capacity: 8, lodTris: 1000 });
+    expect(crowd.mode).toBe("vat");
+    crowd.add(1, "phong-lang");
+    crowd.add(2, "hoa-nha");
+    crowd.set(1, instance({ clip: CLIP.attack, clipTime: 0.3 }));
+    crowd.update(1 / 60);
+    const mesh = crowd.group.getObjectByName("crowd-vat-phong-lang") as THREE.InstancedMesh;
+    expect(mesh).toBeInstanceOf(THREE.InstancedMesh);
+    expect(mesh.count).toBe(1);
+    expect(mesh.geometry.getAttribute("aVatId")).toBeDefined();
+    const anim = mesh.geometry.getAttribute("aVatAnim").array as Float32Array;
+    // Clip and its time (Idle and Move loops carry the beast's own phase offset; Attack plays from 0).
+    expect(anim[0]).toBe(CLIP.attack);
+    expect(anim[1]).toBeCloseTo(0.3, 6);
+    // A clip change blends from the previous clip (Move) over 0.15 s.
+    expect(anim[2]).toBe(CLIP.move);
+    expect((mesh.geometry.getAttribute("aVatBlend").array as Float32Array)[0]).toBeCloseTo(1 / 60 / 0.15, 5);
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 2, impostor: 0 });
+    // Body + hull per layer in use, one for the shadows; triangles of the tier's block.
+    expect(crowd.drawCalls()).toBe(2 * 2 + 1);
+    expect(crowd.triangles()).toBe(2 * 972 * 2);
+    // Both textures of each species' VAT count against the tier's texture budget.
+    expect(crowd.textureBytes()).toBeGreaterThan(0);
+    expect(crowd.textures().length).toBe(4);
+    crowd.dispose();
+  });
+
+  it("impostor needs a WebGL renderer to bake, or a baked atlas", () => {
+    expect(() => {
+      const crowd = createCrowd(fakeRenderer(), "impostor");
+      crowd.add(1, "phong-lang");
+    }).toThrow(/WebGL renderer/);
+    const crowd = createCrowd(fakeRenderer(), "impostor", { capacity: 4, impostor: () => fakeAtlas() });
+    crowd.add(1, "phong-lang");
+    crowd.set(1, instance({ x: 2, z: -3 }));
+    crowd.update(1 / 60);
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 0, impostor: 1 });
+    // A quad per beast, one draw call per layer, no hull (the ink is baked in).
+    expect(crowd.triangles()).toBe(2);
+    expect(crowd.drawCalls()).toBe(1 + 1);
+    const imp = crowd.group.getObjectByName("crowd-imp-phong-lang") as THREE.InstancedMesh;
+    // Fully faded in from the start.
+    expect((imp.geometry.getAttribute("aImp").array as Float32Array)[1]).toBe(1);
+    crowd.dispose();
+  });
+
+  it("the ladder moves a beast between VAT and impostor only after 1 s past the rule, then crossfades 0.2 s", () => {
+    const crowd = createCrowd(fakeRenderer(), "vat", { capacity: 8, lodTris: 300, impostor: () => fakeAtlas() });
+    crowd.add(1, "thach-thu");
+    crowd.add(2, "phong-lang");
+    crowd.set(1, instance());
+    crowd.set(2, instance());
+    crowd.update(1 / 60);
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 2, impostor: 0 });
+    // L3: the swarm goes to impostors.
+    crowd.setImpostorRule({ kind: "swarm" });
+    const dt = 0.05;
+    let frames = 0;
+    while (crowd.kinds().impostor === 0 && frames < 100) {
+      crowd.update(dt);
+      frames += 1;
+    }
+    expect(frames * dt).toBeCloseTo(1, 1);
+    // Crossfading: drawn in both kinds, complementary fades.
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 2, impostor: 1 });
+    for (let k = 0; k < 4; k += 1) crowd.update(dt);
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 1, impostor: 1 });
+    // L5 with an elite: plain beasts go, the elite stays on VAT.
+    crowd.set(2, instance({ elite: true }));
+    crowd.setImpostorRule({ kind: "plain" });
+    for (let k = 0; k < 40; k += 1) crowd.update(dt);
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 1, impostor: 1 });
+    crowd.dispose();
+  });
+});
+
+describe("ladder L4 (canon §20.3): plain beasts beyond the nearest `keep` to the screen centre", () => {
+  it("selectKth finds the k-th smallest in place", () => {
+    const values = new Float32Array([5, 1, 4, 2, 3, 9, 9]);
+    expect(selectKth(values, 5, 0)).toBe(1);
+    expect(selectKth(values, 5, 2)).toBe(3);
+    expect(selectKth(new Float32Array([5, 1, 4, 2, 3]), 5, 4)).toBe(5);
+  });
+
+  it("keeps the nearest on VAT and sends the rest to impostors after the hold", () => {
+    // No camera in node: the crowd ranks by ground distance from the heart instead.
+    const crowd = createCrowd(fakeRenderer(), "vat", { capacity: 8, lodTris: 300, impostor: () => fakeAtlas(), impostorRule: { kind: "far", keep: 3 } });
+    for (let id = 1; id <= 6; id += 1) {
+      crowd.add(id, "phong-lang");
+      crowd.set(id, instance({ x: id * 2 }));
+    }
+    crowd.update(0.02);
+    // Fresh beasts take their kind at once.
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 3, impostor: 3 });
+    // Beast 6 walks to the middle: it goes back to VAT after 1 s; beast 3 (now 4th nearest) leaves.
+    crowd.set(6, instance({ x: 0.5 }));
+    for (let k = 0; k < 40; k += 1) crowd.update(0.05);
+    expect(crowd.kinds()).toEqual({ procedural: 0, vat: 3, impostor: 3 });
+    const vat = crowd.group.getObjectByName("crowd-vat-phong-lang") as THREE.InstancedMesh;
+    const xs: number[] = [];
+    for (let k = 0; k < vat.count; k += 1) xs.push(positionOf(vat, k).x);
+    expect(xs.sort((a, b) => a - b)).toEqual([0.5, 2, 4]);
+    crowd.dispose();
+  });
+});
+
+/** An atlas stand-in (no WebGL in node): a 1 × 1 texture, 16 × 8 cells. */
+function fakeAtlas(): ImpostorAtlas {
+  const texture = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  return { texture, directions: 16, phases: 8, cellPx: 128, frameM: 1.5, centreY: 0.5, cycleS: 0.6, bytes: 4, source: "test", dispose: () => texture.dispose() };
+}
+
+describe("draw-kind switch (canon §20.3 L4: 1 s on the other side, 0.2 s blend)", () => {
+  it("waits 1 s without a break, then fades over 0.2 s; a reversal mid-blend turns the fade round", () => {
+    const state: ModeSwitchState = { mode: KIND.vat, fade: 1, pending: 0 };
+    expect(MODE_SWITCH).toEqual({ holdS: 1, blendS: 0.2 });
+    stepModeSwitch(state, KIND.impostor, 0.5);
+    expect(state).toEqual({ mode: KIND.vat, fade: 1, pending: 0.5 });
+    // A break resets the wait.
+    stepModeSwitch(state, KIND.vat, 0.1);
+    expect(state.pending).toBe(0);
+    stepModeSwitch(state, KIND.impostor, 0.6);
+    stepModeSwitch(state, KIND.impostor, 0.4);
+    expect(state.mode).toBe(KIND.impostor);
+    // A long frame finishes the 0.2 s blend at once.
+    expect(state.fade).toBe(1);
+    const fresh: ModeSwitchState = { mode: KIND.vat, fade: 1, pending: 0 };
+    stepModeSwitch(fresh, KIND.impostor, 1);
+    // Switched this frame: the fade starts from 0 and takes its first step.
+    expect(fresh.mode).toBe(KIND.impostor);
+    expect(fresh.fade).toBe(1);
+    const mid: ModeSwitchState = { mode: KIND.impostor, fade: 0.25, pending: 0 };
+    stepModeSwitch(mid, KIND.vat, 1);
+    // Back towards VAT from where it stood (0.75 of the way still VAT), then a step.
+    expect(mid.mode).toBe(KIND.vat);
+    expect(mid.fade).toBe(1);
+    const slow: ModeSwitchState = { mode: KIND.impostor, fade: 0.25, pending: 0.99 };
+    stepModeSwitch(slow, KIND.vat, 0.02);
+    expect(slow.mode).toBe(KIND.vat);
+    expect(slow.fade).toBeCloseTo(0.75 + 0.02 / 0.2, 5);
   });
 });
 

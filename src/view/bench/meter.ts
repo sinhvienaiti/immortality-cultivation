@@ -50,8 +50,17 @@ export interface BenchResult {
   readonly triangles: number;
   /** Max draw calls over the measured window. */
   readonly drawCallsMax: number;
-  /** Instances drawn per crowd draw mode. */
+  /** Instances drawn per crowd draw mode (last measured frame; a crossfading beast counts in both). */
   readonly instances: Readonly<Record<string, number>>;
+  /** Live swords at most, sparks, numbers and ink blots at most over the window (cases C–E). */
+  readonly fx: { readonly swordsMax: number; readonly pool: number; readonly sparksMax: number; readonly numbersMax: number; readonly smokeMax: number; readonly hits: number; readonly casts: number } | null;
+  /** SkinnedMesh rigs drawn (case E): count, triangles and bones of all of them. */
+  readonly skinned: { readonly count: number; readonly triangles: number; readonly bones: number; readonly kinds: readonly string[] } | null;
+  /** Where the crowd's VAT came from ("in-page" or the baked file) and its per-beast triangles. */
+  readonly vatSource: string | null;
+  readonly crowdTris: number | null;
+  /** Ladder steps on (empty: full 3D). */
+  readonly steps: readonly string[];
   /** VAT, atlases, images, data textures (the canon §20.2 budget), MB. */
   readonly textureMb: number;
   /** Render targets of the post chain (not in the canon budget), MB. */
@@ -139,9 +148,9 @@ function textureBytes(texture: THREE.Texture): number {
   return width * height * depth * bytesPerTexel(texture.format, texture.type) * mips;
 }
 
-/** Asset textures under `scene` (material maps and shader uniforms), each counted once. */
-export function sceneTextureBytes(scene: THREE.Object3D): number {
-  const seen = new Set<string>();
+/** Asset textures under `scene` (material maps and shader uniforms), each counted once; `skip` (uuids) are counted elsewhere. */
+export function sceneTextureBytes(scene: THREE.Object3D, skip: Iterable<string> = []): number {
+  const seen = new Set<string>(skip);
   let bytes = 0;
   const take = (value: unknown): void => {
     if (!(value instanceof THREE.Texture) || seen.has(value.uuid)) return;

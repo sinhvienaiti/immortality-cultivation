@@ -54,7 +54,18 @@ export interface Renderer3D {
   setQuality(quality: Quality): void;
   /** Keeps the field clear of DOM bands (CSS px) and refits the camera. */
   setViewInsets(insets: ViewInsets): void;
+  /**
+   * Something drawn over the finished frame in screen space (the damage
+   * numbers, hitfx.ts), after the post passes; returns its removal. Its draw
+   * calls count in info().
+   */
+  addOverlay(overlay: Overlay): () => void;
   dispose(): void;
+}
+
+/** A screen-space pass over the frame: `width` × `height` CSS px. */
+export interface Overlay {
+  draw(renderer: THREE.WebGLRenderer, width: number, height: number): void;
 }
 
 // ── The fixed camera (canon §21.1) ──────────────────────────────────────────
@@ -232,6 +243,7 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
   const gpu = gpuString(stage.renderer);
   const counts = { drawCalls: 0, triangles: 0, gpu };
   const scratch = new THREE.Vector3();
+  const overlays: Overlay[] = [];
   let width = 1;
   let height = 1;
   let insets: ViewInsets = { top: 0, bottom: 0 };
@@ -274,6 +286,15 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     render: (dt) => {
       stage.update(dt);
       stage.render(dt);
+      // Plain loop: no iterator object per frame.
+      for (let k = 0; k < overlays.length; k += 1) overlays[k]!.draw(stage.renderer, width, height);
+    },
+    addOverlay: (overlay) => {
+      overlays.push(overlay);
+      return () => {
+        const at = overlays.indexOf(overlay);
+        if (at >= 0) overlays.splice(at, 1);
+      };
     },
     resize,
     setQuality: (next) => {

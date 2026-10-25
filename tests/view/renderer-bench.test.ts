@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { TT_BUDGETS } from "../../src/content/rules";
-import { BENCH_TIMING, BUILT_CASES, benchUrl, parseBenchCase, type BenchCase } from "../../src/view/bench/cases";
+import { BENCH_TIMING, BENCH_VANKIEM, BUILT_CASES, L4_KEEP, LADDER_STEPS, benchUrl, crowdModeOf, hasSwords, parseBenchCase, type BenchCase } from "../../src/view/bench/cases";
 import { FrameMeter, budgetOf, bytesPerTexel, mean, percentile, sceneTextureBytes, softwareRenderer } from "../../src/view/bench/meter";
 
 interface ScenarioModule {
@@ -11,6 +11,10 @@ interface ScenarioModule {
   BUILT: string[];
   HEAP_GROWTH_MB: number;
   heapOk(growthMb: number | null, gcBefore: boolean): boolean | null;
+  ALLOC_NOISE_B: number;
+  allocOk(bytesPerFrame: number | null): boolean | null;
+  totalsFailed(m: { frameMeanMs: number; frameP95Ms: number; cpuP95Ms: number; drawCallsMax: number; textureMb: number } | undefined, quality: string): string[];
+  caseUrl(base: string, id: string, quality: string, count: number, env: Record<string, unknown>): string;
   allocBucket(url: string): string;
   allocSummary(profile: unknown): { bytes: Record<string, number>; top: { site: string; bytes: number }[] };
   isSoftware(renderer: string): boolean;
@@ -103,6 +107,28 @@ describe("bench cases (canon §20.3)", () => {
     expect(url.startsWith("http://127.0.0.1:3008/bench.html?")).toBe(true);
     const c = parseBenchCase(new URL(url).search) as BenchCase;
     expect([c.id, c.quality, c.count, c.motion]).toEqual(["crowd-proc", "low", 60, "full"]);
+    const e = parseBenchCase(new URL(benchUrl("http://h", { id: "skinned", quality: "high", count: 60, skinned: 10, steps: ["L3", "L1"] })).search) as BenchCase;
+    expect([e.skinned, e.steps]).toEqual([10, ["L1", "L3"]]);
+  });
+
+  it("reads ladder steps (L2 lowers the swords one notch) and a baked VAT for the confirmation pass", () => {
+    const c = parseBenchCase("?case=vankiem&q=high&count=60&steps=l2,L3&vat=/assets/bench-vat/x-{q}.vat.json") as BenchCase;
+    expect(c.steps).toEqual(["L2", "L3"]);
+    expect(c.swords).toBe(300);
+    expect(c.vat).toBe("/assets/bench-vat/x-{q}.vat.json");
+    expect((parseBenchCase("?case=vankiem&q=low") as BenchCase).swords).toBe(150);
+    expect((parseBenchCase("?case=vankiem") as BenchCase).vat).toBeNull();
+    expect(parseBenchCase("?case=vankiem&steps=L9")).toEqual({ error: expect.stringContaining("unknown step") });
+  });
+
+  it("maps cases to their crowd draw and their swords (canon §20.3)", () => {
+    expect(BUILT_CASES).toEqual(["base", "crowd-proc", "crowd-vat", "vankiem", "impostor", "skinned"]);
+    expect(["base", "crowd-proc", "crowd-vat", "vankiem", "impostor", "skinned"].map((id) => crowdModeOf(id as BenchCase["id"]))).toEqual([null, "procedural", "vat", "vat", "impostor", "vat"]);
+    expect(["crowd-vat", "vankiem", "impostor", "skinned"].map((id) => hasSwords(id as BenchCase["id"]))).toEqual([false, true, true, true]);
+    expect(BENCH_VANKIEM).toEqual({ everyS: 4, hitsPerSecond: 60 });
+    expect(LADDER_STEPS).toEqual(["L1", "L2", "L3", "L4", "L5"]);
+    // L4: beyond the nearest 100 (Low) / 160 (Medium) to the screen centre.
+    expect([L4_KEEP.low, L4_KEEP.medium]).toEqual([100, 160]);
   });
 });
 
@@ -122,26 +148,60 @@ describe("ic-bench.mjs (self-contained scenario)", () => {
     }
   });
 
-  it("knows which cases 1a draws and which renderers do not count", async () => {
+  it("draws every case of canon §20.3 and knows which renderers do not count", async () => {
     const mod = await scenario();
     expect(mod.BUILT).toEqual([...BUILT_CASES]);
+    expect(mod.BUILT).toEqual(["base", "crowd-proc", "crowd-vat", "vankiem", "impostor", "skinned"]);
     expect(mod.isSoftware(SWIFTSHADER)).toBe(true);
     expect(mod.isSoftware(NVIDIA)).toBe(false);
   });
 
-  it("judges heap growth (≤ 2 MB in 10 s, PB-35) only after a GC before the window", async () => {
+  it("keeps heap growth as a leak signal only (after a GC before the window)", async () => {
     const { HEAP_GROWTH_MB, heapOk } = await scenario();
     expect(HEAP_GROWTH_MB).toBe(2);
     expect(heapOk(0.4, true)).toBe(true);
     expect(heapOk(2.5, true)).toBe(false);
-    // Without --expose-gc a young-generation GC may hide allocation: no verdict.
+    // Without --expose-gc a young-generation GC may hide allocation: no signal.
     expect(heapOk(0.4, false)).toBeNull();
     expect(heapOk(null, true)).toBeNull();
   });
 
-  it("splits a sampling heap profile into game, kit and three.js bytes", async () => {
+  it("judges allocation by game + kit bytes per frame (M0A_PLAN §6.1 note: the ALLOC profile, noise ≤ 64 B)", async () => {
+    const { ALLOC_NOISE_B, allocOk } = await scenario();
+    expect(ALLOC_NOISE_B).toBe(64);
+    expect(allocOk(0)).toBe(true);
+    expect(allocOk(64)).toBe(true);
+    expect(allocOk(65)).toBe(false);
+    expect(allocOk(null)).toBeNull();
+  });
+
+  it("names the totals of canon §20.2 a median row fails", async () => {
+    const { totalsFailed } = await scenario();
+    const ok = { frameMeanMs: 4, frameP95Ms: 6, cpuP95Ms: 2, drawCallsMax: 60, textureMb: 40 };
+    expect(totalsFailed(ok, "high")).toEqual([]);
+    expect(totalsFailed(ok, "low")).toEqual([]);
+    expect(totalsFailed({ ...ok, frameMeanMs: 9 }, "high")).toEqual(["frameMean 9 > 8"]);
+    // Low has no mean budget (p95 ≤ 8 only).
+    expect(totalsFailed({ ...ok, frameMeanMs: 9 }, "low")).toEqual([]);
+    expect(totalsFailed({ ...ok, frameP95Ms: 8.5, drawCallsMax: 81, textureMb: 65 }, "low")).toEqual(["frameP95 8.5 > 8", "drawCalls 81 > 80", "textureMb 65 > 64"]);
+    expect(totalsFailed(undefined, "low")).toEqual(["no run"]);
+  });
+
+  it("builds the page URL with the confirmation VAT and ladder steps the page reads back", async () => {
+    const { caseUrl } = await scenario();
+    const env = { seconds: 10, warmup: 2, swords: "", skinned: "10", vat: "/assets/bench-vat/draconis-v3-{q}.vat.json", steps: "L1,L3" };
+    const url = caseUrl("http://127.0.0.1:3041", "vankiem", "medium", 120, env);
+    const c = parseBenchCase(new URL(url).search) as BenchCase;
+    expect([c.id, c.quality, c.count, c.skinned, c.vat, c.steps.join("+"), c.motion]).toEqual(["vankiem", "medium", 120, 10, "/assets/bench-vat/draconis-v3-{q}.vat.json", "L1+L3", "full"]);
+    // The baked VAT is for VAT crowds only.
+    expect(new URL(caseUrl("http://h", "base", "low", 0, env)).searchParams.get("vat")).toBeNull();
+    expect(new URL(caseUrl("http://h", "crowd-proc", "low", 60, env)).searchParams.get("vat")).toBeNull();
+  });
+
+  it("splits a sampling heap profile into game, bench driver, kit and three.js bytes", async () => {
     const { allocBucket, allocSummary } = await scenario();
     expect(allocBucket("http://127.0.0.1:3008/src/view/crowd.ts?t=1")).toBe("game");
+    expect(allocBucket("http://127.0.0.1:3008/src/view/bench/herd.ts")).toBe("bench");
     expect(allocBucket("http://127.0.0.1:3008/src/kit/three/stage.ts")).toBe("kit");
     expect(allocBucket("http://127.0.0.1:3008/node_modules/.vite/deps/chunk-LGVZFLW7.js?v=1")).toBe("three");
     // Vite's dep cache outside the root is served through /@fs/.
@@ -160,7 +220,7 @@ describe("ic-bench.mjs (self-contained scenario)", () => {
       ]),
     };
     const { bytes, top } = allocSummary(profile);
-    expect(bytes).toEqual({ game: 140, kit: 16, three: 950, other: 8 });
+    expect(bytes).toEqual({ game: 40, bench: 100, kit: 16, three: 950, other: 8 });
     expect(top[0]).toEqual({ site: "frame src/view/bench/main.ts", bytes: 100 });
     expect(top.map((t) => t.site)).toContain("sample src/kit/feedback/reaction.ts");
   });
@@ -181,5 +241,22 @@ describe("ic-bench.mjs (self-contained scenario)", () => {
     expect(parts.find((p) => p.part === "crowd" && p.n === 300)).toMatchObject({ p95Ms: 6.5, overMs: 1.5 });
     // Without the base run there is no crowd part to tell.
     expect(partsOf({ "crowd-proc@60": medians["crowd-proc@60"] }, "high", [60]).filter((p) => p.part === "crowd")).toEqual([]);
+    // With B, C, E: crowd = B − 0, swords and VFX = C − B, skinned = E − C (D36).
+    const full = {
+      "base@0": { frameP95Ms: 1.2, cpuP95Ms: 1, drawCalls: 20 },
+      "crowd-proc@60": { frameP95Ms: 9, cpuP95Ms: 2, drawCalls: 31 },
+      "crowd-vat@60": { frameP95Ms: 2.2, cpuP95Ms: 1.2, drawCalls: 31 },
+      "vankiem@60": { frameP95Ms: 5, cpuP95Ms: 1.6, drawCalls: 37 },
+      "skinned@60": { frameP95Ms: 7, cpuP95Ms: 2.4, drawCalls: 49 },
+    };
+    const rows = partsOf(full, "low", [60]);
+    expect(rows.map((p) => [p.part, p.p95Ms])).toEqual([
+      ["base", 1.2],
+      ["crowd", 1],
+      ["swords-fx", 2.8],
+      ["skinned", 2],
+    ]);
+    // Low's sub-budgets: 1.5 + 3 + 2 + 1.5; the over-budget column.
+    expect(rows.map((p) => p.overMs)).toEqual([0, 0, 0.8, 0.5]);
   });
 });
