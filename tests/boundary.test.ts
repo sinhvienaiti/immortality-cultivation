@@ -9,12 +9,19 @@ import { describe, expect, it } from "vitest";
  * only src/**, three, three/examples/jsm/* and @fontsource/*; no other game.
  * The pure groups (src/sim, src/local, src/typing, src/content,
  * src/tinh-tu/sim) are deterministic TypeScript: no three, DOM, clock,
- * storage, network, Math.random, trig, pow, hypot or **, and they import only
- * each other and pure kit files, also through the kit's import chains.
- * No game file reaches kit/feedback/audio-cues or kit/audio/dragon-voice (they
- * synthesize sound with OscillatorNode, Q6), even through a kit barrel, and
- * none uses OscillatorNode or createOscillator. Only src/app/storage.ts touches
- * browser storage. src/kit/** is checked by src/kit/verify-kit.mjs instead.
+ * storage, network, process, Intl, host-locale formatting (toLocale*),
+ * structuredClone, queueMicrotask, Math.random (or any Math[…]), trig, pow,
+ * hypot or **, and they import only each other and pure kit files, also
+ * through the kit's import chains (a kit file may call toLocale* with a
+ * literal locale). Real-player positions stay in src/local (canon D28, D34):
+ * no src/sim file but the match driver (world.ts) imports src/local.
+ * No game file outside src/kit (src, scripts, tests, root configs; canon §22)
+ * reaches kit/feedback/audio-cues or kit/audio/dragon-voice (they synthesize
+ * sound with OscillatorNode, Q6), even through a kit barrel, and none uses
+ * OscillatorNode or createOscillator. Only src/app/storage.ts touches browser
+ * storage, by name, member (`window.localStorage`) or element access
+ * (`globalThis["localStorage"]`). src/kit/** is checked by
+ * src/kit/verify-kit.mjs instead.
  */
 const ROOT = resolve(__dirname, "..");
 const SRC = join(ROOT, "src");
@@ -24,6 +31,8 @@ const PURE = ["src/sim", "src/local", "src/typing", "src/content", "src/tinh-tu/
 const PURE_KIT = ["src/kit/platform", "src/kit/typing", "src/kit/balance", "src/kit/vocab", "src/kit/input"];
 const SOUND_SYNTH = ["src/kit/feedback/audio-cues.ts", "src/kit/audio/dragon-voice.ts"];
 const STORAGE_OWNER = "src/app/storage.ts";
+/** The one src/sim file that runs the local layer before each tick (stepMatch, runLog). */
+const MATCH_DRIVER = "src/sim/world.ts";
 const CODE = /\.(ts|tsx|mts|js|mjs)$/;
 
 type Source = { path: string; abs: string; text: string };
@@ -50,6 +59,13 @@ function walk(dir: string): Source[] {
 }
 
 const sources = walk(SRC);
+/** Every game file outside src/kit (canon §22): src, scripts, tests and the root configs. */
+const gameFiles = [
+  ...sources,
+  ...walk(join(ROOT, "scripts")),
+  ...walk(join(ROOT, "tests")),
+  ...["vite.config.ts", "vitest.config.ts"].filter((name) => existsSync(join(ROOT, name))).map((name) => read(join(ROOT, name))),
+];
 const isPure = (path: string) => PURE.some((dir) => path.startsWith(dir + "/"));
 
 /** Module specifiers of static imports, re-exports, import types and dynamic imports (once per Source object). */
@@ -105,6 +121,8 @@ const OTHER_GAMES = ["space-typing", "dragon-hold", "typing-defense", "typing-su
 const BANNED_GLOBALS = new Set([
   "window", "document", "Date", "performance", "localStorage", "sessionStorage", "indexedDB", "requestAnimationFrame",
   "setTimeout", "setInterval", "crypto", "navigator", "globalThis", "fetch", "XMLHttpRequest", "WebSocket",
+  // Host and scheduling: environment, locale data, structured cloning, microtasks.
+  "process", "Intl", "structuredClone", "queueMicrotask",
 ]);
 const BANNED_MATH = new Set(["random", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "exp", "expm1", "log", "log1p", "log2", "log10", "pow", "hypot", "cbrt"]);
 const SYNTH_NAMES = new Set(["OscillatorNode", "createOscillator"]);
@@ -131,16 +149,27 @@ function namesUsed(source: Source, names: ReadonlySet<string>, members = false):
   return found;
 }
 
+/** `x.toLocaleY("en-US")`: a call whose first argument is a literal locale (deterministic; kit files only). */
+function literalLocaleCall(node: ts.PropertyAccessExpression): boolean {
+  const call = node.parent;
+  return ts.isCallExpression(call) && call.expression === node && call.arguments.length > 0 && ts.isStringLiteralLike(call.arguments[0]!);
+}
+
 /** Identifiers and operators the pure groups may not use. */
 function purityProblems(source: Source): string[] {
   const file = ts.createSourceFile(source.path, source.text, ts.ScriptTarget.Latest, true);
   const problems: string[] = [];
   const at = (node: ts.Node) => source.path + ":" + (file.getLineAndCharacterOfPosition(node.getStart()).line + 1);
+  const kit = source.path.startsWith("src/kit/");
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && BANNED_GLOBALS.has(node.text) && !isNameSlot(node)) problems.push(at(node) + " uses " + node.text);
     if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Math" && BANNED_MATH.has(node.name.text)) {
       problems.push(at(node) + " uses Math." + node.name.text);
     }
+    // Math["random"], Math[name]: any element access on Math dodges the name check.
+    if (ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Math") problems.push(at(node) + " uses Math[…]");
+    // Host-locale formatting (toLocaleString, toLocaleLowerCase, …); a kit file may pass a literal locale.
+    if (ts.isPropertyAccessExpression(node) && node.name.text.startsWith("toLocale") && !(kit && literalLocaleCall(node))) problems.push(at(node) + " uses " + node.name.text);
     if (ts.isBinaryExpression(node) && (node.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskToken || node.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken)) {
       problems.push(at(node) + " uses **");
     }
@@ -162,6 +191,45 @@ function declared(source: Source): Set<string> {
   return names;
 }
 
+/**
+ * Browser storage uses: the names as identifiers, as members (`window.localStorage`,
+ * `self.sessionStorage`) or as element keys (`globalThis["indexedDB"]`); comments,
+ * strings, object keys and declarations never count.
+ */
+function storageUses(source: Source): string[] {
+  const file = ts.createSourceFile(source.path, source.text, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const at = (node: ts.Node) => source.path + ":" + (file.getLineAndCharacterOfPosition(node.getStart()).line + 1);
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && STORAGE_NAMES.has(node.text)) {
+      const parent = node.parent;
+      const member = ts.isPropertyAccessExpression(parent) && parent.name === node;
+      if (member || !isNameSlot(node)) found.push(at(node) + " uses " + node.text);
+    }
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && STORAGE_NAMES.has(node.argumentExpression.text)) {
+      found.push(at(node) + " uses " + node.argumentExpression.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+/** src/sim files other than the match driver that import src/local (the world never reads real-player positions, D28, D34). */
+function simLocalImports(list: readonly Source[]): string[] {
+  return list
+    .filter((source) => source.path.startsWith("src/sim/") && source.path !== MATCH_DRIVER)
+    .flatMap((source) =>
+      specifiers(source)
+        .filter((spec) => {
+          if (!spec.startsWith(".")) return false;
+          const to = target(source, spec);
+          return to === "src/local" || to.startsWith("src/local/");
+        })
+        .map((spec) => source.path + " → " + spec),
+    );
+}
+
 /** For each root, the synthesized-sound kit files its import chain reaches. */
 function soundSynthReached(roots: readonly Source[]): string[] {
   const bad: string[] = [];
@@ -177,6 +245,8 @@ describe("immortality-cultivation boundary", () => {
     expect(sources.length).toBeGreaterThan(20);
     for (const path of ["src/content/types.ts", "src/content/rules.ts", "src/app/storage.ts", "src/sim/world.ts"]) expect(sources.some((source) => source.path === path)).toBe(true);
     for (const path of SOUND_SYNTH) expect(existsSync(join(ROOT, path))).toBe(true);
+    // The sound ban also covers scripts, tests and the root configs (canon §22: every game file outside src/kit).
+    for (const path of ["scripts/visual/scenarios/ic-bench.mjs", "scripts/tinh-tu/bots.ts", "tests/boundary.test.ts", "vite.config.ts"]) expect(gameFiles.some((source) => source.path === path)).toBe(true);
   });
 
   it("imports only src/**, three, three/examples/jsm/* and @fontsource/*", () => {
@@ -227,9 +297,13 @@ describe("immortality-cultivation boundary", () => {
     expect(bad).toEqual([]);
   });
 
-  it("keeps the pure groups pure: no DOM, clock, storage, network, Math.random, trig, pow or **", () => {
+  it("keeps the pure groups pure: no DOM, clock, storage, network, process, Intl, toLocale*, structuredClone, queueMicrotask, Math.random or Math[…], trig, pow or **", () => {
     const bad = sources.filter((s) => isPure(s.path)).flatMap(purityProblems);
     expect(bad).toEqual([]);
+  });
+
+  it("keeps real-player positions out of the world: only the match driver (world.ts) of src/sim imports src/local (D28, D34)", () => {
+    expect(simLocalImports(sources)).toEqual([]);
   });
 
   it("keeps every kit file the pure groups reach, directly or through a barrel, pure as well", () => {
@@ -245,19 +319,19 @@ describe("immortality-cultivation boundary", () => {
     expect(bad).toEqual([]);
   });
 
-  it("never reaches kit/feedback/audio-cues or kit/audio/dragon-voice, even through a kit barrel (D44, PB-20)", () => {
-    expect(soundSynthReached(sources)).toEqual([]);
+  it("never reaches kit/feedback/audio-cues or kit/audio/dragon-voice from any game file (src, scripts, tests, configs), even through a kit barrel (D44, PB-20, canon §22)", () => {
+    expect(soundSynthReached(gameFiles)).toEqual([]);
   });
 
-  it("never synthesizes sound: no OscillatorNode or createOscillator outside src/kit (Q6)", () => {
-    expect(sources.flatMap((source) => namesUsed(source, SYNTH_NAMES, true))).toEqual([]);
+  it("never synthesizes sound: no OscillatorNode or createOscillator in any game file outside src/kit (Q6, canon §22)", () => {
+    expect(gameFiles.flatMap((source) => namesUsed(source, SYNTH_NAMES, true))).toEqual([]);
   });
 
-  it("touches browser storage only in src/app/storage.ts (canon §23.1)", () => {
+  it("touches browser storage only in src/app/storage.ts, by name, member or element access (canon §23.1)", () => {
     const bad = sources
       .filter((source) => source.path !== STORAGE_OWNER)
       .flatMap((source) => [
-        ...namesUsed(source, STORAGE_NAMES),
+        ...storageUses(source),
         ...specifiers(source)
           .filter((spec) => spec.startsWith(".") && target(source, spec).startsWith("src/kit/platform/safe-storage"))
           .map((spec) => source.path + " imports " + spec),
@@ -279,11 +353,48 @@ describe("immortality-cultivation boundary", () => {
     expect(namesUsed(fake("ctx.createOscillator();", "src/audio/fake.ts"), SYNTH_NAMES, true)).toHaveLength(1);
     expect(namesUsed(fake("// createOscillator\nconst s = 'OscillatorNode';", "src/audio/fake.ts"), SYNTH_NAMES, true)).toEqual([]);
     // Storage: the kit wrapper and the raw global count; an object key does not.
-    expect(namesUsed(fake("safeLocalStorage.getItem('k');", "src/ui/fake.ts"), STORAGE_NAMES)).toHaveLength(1);
-    expect(namesUsed(fake("const o = { localStorage: 1 };", "src/ui/fake.ts"), STORAGE_NAMES)).toEqual([]);
+    expect(storageUses(fake("safeLocalStorage.getItem('k');", "src/ui/fake.ts"))).toHaveLength(1);
+    expect(storageUses(fake("const o = { localStorage: 1 };", "src/ui/fake.ts"))).toEqual([]);
+    // Storage by member and element access counts too (part A review: these slipped through).
+    for (const text of [
+      "window.localStorage.getItem('k');",
+      "globalThis.localStorage.clear();",
+      "self.sessionStorage.setItem('k', 'v');",
+      "const s = window['localStorage'];",
+      'const db = globalThis["indexedDB"];',
+      "const s = window?.localStorage;",
+      "const s = window[`sessionStorage`];",
+    ]) {
+      expect(storageUses(fake(text, "src/ui/fake.ts")), text).toHaveLength(1);
+    }
+    expect(storageUses(fake("// window.localStorage\nconst k = 'localStorage';\ninterface Bag { localStorage: number }\nconst o = { sessionStorage: 2 };", "src/ui/fake.ts"))).toEqual([]);
+    // Purity, hardened: process, Intl, toLocale*, structuredClone, queueMicrotask and Math[…] in the pure groups.
+    for (const text of [
+      "const r = Math['random']();",
+      "const key = 'random';\nconst r = Math[key]();",
+      "const t = process.hrtime();",
+      "const n = new Intl.NumberFormat('en').format(2);",
+      "const s = (1.5).toLocaleString();",
+      "const w = 'A'.toLocaleLowerCase('en-US');",
+      "const c = structuredClone({ a: 1 });",
+      "queueMicrotask(() => undefined);",
+    ]) {
+      expect(purityProblems(fake(text)).length, text).toBeGreaterThan(0);
+    }
+    // A kit file reached by a pure group may lower-case with a literal locale (kit/vocab/content-filter.ts), not with the host's.
+    expect(purityProblems(fake('const w = "A".toLocaleLowerCase("en-US");', "src/kit/vocab/fake.ts"))).toEqual([]);
+    expect(purityProblems(fake('const w = "A".toLocaleLowerCase();', "src/kit/vocab/fake.ts"))).toHaveLength(1);
+    // Real-player positions: a sim file importing src/local is caught; the match driver and type-only content imports are not.
+    expect(simLocalImports([fake('import { playerPos } from "../local/player";', "src/sim/fake.ts")])).toEqual(["src/sim/fake.ts → ../local/player"]);
+    expect(simLocalImports([fake('import type { LocalState } from "../local";', "src/sim/fake.ts")])).toEqual(["src/sim/fake.ts → ../local"]);
+    expect(simLocalImports([fake('import { stepLocal } from "../local/index";', MATCH_DRIVER)])).toEqual([]);
+    expect(simLocalImports([fake('import type { LocalState } from "../content/types";', "src/sim/fake.ts")])).toEqual([]);
     // The chain check follows a kit barrel to the synthesizers.
     expect(soundSynthReached([fake('import { TIERS } from "../kit/feedback";', "src/view/fake.ts")])).toEqual(["src/view/fake.ts → src/kit/feedback/audio-cues.ts"]);
     expect(soundSynthReached([fake('import { BusMix } from "../kit/audio";', "src/audio/fake.ts")])).toEqual(["src/audio/fake.ts → src/kit/audio/dragon-voice.ts"]);
     expect(soundSynthReached([fake('import { TIERS } from "../kit/feedback/tiers";', "src/view/fake.ts")])).toEqual([]);
+    // … from scripts too, and the names there count.
+    expect(soundSynthReached([fake('import { AudioCues } from "../../src/kit/feedback";', "scripts/visual/fake.mjs")])).toEqual(["scripts/visual/fake.mjs → src/kit/feedback/audio-cues.ts"]);
+    expect(namesUsed(fake("const osc = ctx.createOscillator();", "scripts/visual/fake.mjs"), SYNTH_NAMES, true)).toHaveLength(1);
   });
 });
