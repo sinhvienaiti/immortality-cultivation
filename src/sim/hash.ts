@@ -8,14 +8,24 @@
  * object with a `hashState()` method is hashed by what that returns (the kit's
  * pace director and flow meter). `hashWorld` walks the whole world except
  * sim/world.ts HASH_SKIP (static config, `wall`, events); `hashLocal` walks the
- * local layer except `outbox` and `events`. Replays, golden and `ic-replay`
- * compare both every 600 ticks and at the end.
+ * local layer except `outbox` and `events`. STATIC_KEYS are skipped at every
+ * depth by both. Replays, golden and `ic-replay` compare both every 600 ticks
+ * and at the end.
  * Owner: Lane 2.
  */
 import type { LocalState, World } from "../content/types";
 
 /** Keys hashWorld skips: static config, wall clock, events (M0A_PLAN §3.1); world.ts re-exports it. */
 export const HASH_SKIP: ReadonlySet<string> = new Set(["stage", "header", "field", "wall", "events"]);
+
+/**
+ * Keys skipped at every depth: compiled static config held by reference, never
+ * state. `rules` is the kit's compiled TypingRules inside each words.sessions[]
+ * TypingSession and its Letters (typing/config.ts IC_RULES, one module constant
+ * for every match): 22 floats such as life.base 1.2 that M0A_PLAN §3.1 keeps
+ * out of hashed state ("Không lưu số thực trong trạng thái có băm").
+ */
+export const STATIC_KEYS: ReadonlySet<string> = new Set(["rules"]);
 
 const PRIME = 0x01000193;
 const OFFSET = 0x811c9dc5;
@@ -47,7 +57,7 @@ export function mixString(hash: number, value: string): number {
 type HashStateful = { hashState(): unknown };
 const hasHashState = (value: object): value is HashStateful => typeof (value as Partial<HashStateful>).hashState === "function";
 
-/** Folds `value` into `hash`; `skip` applies to the keys of this object only (nested objects are walked whole). */
+/** Folds `value` into `hash`; `skip` applies to the keys of this object only (nested objects are walked whole but for STATIC_KEYS). */
 export function mixValue(hash: number, value: unknown, skip: ReadonlySet<string> = NONE): number {
   if (value === null || value === undefined) return mix(hash, value === null ? 4 : 5);
   switch (typeof value) {
@@ -88,7 +98,7 @@ export function mixValue(hash: number, value: unknown, skip: ReadonlySet<string>
   if (hasHashState(value)) return mixValue(mix(hash, 13), value.hashState());
   let h = mix(hash, 12);
   for (const key of Object.keys(value)) {
-    if (skip.has(key)) continue;
+    if (skip.has(key) || STATIC_KEYS.has(key)) continue;
     h = mixValue(mixString(h, key), (value as Record<string, unknown>)[key]);
   }
   return h;
@@ -142,7 +152,7 @@ export function hashedFloats(value: unknown, skip: ReadonlySet<string> = NONE, p
   }
   if (hasHashState(value)) return hashedFloats(value.hashState(), NONE, path + ".hashState()", out);
   for (const key of Object.keys(value)) {
-    if (skip.has(key)) continue;
+    if (skip.has(key) || STATIC_KEYS.has(key)) continue;
     hashedFloats((value as Record<string, unknown>)[key], NONE, path + "." + key, out);
   }
   return out;

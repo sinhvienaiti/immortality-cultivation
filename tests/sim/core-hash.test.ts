@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SimEvent } from "../../src/content/types";
 import { EVENT_QUEUE_CAP, EventQueue, emit } from "../../src/sim/events";
-import { hashValue, hashedFloats, hex32 } from "../../src/sim/hash";
+import { STATIC_KEYS, hashValue, hashedFloats, hex32 } from "../../src/sim/hash";
 
 /** canon §23.2, M0A_PLAN §3.1: structural hashes, top-level skips, hashState(); the event queue with lastTick(). */
 describe("sim/hash", () => {
@@ -22,6 +22,14 @@ describe("sim/hash", () => {
     const skip = new Set(["events"]);
     expect(hashValue({ a: 1, events: [1] }, skip)).toBe(hashValue({ a: 1, events: [2] }, skip));
     expect(hashValue({ a: { events: [1] } }, skip)).not.toBe(hashValue({ a: { events: [2] } }, skip));
+  });
+
+  it("skips the compiled static `rules` (STATIC_KEYS) at every depth, in the hash and the float scan", () => {
+    expect([...STATIC_KEYS]).toEqual(["rules"]);
+    const session = (base: number, x: number, freeAt: number[]) => ({ words: { sessions: [{ rules: { life: { base } }, letters: { rules: { x }, freeAt } }] } });
+    expect(hashValue(session(1.2, 0.5, [1, 2]))).toBe(hashValue(session(9.9, 0.7, [1, 2])));
+    expect(hashValue(session(1.2, 0.5, [1, 3]))).not.toBe(hashValue(session(1.2, 0.5, [1, 2])));
+    expect(hashedFloats(session(1.2, 0.5, [1, 2]))).toEqual([]);
   });
 
   it("hashes an object with hashState() by what it returns", () => {

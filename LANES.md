@@ -88,6 +88,8 @@ kit's `src/kit/tools/cdp-run.mjs`.
   Directions by table, lengths by `isqrt`. Wall time (`nowMs`) comes in as an argument.
 - `hashWorld` walks the world except `HASH_SKIP` (`stage`, `header`, `field`,
   `wall`, `events`); `hashLocal` walks `local` except `outbox` and `events`.
+  Both skip `STATIC_KEYS` (`rules`: the kit's compiled TypingRules inside each
+  TypingSession) at every depth, so no float reaches a hash.
   Create objects with fields in a fixed order. Replays write both every 600
   ticks and at the end (canon §23.2).
 - Copied files: one line `// Source: games/<repo>/<path> @<commit> (adapted: …)`
