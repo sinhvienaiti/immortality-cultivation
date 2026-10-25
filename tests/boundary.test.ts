@@ -29,7 +29,16 @@ const CODE = /\.(ts|tsx|mts|js|mjs)$/;
 type Source = { path: string; abs: string; text: string };
 
 const toRepo = (abs: string): string => relative(ROOT, abs).split(sep).join("/");
-const read = (abs: string): Source => ({ path: toRepo(abs), abs, text: readFileSync(abs, "utf8") });
+// I/O-light: /mnt/d is a 9P mount (~20 ms a visit), so each file is read, parsed and resolved once.
+const readCache = new Map<string, Source>();
+function read(abs: string): Source {
+  let source = readCache.get(abs);
+  if (source === undefined) {
+    source = { path: toRepo(abs), abs, text: readFileSync(abs, "utf8") };
+    readCache.set(abs, source);
+  }
+  return source;
+}
 
 function walk(dir: string): Source[] {
   if (!existsSync(dir)) return [];
@@ -43,19 +52,34 @@ function walk(dir: string): Source[] {
 const sources = walk(SRC);
 const isPure = (path: string) => PURE.some((dir) => path.startsWith(dir + "/"));
 
-/** Module specifiers of static imports, re-exports, import types and dynamic imports. */
+/** Module specifiers of static imports, re-exports, import types and dynamic imports (once per Source object). */
+const specCache = new WeakMap<Source, string[]>();
 function specifiers(source: Source): string[] {
-  return ts.preProcessFile(source.text, true, true).importedFiles.map((file) => file.fileName);
+  let specs = specCache.get(source);
+  if (specs === undefined) {
+    specs = ts.preProcessFile(source.text, true, true).importedFiles.map((file) => file.fileName);
+    specCache.set(source, specs);
+  }
+  return specs;
 }
 
 /** The repo-relative path a relative specifier points at (no extension resolution needed for prefix checks). */
 const target = (source: Source, spec: string) => toRepo(resolve(dirname(source.abs), spec));
 
-/** The file a relative specifier loads (.ts, then /index.ts), or null. */
+/** The file a relative specifier loads (.ts, then /index.ts), or null; once per (directory, specifier). */
+const resolveCache = new Map<string, string | null>();
 function resolveFile(from: string, spec: string): string | null {
   const base = resolve(dirname(from), spec);
-  for (const candidate of [base, base + ".ts", join(base, "index.ts")]) if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-  return null;
+  if (resolveCache.has(base)) return resolveCache.get(base)!;
+  let found: string | null = null;
+  for (const candidate of [base, base + ".ts", join(base, "index.ts")]) {
+    if (existsSync(candidate) && statSync(candidate).isFile()) {
+      found = candidate;
+      break;
+    }
+  }
+  resolveCache.set(base, found);
+  return found;
 }
 
 /** Every file reachable from `roots` through relative imports (roots included), by absolute path. */
