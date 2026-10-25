@@ -13,6 +13,8 @@
  * (`declare module "../content/types" { interface WordsState { … } }`) and
  * reports it; Lane 2 folds it in here. Never edit another lane's section.
  */
+import type { PaceDirector } from "../kit/balance/director";
+import type { FlowMeter } from "../kit/balance/flow";
 import type { Rng } from "../kit/platform/rng";
 
 // ── Basics ──────────────────────────────────────────────────────────────────
@@ -616,6 +618,12 @@ export type SimEvent = { readonly tick: number } & (
       /** Swords or strikes in this beat (view picks the visual count from the tier). */
       readonly count: number;
     }
+  /**
+   * Shapes in metres (`local` tests itself against them at the strike tick, D34): circle centred on
+   * (toX, toZ) with radius reachM; cone from its apex (x, z) towards (toX, toZ), length reachM, end
+   * chord widthM; line from (x, z) towards (toX, toZ), length reachM, width widthM; cell a square of
+   * side reachM centred on (toX, toZ).
+   */
   | {
       readonly type: "telegraph";
       readonly stage: "start" | "strike" | "cancel";
@@ -711,6 +719,8 @@ export interface EventSink {
   drain(): SimEvent[];
   /** Events of the last completed tick, without draining (the `local` layer reads its consumable, ward, cast, telegraph events). */
   lastTick(): readonly SimEvent[];
+  /** The world's step closes its tick: what it pushed becomes `lastTick()` (optional, so hand-made test sinks still fit). */
+  endTick?(): void;
   readonly length: number;
 }
 
@@ -814,7 +824,11 @@ export interface BeastState {
   y: number;
   /** Flow-field cell index (−1: off the grid, flyers). */
   cell: number;
-  /** Walk speed after preset and traits, u per tick ‰ (speedMm × 1000 / 60 per tick). */
+  /**
+   * Walk speed after preset and traits, in u per tick × 1000 (N mm/s is N u per tick, so a
+   * 1.4 m/s beast at preset 1.00 holds 1 400 000). sim/field.ts fieldStep moves round(speedPm / 1000)
+   * u a tick unless the caller passes the step with its slows applied.
+   */
   speedPm: number;
   bornAt: number;
   // Combat (Lane 4 combat.ts).
@@ -857,10 +871,14 @@ export interface BeastStore {
 
 /** A group waiting for its tick or for room at its gate (canon §4.1, §13.3). */
 export interface PendingGroup {
-  readonly tick: number;
+  /** Tick it may leave its gate (the director may move it: spawn gaps, peak, lull). */
+  tick: number;
   readonly wave: number;
-  readonly group: WaveGroupDef;
+  /** The plan's group; the director may swap in a copy with one elite trait more or less. */
+  group: WaveGroupDef;
   readonly summoned: boolean;
+  /** Queue order among groups of the same tick (stable). */
+  readonly seq: number;
 }
 
 /** Lane 2 waves.ts. */
@@ -872,18 +890,25 @@ export interface WaveState {
   startedAt: number;
   groupsTotal: number;
   groupsSpawned: number;
+  /** Highest wave whose end (wave-end event, Linh Sa) was handled. */
+  endedThrough: number;
   /** Breaks so far (Thẻ Ôn pay divides by the stage's break count). */
   breaks: number;
-  /** The break clock stops while a panel is open (app sets it through a command-free flag). */
+  /**
+   * Kept false at M0a: the app stops stepping the world while a panel is open (M0A_PLAN §6.9),
+   * which stops the break clock without a flag outside the replay.
+   */
   breakHeld: boolean;
   lullStarted: boolean;
+  /** The boss is on the field (it waits at gate A for room under the live cap). */
   bossStarted: boolean;
-  /** Live beasts per wave index (a wave ends when all groups spawned and 0 live). */
+  /** Live beasts per wave index; index 0 is the boss phase (the boss and its Gọi Đàn). */
   liveByWave: number[];
 }
 
 /** Lane 2 spawn.ts. */
 export interface SpawnState {
+  /** Waiting groups by (tick, seq). */
   readonly pending: PendingGroup[];
   /** Next tick each gate may release a group (A, B, sky). */
   readonly gateReadyAt: number[];
@@ -891,19 +916,50 @@ export interface SpawnState {
   lastReleaseAt: number;
   /** Ticks a ready group waited because of the live cap. */
   capWaitTicks: number;
+  nextSeq: number;
+}
+
+/** The kit's pace director and flow meter (kit balance/director.ts, flow.ts); hashed through `hashState()` only. */
+export interface DirectorKit {
+  readonly meter: FlowMeter;
+  readonly pace: PaceDirector;
+  /** Every number of both, integers (sim/hash.ts walks this instead of the objects). */
+  hashState(): number[];
 }
 
 /** Lane 2 director.ts (kit PaceDirector, canon §13.2). */
 export interface DirectorState {
   readonly enabled: boolean;
+  /** Net steps (+ harder). */
   level: number;
   stepsThisWave: number;
-  /** Spawn gap scale ‰ (±15 % a match), HP and species scale ‰ (±10 %). */
+  /** Spawn gap scale ‰ (±15 % a match); HP stays 1000 (the director never changes HP at M0a). */
   spawnPm: number;
   hpPm: number;
+  /** Tick of the last judgement (−1: none). */
   lastEvalTick: number;
-  /** Wave a Linh Dịch dropped in (one a wave). */
+  /** Wave a Linh Dịch dropped in (one a wave; 0: none yet). */
   linhDichWave: number;
+  /** Composition change charged by elite steps, ‰ of the stage's W (±10 % a match). */
+  compositionPm: number;
+  /** Next trait an elite step adds (cycles Cuồng, Thiết Bì, Hồi Nguyên). */
+  eliteCursor: number;
+  /** Fed to the meter once a tick: kills this tick (‰ of the route walked), dropped locks, damage counters at the last feed. */
+  readonly kills: number[];
+  abandons: number;
+  lastTyped: number;
+  lastOther: number;
+  readonly kit: DirectorKit;
+}
+
+/** One flow field (Lane 2 field.ts), per cell of the 0.5 m grid. */
+export interface FlowField {
+  /** Grid cost to the heart edge (10 a straight step, 14 a diagonal; 0 at the edge; −1 unreachable). */
+  readonly steps: Int32Array;
+  /** Cell to walk towards (string-pulled); −2: the heart itself in a straight line; −1: unreachable. */
+  readonly waypoint: Int32Array;
+  /** Path length from the cell's centre to the heart's centre along the pulled path, u (−1 unreachable). */
+  readonly pathU: Int32Array;
 }
 
 /** Flow fields (Lane 2 field.ts): derived from the stage and pillars, rebuilt when obstacles change; never hashed. */
@@ -911,6 +967,14 @@ export interface FieldRuntime {
   readonly cols: number;
   readonly rows: number;
   readonly cellMm: number;
+  readonly cellU: number;
+  /** North-west corner of the grid, u. */
+  readonly minXU: number;
+  readonly minZU: number;
+  /** 1 where beasts may not stand (terrain, Trận Trụ, with FIELD.clearanceMm). */
+  blocked: Uint8Array;
+  /** One field per ground gate towards the heart; at M0a both gates share one (corridors per gate come with later stages). */
+  flows: Readonly<Record<"A" | "B", FlowField>>;
   /** Bumped on every rebuild (readers cache by it). */
   version: number;
 }
@@ -1272,9 +1336,10 @@ export interface BarrierBuff {
   joinAt: number;
 }
 
-/** Lane 2 local/**. Hashed by hashLocal except `outbox` and `events`. */
+/** Lane 2 local/**. Hashed by hashLocal except `outbox` and `events`. Positions u, directions ‰ (unit vector × 1000). */
 export interface LocalState {
   readonly seat: number;
+  /** The world tick this layer runs before (set by stepLocal). */
   tick: number;
   x: number;
   z: number;
@@ -1282,20 +1347,33 @@ export interface LocalState {
   hpMax: number;
   shield: number;
   shieldUntil: number;
-  /** Hồi Xuân Đan over 2 s: HP left to give and its end. */
+  /** Hồi Xuân Đan over 2 s: the dose, HP left to give, its first tick and its end (evenly over the ticks between). */
+  healTotal: number;
   healLeft: number;
+  healFrom: number;
   healUntil: number;
   down: boolean;
   downUntil: number;
+  /** Right-click goal and the pulled path to it (waypoints, u). */
   moveTarget: PointU | null;
   readonly path: PointU[];
+  /** Arrow keys held: up 1, down 2, left 4, right 8 (types.ts ARROW_MASK). */
   arrows: number;
+  /** Unpushable until (Lưu Quang Bộ 0.3 s); the glide runs while `dashLeft` > 0. */
   dashUntil: number;
+  dashLeft: number;
+  dashX: number;
+  dashZ: number;
+  /** Last walk direction (the dash goes this way); north at the start. */
+  facingX: number;
+  facingZ: number;
   barrier: BarrierBuff;
   /** Next đánh nền command tick. */
   autoNext: number;
   /** Highest telegraph id whose strike this layer already handled. */
   lastStrikeSeen: number;
+  /** Highest world tick whose events this layer has read (never twice). */
+  seenTick: number;
   /** Commands for the next world tick (drainLocalCommands). */
   readonly outbox: SimCommand[];
   /** player-hit, player-down, player-up for the app. */

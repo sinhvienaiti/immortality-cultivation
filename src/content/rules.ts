@@ -8,7 +8,7 @@
  * Pure and deterministic: no Math.pow, trig or **; integers in ms, mm, %, ‰, w100.
  * Owner: step 0 wrote it; Lane 2 owns it from now on (LANES.md).
  */
-import type { BeastTier, GateId, Grade, Preset, Quality, SlotId, StageKind, WordGroup } from "./types";
+import type { BeastTier, FeedbackTier, GateId, Grade, Preset, Quality, SlotId, StageKind, WordGroup } from "./types";
 
 // ── Identity, units, save (canon §0, §6.1, §7.1, §23.1) ─────────────────────
 
@@ -158,6 +158,17 @@ export const DECK = {
   baseWords: 40,
 } as const;
 
+/**
+ * Learning thresholds the canon names through Rồng 01 §6.3 (§17: meaning and IPA hide by right recalls) and
+ * §16, §17 (mastery: weak under 40, known from 70). Folded in from Lane 3's typing/slots.ts (change request).
+ */
+export const LEARNING_LEVELS = {
+  /** A word's meaning and IPA hide on the Bàn Quyết from this many right recalls (and known mastery). */
+  recallsToHide: 2,
+  weakMastery: 40,
+  knownMastery: 70,
+} as const;
+
 // ── Grades, Chân Nguyên (canon §6.5, §6.6) ──────────────────────────────────
 
 export const GRADE = {
@@ -258,6 +269,8 @@ export const PACE = {
   defaultCvPm: 250,
   /** "Chưa biết" on the speed card: 25 WPM, measured in wave 1 (D18, D41). */
   unknownWpm: 25,
+  /** The Chuẩn bot (canon §18.3: 35 WPM, 95 %, CV 0.25): C_ref = C(its E_eff), so its k is exactly 1. */
+  refProfile: { e: 35, a: 950, cv: 250 },
 } as const;
 
 // ── Field and formation (canon §8.1, §8.2) ──────────────────────────────────
@@ -283,6 +296,17 @@ export const FIELD = {
   /** Small beasts reach the barrier edge in 8–12 s at k 1 Cân bằng; exceptions never under 6 s. */
   approachMs: [8000, 12_000] as readonly [number, number],
   approachFloorMs: 6000,
+  /**
+   * Room kept around obstacles on the 0.5 m grid (beasts and the player alike; the player's radius,
+   * canon §9.1). Đề xuất của vòng này, chờ chủ dự án xác nhận: the canon gives no beast radius.
+   */
+  clearanceMm: 400,
+  /** Ground beasts walk to the heart edge (canon §10.8: bites at r 2 m), flyers fly at this height. Height: proposal (view only). */
+  heartEdgeMm: 2000,
+  flyHeightMm: 4000,
+  /** Spawn spread around a gate: a swarm cluster within ± clusterSpreadMm, a pack within ± packSpreadMm (proposal). */
+  clusterSpreadMm: 800,
+  packSpreadMm: 1200,
 } as const;
 
 /** canon §8.2. */
@@ -338,6 +362,13 @@ export const PLAYER = {
   teamReviveMm: 3000,
   teamDownMs: 15_000,
 } as const;
+
+/**
+ * canon §12.1: Lưu Quang Bộ, the thân pháp shared by every school: glide 5 m along the walk
+ * direction (or towards the cursor), 0.3 s unpushable, no invulnerability. The glide takes the
+ * unpushable window (đề xuất của vòng này, chờ chủ dự án xác nhận: the canon gives no glide time).
+ */
+export const DASH = { distanceMm: 5000, unpushableMs: 300 } as const;
 
 // ── Beasts (canon §10) ──────────────────────────────────────────────────────
 
@@ -477,6 +508,12 @@ export const DIRECTOR = {
   spawnStepPct: 7,
   shiftMs: 3000,
   linhDichPerWave: 1,
+  /** canon §18.2 P: Trận Lực lost in the last 2 s; O: ≥ 3 dropped locks in 5 s. */
+  hurtMs: 2000,
+  abandonBurst: 3,
+  abandonWindowMs: 5000,
+  /** canon §18.2 I (b): no beast within 12 m of the heart (ô 1's reach, counted from the heart, D46). */
+  idleRadiusMm: 12_000,
 } as const;
 
 /** canon §13.3, §25: the M0a stage. */
@@ -687,6 +724,12 @@ export const DEFAULT_TIER = { discrete: "high", apple: "medium", other: "low", s
 
 // ── Presentation numbers the rules own (canon §21.1, §22, §24) ──────────────
 
+/**
+ * Feedback tier (canon §21.1 T0–T5) of a `death` event by the beast's tier. Đề xuất của vòng này,
+ * chờ chủ dự án xác nhận (the canon names the tiers, not this mapping); Lane 6's profile may override.
+ */
+export const DEATH_TIER: Readonly<Record<BeastTier, FeedbackTier>> = { swarm: 1, small: 2, medium: 3, general: 4, boss: 5 };
+
 /** canon §21.1: smallest on-screen sizes at 1080p, px. */
 export const SIZES_PX_1080 = { player: 64, swarm: 20, swarmCluster: 60, small: 36, medium: 48, general: 80, boss: 160 } as const;
 
@@ -758,9 +801,9 @@ export const SHOP_MODE = { confirmMs: 2000 } as const;
 
 /** Every rule table above; the replay header's rulesHash covers it with the stage and data tables. */
 export const RULES = {
-  GAME_ID, SIM, SAVE, STRENGTH, CAST, LETTERS, SLOTS, SLOT3_DASH_COOLDOWN_MS, SEAL_WORDS, CLEANSE_WORDS, LENGTH_BY_E, NEW_WORDS, DECK, GRADE, CHAN_NGUYEN,
-  DAMAGE, ELEMENT, SLOWS, SHARES, REF_OUTPUT, PACE, FIELD, FORMATION, MECHANISMS, PLAYER, BEAST_TIERS, ELITES, GENERAL, BOSS, TELEGRAPH, POSTURE,
-  PRESSURE, CONSUMABLES, FLOW, LOAD, DIRECTOR, STAGE_M0A, PRESETS, LINH_SA, THU_HACH, TINH_TU, GATES, SIM_BUDGET, KEYS,
+  GAME_ID, SIM, SAVE, STRENGTH, CAST, LETTERS, SLOTS, SLOT3_DASH_COOLDOWN_MS, SEAL_WORDS, CLEANSE_WORDS, LENGTH_BY_E, NEW_WORDS, DECK, LEARNING_LEVELS, GRADE, CHAN_NGUYEN,
+  DAMAGE, ELEMENT, SLOWS, SHARES, REF_OUTPUT, PACE, FIELD, FORMATION, MECHANISMS, PLAYER, DASH, BEAST_TIERS, ELITES, GENERAL, BOSS, TELEGRAPH, POSTURE,
+  PRESSURE, CONSUMABLES, FLOW, LOAD, DIRECTOR, STAGE_M0A, PRESETS, LINH_SA, THU_HACH, TINH_TU, GATES, SIM_BUDGET, DEATH_TIER, KEYS,
 } as const;
 
 /** FNV-1a 32-bit over the JSON of `parts`, 8 hex digits (stable: object literals keep their key order). */
