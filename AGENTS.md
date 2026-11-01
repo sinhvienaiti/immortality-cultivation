@@ -12,7 +12,7 @@ Dev port 3008, host `tutien.typing-game.local`; `gameId` `immortality-cultivatio
 
 - Authoritative design (Vietnamese): `docs/games/tu-tien/` in the parent repo
   (`../..` from this repo's root). `00-canon.md` holds every rule and number
-  and wins when documents disagree (decisions D01–D49: D47 the noble style,
+  and wins when documents disagree (decisions D01–D53: D47 the noble style, D50 English text, D51 Claude builds models via Tripo, D52 painterly-realistic look, D53 camera headroom,
   D48 the camera frames the whole pass and every beast, default tilt 55°,
   D49 the character roster); `M0A_PLAN.md` is the build plan (step 0, lanes,
   contracts, gates); `DANH_GIA_2026-10-24.md` gives the reasons.
@@ -48,7 +48,11 @@ contracts, the event list and how to ask for a shared type change.
 - Never build character, creature, building or prop models in code. Allowed:
   primitive placeholders (one colour per beast family; biped tall, quadruped
   long and low, flyer floats, swarm in clusters), procedural ground, roads,
-  decals, particles, shaders, instancing. Real models come from the owner as GLB.
+  decals, particles, shaders, instancing. Real models: Claude builds them
+  through the Tripo API (canon D51, owner 01/11/2026) only from source images
+  two blind judges scored 8.5 or higher, after `--dry-run`, one model first,
+  credits logged in `docs/games/TRIPO_TODO.md`; CC0 or QAL third-party models
+  are allowed. Plan: `docs/games/tu-tien/ART_AUDIO_VFX_PLAN.md`.
 - `src/sim`, `src/local`, `src/typing`, `src/content`, `src/tinh-tu/sim` are
   pure deterministic TypeScript at a fixed 60 Hz: integer state, seeded RNG
   (`world.rng.<stream>`, never `crit`), no `three`, `window`, `document`,
