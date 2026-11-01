@@ -46,11 +46,12 @@ export default defineConfig({
   build: {
     target: "es2022",
     rollupOptions: {
-      // Three pages: the game, the HN0 bench (Lane 1) and the Tĩnh Tu trial (Lane 8).
+      // Four pages: the game, the HN0 bench (Lane 1), the Tĩnh Tu trial (Lane 8) and the lookdev (material standard).
       input: {
         main: join(root, "index.html"),
         bench: join(root, "bench.html"),
         "tinh-tu": join(root, "tinh-tu.html"),
+        lookdev: join(root, "lookdev.html"),
       },
       // three.js in its own chunk: cached across game updates, and no chunk over the 500 kB warning.
       output: { manualChunks: { three: ["three"] } },
