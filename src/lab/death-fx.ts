@@ -108,9 +108,10 @@ export class DeathFx {
       s.vy = this.rand.range(1.4, 3.4);
       s.drag = 2.6;
       s.gravity = 0.8;
-      s.stretch = 0.035;
+      // Thin streaks, not round blobs (a field of soft discs read as "bubbles").
+      s.stretch = 0.055;
       s.life = this.rand.range(0.45, 0.8);
-      s.size0 = this.rand.range(0.16, 0.28) * (k > 2 ? 1.4 : 1);
+      s.size0 = this.rand.range(0.1, 0.18) * (k > 2 ? 1.4 : 1);
       s.size1 = 0.04;
       const hot = i % 4 === 0 ? 1.6 : 1;
       s.r = (ur * 2.4 + (hot - 1)) * hot;
@@ -136,12 +137,12 @@ export class DeathFx {
     p.x = x;
     p.y = 0.03;
     p.z = z;
-    p.life = 0.4;
-    p.size0 = 1.6 * k;
-    p.size1 = 2.4 * k;
-    p.r = ur * 0.7;
-    p.g = ug * 0.7;
-    p.b = ub * 0.7;
+    p.life = 0.35;
+    p.size0 = 1.0 * k;
+    p.size1 = 1.5 * k;
+    p.r = ur * 0.4;
+    p.g = ug * 0.4;
+    p.b = ub * 0.4;
     this.pool.emit();
     // Spirit threads unwinding upward, each leaning its own way, growing from the body over ~0.18 s.
     const nThreads = Math.max(2, Math.round((big ? 5 : 3) * this.dens));

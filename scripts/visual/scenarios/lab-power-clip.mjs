@@ -24,6 +24,9 @@ export default async function (page) {
   // Warm-up off camera time: compile every program once, then reset.
   await page.eval("window.__lab.type('k7'); window.__lab.step(250); window.__lab.type('k5'); window.__lab.step(300); window.__lab.type('k1'); window.__lab.type('k2'); window.__lab.step(120)");
   await page.eval("window.__lab.reset()");
+  // ZOOM=1: the player's close view (round 2: key 7 and the ultimate ease the view out to the whole field and back).
+  const zoom = Number(process.env.ZOOM ?? "0");
+  if (zoom > 0) await page.eval(`window.__lab.zoom(${zoom})`);
   await page.eval("window.__lab.step(30)");
   // [frame, key]: the keys pressed at those frames.
   const plan =

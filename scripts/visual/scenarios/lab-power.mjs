@@ -18,9 +18,10 @@ const PLAN = {
   },
   after: {
     k1: { word: 0, after: [[0, "release"], [2, "release+2"], [6, "impact1"], [8, "impact1+2"], [36, "impact2"], [66, "impact3"], [95, "aftermath"]] },
-    // The cut-in holds the world about 1 s (60 frames) from the key; the skill fires when it ends.
-    k5: { word: 0, after: [[0, "cutin0"], [6, "cutin6"], [24, "cutin24"], [48, "cutin48"], [62, "fire"], [72, "belts"], [92, "wave1"], [94, "wave1+2"], [137, "wave2"], [182, "wave3"], [184, "wave3+2"], [215, "aftermath"]] },
-    k7: { word: 0, after: [[0, "F0"], [3, "F3-dark"], [10, "F10-seeds"], [24, "F24-river"], [45, "F45-hunt"], [90, "F90-hunt"], [140, "F140-hunt"], [172, "F172-climb"], [186, "F186-stroke"], [192, "F192-finisher"], [194, "F194"], [200, "F200-fold"], [215, "F215-after"]] },
+    // The cut-in holds the world 0.9 s (54 frames, round 2; 1 s and 60 frames before) from the key; the skill fires
+    // when it ends. "cleared" is a second after the last wave (the kills stay read: no respawn in the crater yet).
+    k5: { word: 0, after: [[0, "cutin0"], [4, "cutin4"], [14, "cutin14"], [26, "cutin26"], [42, "cutin42"], [56, "fire"], [66, "belts"], [86, "wave1"], [88, "wave1+2"], [131, "wave2"], [176, "wave3"], [178, "wave3+2"], [209, "aftermath"], [270, "cleared"]] },
+    k7: { word: 0, after: [[0, "F0"], [3, "F3-dark"], [10, "F10-seeds"], [24, "F24-river"], [45, "F45-hunt"], [90, "F90-hunt"], [140, "F140-hunt"], [172, "F172-climb"], [186, "F186-stroke"], [192, "F192-finisher"], [194, "F194"], [197, "F197"], [200, "F200-fold"], [215, "F215-after"], [245, "F245-scars"]] },
   },
 };
 

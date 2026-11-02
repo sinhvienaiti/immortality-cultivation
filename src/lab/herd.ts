@@ -662,7 +662,7 @@ export class LabHerd implements TargetField {
         const sr = Math.pow(tc / m, 3);
         const sg = Math.pow(tg / m, 3);
         const sb = Math.pow(tb / m, 3);
-        edge.setXYZ(idx, sr * 3.2, sg * 3.2, sb * 3.2);
+        edge.setXYZ(idx, sr * 2.4, sg * 2.4, sb * 2.4);
         // The slice plane in the model's frame: through the body's middle, along the blow and tilted (a diagonal cut).
         const cy = (this.heights[k] ?? 0.8) * 0.5;
         const nx = -this.kdz[i]!;
