@@ -29,7 +29,7 @@ import type { Quality } from "../content/types";
 import { CameraZoom } from "../view/camera-zoom";
 import { createRenderer, placeCamera } from "../view/renderer";
 import { K5_MAX, KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
-import { loadBladeGeometry, loadWeaponModel, standInBlade } from "../view/skills/blades";
+import { loadBladeGeometry, loadWeaponModel, standInBlade, type BladeSet } from "../view/skills/blades";
 import { SpritePool } from "../view/skills/fxkit";
 import { DEFAULT_WEAPON, weaponById, weaponsOf, type WeaponId } from "../view/skills/weapons";
 import { CLIP_RELEASE_S, LabCaster, type CasterClip } from "./caster";
@@ -658,6 +658,7 @@ function reset(): void {
   presence.reset();
   deathFx.reset();
   compiler.reset();
+  numbers.clear();
   van.reset();
   cutin.stop();
   sound.reset();
@@ -947,6 +948,8 @@ declare global {
       van(): { clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
       cutin(): number;
+      /** Drawn length (CSS px) of the visible flying blades this frame, Kiếm skills and key 7: count, p10, median. */
+      bladePx(): Record<string, number>;
       /** Sound hooks: files found per event id, what was asked since reset (heard or silent), sounds started. */
       sound(): { found: Record<string, number>; asked: Record<string, number>; played: number };
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
@@ -1187,6 +1190,32 @@ void (async () => {
     events: () => ({ ...bus.counts }),
     van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
     cutin: () => cutin.time,
+    bladePx() {
+      const out: Record<string, number> = {};
+      const ga = new THREE.Vector3();
+      const gb = new THREE.Vector3();
+      const sets: [string, BladeSet, number][] = [
+        ["kiem", fx.blades, 0],
+        ["van", van.blades, 8],
+      ];
+      for (const [name, set, from] of sets) {
+        const px: number[] = [];
+        for (let i = from; i < set.capacity; i += 1) {
+          if (!set.isVisible(i) || set.len[i]! < 0.3) continue;
+          const L = set.len[i]!;
+          ga.set(set.cx[i]! - set.tx[i]! * L * 0.45, set.cy[i]! - set.ty[i]! * L * 0.45, set.cz[i]! - set.tz[i]! * L * 0.45);
+          gb.set(ga.x + set.tx[i]! * L, ga.y + set.ty[i]! * L, ga.z + set.tz[i]! * L);
+          ga.project(view.camera);
+          gb.project(view.camera);
+          px.push(Math.hypot(((gb.x - ga.x) * innerWidth) / 2, ((gb.y - ga.y) * innerHeight) / 2));
+        }
+        px.sort((p, q) => p - q);
+        out[name + "N"] = px.length;
+        out[name + "P10"] = px.length > 0 ? Math.round(px[Math.floor(px.length * 0.1)]!) : -1;
+        out[name + "Median"] = px.length > 0 ? Math.round(px[Math.floor(px.length * 0.5)]!) : -1;
+      }
+      return out;
+    },
     sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played }),
     async swarm(mode) {
       const def = fx.weaponInfo;

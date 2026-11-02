@@ -34,7 +34,7 @@ import * as THREE from "three";
 import { BladeSet, guardBand, loadBladeGeometry, loadWeaponModel } from "./blades";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import type { TargetField } from "./targets";
-import { DEFAULT_WEAPON, glowOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
+import { DEFAULT_WEAPON, glowOf, rimOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
 export type KiemSlot = "auto" | "k1" | "k2" | "guard" | "dash" | "k4" | "k5";
 
@@ -127,6 +127,12 @@ const HALO_N = 24;
 const POOL0 = HERO.halo + HALO_N; // first blade of the K5 pool (the swarm mesh, BladeSet split)
 /** Most swarm blades a tier may ask for (canon §20.2: 150 / 300 / 500); the lab's ?k5n= measures up to it. */
 export const K5_MAX = 500;
+/**
+ * Blade scales (× 1.1 m) of Thiên Hà's swarm and Lạc Kiếm Trận's falling swords (power pass: the judge read them
+ * as 10–15 px pins at the play camera; 1.3 and 2.1 put them over 20 px at 1080p).
+ */
+const K5_SWORD = 1.3;
+const K4_SWORD = 2.1;
 const BLADE_CAP = POOL0 + K5_MAX;
 /** Ribbons: sword-light trails, and a weapon's silk trails (WeaponMotif.silk) beside the flying ones. */
 const RIBBONS = 64;
@@ -292,8 +298,27 @@ function renorm(u: [number, number, number]): [number, number, number] {
   const m = Math.max(u[0], u[1], u[2], 1e-6);
   return [u[0] / m, u[1] / m, u[2] / m];
 }
+/**
+ * Clear Wind's skills in its own colours (power pass, judge CJ1 03/11: "the palette is nearly all white and
+ * violet"; the sword is jade, cyan and silver with a little gold): each slot's accent and rim (sRGB). Jade stays
+ * near hue 150 and cyan near 195, both apart from the typing colour (#7FF5E0, hue 170); no violet.
+ */
+const CLEAR_WIND_TONE: Readonly<Record<KiemSlot, readonly [accent: string, rim: string]>> = {
+  auto: ["#a8e4f0", "#6fc6e2"],
+  k1: ["#8fe2b2", "#3fc48e"],
+  k2: ["#74d0f2", "#3ba9e0"],
+  guard: ["#f0e2b4", "#cfa65a"],
+  dash: ["#d6e9f0", "#97c3d8"],
+  k4: ["#7fdcaa", "#35b483"],
+  k5: ["#86e2b6", "#41b8e0"],
+};
+
 /** The slot's VFX colours from the weapon (SLOT_TONE), through glowOf, so the bloom and white-core rules hold. Load time only. */
 export function skillGlow(def: WeaponDef, slot: KiemSlot): WeaponGlow {
+  if (def.id === "clear-wind") {
+    const [accent, rim] = CLEAR_WIND_TONE[slot];
+    return glowOf(accent, 1, rimOf(rim, 1.2));
+  }
   const t = SLOT_TONE[slot];
   let u = renorm([def.glow.rim[0], def.glow.rim[1], def.glow.rim[2]]);
   const acc = unitOf(def.accent);
@@ -3629,7 +3654,7 @@ export class KiemFx {
       const iz = (k.z - this.w.z) * 0.12;
       const out = 1 - clamp01((k.t - T_K4_LIFE) / 0.35);
       if (out <= 0) continue;
-      this.show(B + j, this.w.x, y + (1 - out) * 3, this.w.z, -ix, -1, -iz, 1.7 * out, true, out);
+      this.show(B + j, this.w.x, y + (1 - out) * 3, this.w.z, -ix, -1, -iz, K4_SWORD * out, true, out);
       this.bladeTint(B + j, 1.6 + 0.6 * pulse(clamp01((k.t - T_K4_OPEN) / 0.3)));
       if (fall < 1) this.beamAt(this.w.x, y, this.w.z, 0, 1, 0, 1.0 + 3.2 * (1 - fall), 0.42, -1, 0.7, 0.75, 0.05, 0.8, 0);
       else if (hold > 0.002) {
@@ -3859,7 +3884,7 @@ export class KiemFx {
       const tx = Math.sin(psi);
       const tz = -Math.cos(psi);
       if (dive <= 0) {
-        this.show(blade, bx, by, bz, tx, -0.25, tz, 1.0 * appear, true, appear);
+        this.show(blade, bx, by, bz, tx, -0.25, tz, K5_SWORD * appear, true, appear);
         this.bladeTint(blade, 1.6);
         continue;
       }
@@ -3877,7 +3902,7 @@ export class KiemFx {
       const ddx = tx * (1 - 0.98 * sd);
       const ddy = -0.25 - 0.75 * sd;
       const ddz = tz * (1 - 0.98 * sd);
-      this.show(blade, bx, y, bz, ddx, ddy, ddz, 1.0 * out * appear, true, out * appear);
+      this.show(blade, bx, y, bz, ddx, ddy, ddz, K5_SWORD * out * appear, true, out * appear);
       this.bladeTint(blade, 1.4 + 1.6 * pulse(clamp01((k.t - hitT) / 0.25)));
       if (dive < 1) {
         // The falling streak dims through the dive instead of vanishing on the planting frame (~100 at once).

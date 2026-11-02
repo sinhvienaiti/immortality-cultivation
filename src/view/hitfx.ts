@@ -978,6 +978,8 @@ export interface SkillNumbers {
   readonly field: SkillNumberField;
   readonly live: number;
   update(dt: number): void;
+  /** Drops every live number (a lab reset). */
+  clear(): void;
   dispose(): void;
 }
 
@@ -1028,6 +1030,10 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     const fontPx = 20 * Math.max(0.8, Math.min(1.2, Math.min(this.width / 1600, this.height / 900)));
     if (fontPx !== this.field.fontPx) this.field.fontPx = fontPx;
     this.field.update(dt);
+  }
+
+  clear(): void {
+    for (let i = 0; i < this.field.alive.length; i += 1) this.field.kill(i);
   }
 
   draw(gl: THREE.WebGLRenderer, width: number, height: number): void {

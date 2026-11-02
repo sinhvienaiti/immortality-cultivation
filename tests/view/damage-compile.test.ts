@@ -13,6 +13,7 @@ function recorder(): SkillNumbers & { rows: { key: number; value: number; hits: 
     field: null as never,
     live: 0,
     update() {},
+    clear() {},
     dispose() {},
   };
 }
