@@ -73,6 +73,12 @@ export interface KiemHost {
   pull?(x: number, z: number, r: number, seconds: number): void;
   moveCaster(x: number, z: number): void;
   play(clip: "attack" | "skill1" | "skill2" | "ult" | "dash" | "idle"): void;
+  /**
+   * A blow landed on beast `target` from (dx, dz) (unit), the view's stand-in for the sim's hit event (the
+   * lab's damage numbers, beast reactions and sounds answer it on this frame; the striking slot is `striking`).
+   * `light`: one of an area's many hits. `killed`: the field says it fell.
+   */
+  struck?(target: number, dx: number, dz: number, power: number, light: boolean, killed: boolean): void;
 }
 
 /** Construction options: `k5Blades` overrides the tier's swarm size (lab measurements; at most K5_MAX). */
@@ -2130,7 +2136,9 @@ export class KiemFx {
     dz /= len;
     this.v.set(T.x(target), T.midY(target), T.z(target));
     this.impact(this.v, scale, dx, dz, power, big);
-    if (T.hit(target, dx, dz, power, this.pal.flashHex)) this.death(this.v, dx, dz, T.radius(target));
+    const killed = T.hit(target, dx, dz, power, this.pal.flashHex);
+    this.host.struck?.(target, dx, dz, power, false, killed);
+    if (killed) this.death(this.v, dx, dz, T.radius(target));
   }
 
   /**
@@ -2175,7 +2183,9 @@ export class KiemFx {
       k.a = 0.85;
       inkPool.emit();
     }
-    if (T.hit(target, dx, dz, power, this.pal.flashHex)) this.death(this.u, dx, dz, T.radius(target));
+    const killed = T.hit(target, dx, dz, power, this.pal.flashHex);
+    this.host.struck?.(target, dx, dz, power, true, killed);
+    if (killed) this.death(this.u, dx, dz, T.radius(target));
   }
 
   /** The area's one burst, sized by √N of the beasts it hit. */

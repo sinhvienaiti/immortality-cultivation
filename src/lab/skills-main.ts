@@ -38,7 +38,8 @@ import { applyLook, buildField, LAB_ASSETS } from "./look";
 import { collectLayerNames, MotionProbe } from "./motion-probe";
 import { CameraKick, FlashLights, smooth01 } from "./feel";
 import { ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
-import { LabBus } from "./events";
+import { LabBus, type Material } from "./events";
+import { DeathFx } from "./death-fx";
 import { CasterPresence } from "./presence";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
@@ -150,6 +151,45 @@ function emitRelease(slot: string, tx: number, tz: number): void {
 }
 /** Lab time on real seconds (the key's time stamp). */
 let labTime = 0;
+/** The impact sound's material by beast class: swarm and small beasts flesh, the armoured boar and the king stone. */
+function materialOf(beastTier: number): Material {
+  return beastTier >= 2 ? "stone" : "flesh";
+}
+/**
+ * A blow landed (KiemHost.struck, or a key-7 sword): one impact event (screen, numbers, sound), and a death
+ * event when it killed. The basic blow's hit-stop is local: its beast holds still for 14 ms.
+ */
+function emitImpact(slot: string, target: number, dx: number, dz: number, power: number, role: ImpactRole, killed: boolean, rgb: number): void {
+  const e = bus.impact;
+  e.slot = slot;
+  e.tier = tierOf(slot);
+  e.role = role;
+  e.target = target;
+  e.x = herd.x(target);
+  e.y = herd.midY(target);
+  e.z = herd.z(target);
+  e.dx = dx;
+  e.dz = dz;
+  e.power = power;
+  e.killed = killed;
+  e.beastTier = herd.tier(target);
+  e.material = materialOf(e.beastTier);
+  e.rgb = rgb;
+  bus.emit(e);
+  if (e.tier === "basic") herd.holdBeast(target, 0.014);
+  if (killed) {
+    const d = bus.death;
+    d.target = target;
+    d.x = e.x;
+    d.y = e.y;
+    d.z = e.z;
+    d.dx = dx;
+    d.dz = dz;
+    d.rgb = rgb;
+    d.beastTier = e.beastTier;
+    bus.emit(d);
+  }
+}
 /** About 2 cm of kick per "px" a skill asks for (the old lab scale). */
 const KICK_M_PER_PX = 0.02;
 // The kit stage's one impact light jumps to each new flash at full strength: the lab lights its flashes itself.
@@ -187,6 +227,10 @@ const hostApi: KiemHost = {
   pull(x, z, r, seconds) {
     herd.pull(x, z, r, seconds);
   },
+  struck(target, dx, dz, power, light, killed) {
+    const slot = fx.striking;
+    emitImpact(slot, target, dx, dz, power, light ? "secondary" : "primary", killed, fx.paletteOf(slot).flashHex);
+  },
   moveCaster(x, z) {
     caster.moveTo(x, z);
   },
@@ -213,6 +257,11 @@ function gripFromParams(): GripPose {
   return { tiltDeg: pick(0, d.tiltDeg), rollDeg: pick(1, d.rollDeg), yawDeg: pick(2, d.yawDeg), x: pick(3, d.x), y: pick(4, d.y), z: pick(5, d.z) };
 }
 void ribbonNoise;
+// Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.
+const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow }, quality === "low");
+bus.on((e) => {
+  if (e.kind === "death") deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+});
 // The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
 const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
 
@@ -394,6 +443,7 @@ function reset(): void {
   screen.reset();
   kick.reset();
   presence.reset();
+  deathFx.reset();
   lights.reset();
   probe.reset();
   bus.resetCounts();
@@ -520,6 +570,7 @@ function frame(dt: number): void {
   // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
   handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);
+  deathFx.update(world);
   enemyBolt.update(world);
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
   // The base pose: the whole-field fit blended toward the close view on Lam (zoom 0 is exactly the fit, so a resize
