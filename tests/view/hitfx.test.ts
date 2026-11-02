@@ -4,7 +4,7 @@ import { TT_BUDGETS } from "../../src/content/rules";
 import { TIERS } from "../../src/kit/feedback/tiers";
 import type { ScreenPoint } from "../../src/app/contracts";
 import type { Overlay, Renderer3D } from "../../src/view/renderer";
-import { DrawnNumberField, IC_NUMBERS, RANDOM_SIZE, STYLE, createDamageNumbers, createHitFx, createInkSmoke, randomTable } from "../../src/view/hitfx";
+import { DrawnNumberField, IC_NUMBERS, RANDOM_SIZE, STYLE, createDamageNumbers, createHitFx, createInkSmoke, createSkillNumbers, randomTable } from "../../src/view/hitfx";
 
 interface FakeRenderer extends Renderer3D {
   overlays: Overlay[];
@@ -124,6 +124,34 @@ describe("drawn number boxes (Rồng's DrawnNumberField, settled over cached box
     const here = field.box(i, { x: 0, y: 0, w: 0, h: 0 });
     const there = field.box(i, { x: 0, y: 0, w: 0, h: 0 }, field.x[i]! + 50, field.y[i]! - 20);
     expect([there.x - here.x, there.y - here.y, there.w - here.w, there.h - here.h].map((v) => Math.round(v * 1000) / 1000)).toEqual([50, -20, 0, 0]);
+  });
+});
+
+describe("skill numbers under the field's far edge (power pass round 2 review)", () => {
+  it("never leaves two numbers held at the far edge on top of each other (the younger goes below)", () => {
+    const numbers = createSkillNumbers(fakeRenderer(), 140);
+    const f = numbers.field;
+    // Packets on beasts by the far edge, one every 0.15 s, crits and plain ones (they never merge): each floats up
+    // and is held under the edge, where the field's settle had lifted the younger above the older.
+    let most = 0;
+    for (let frame = 0; frame < 90; frame += 1) {
+      if (frame % 9 === 0 && frame < 72) numbers.show(200 + frame, 900 + frame * 7, 3, ((frame / 9) % 3) * 0.4 - 0.4, 1, -12, frame % 18 === 0, 0x66ffcc, 2);
+      numbers.update(1 / 60);
+      most = Math.max(most, numbers.live);
+      const boxes: { x: number; y: number; w: number; h: number }[] = [];
+      for (let i = 0; i < f.alive.length; i += 1) {
+        if (f.alive[i] !== 1) continue;
+        boxes.push({ ...f.box(i, { x: 0, y: 0, w: 0, h: 0 }) });
+        expect(f.y[i]!, "frame " + frame).toBeGreaterThanOrEqual(f.minY[i]!);
+      }
+      for (let a = 0; a < boxes.length; a += 1)
+        for (let b = a + 1; b < boxes.length; b += 1) {
+          const p = boxes[a]!;
+          const q = boxes[b]!;
+          expect(p.x < q.x + q.w && p.x + p.w > q.x && p.y < q.y + q.h && p.y + p.h > q.y, "frame " + frame).toBe(false);
+        }
+    }
+    expect(most).toBeGreaterThan(2);
   });
 });
 

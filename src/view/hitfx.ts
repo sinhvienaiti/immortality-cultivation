@@ -1070,6 +1070,7 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
   private readonly screen: ScreenPoint = { x: 0, y: 0, visible: false };
   private readonly edge: ScreenPoint = { x: 0, y: 0, visible: false };
   private readonly box: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
+  private readonly boxB: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
   private headlineAt = -1;
   private now = 0.5;
   private width = 1600;
@@ -1166,6 +1167,29 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
         f.y[i] = top;
         if (f.vy[i]! < 0) f.vy[i] = 0;
       }
+    }
+    // The clamp puts a number back on the one the field's settle had lifted it above (numbers held under the far
+    // edge or the view's top read as one smudge, "19 2×6 6×6"): the younger goes below the older instead, inside the
+    // field; the headline never moves. Passes until no two boxes touch (at most 4).
+    for (let pass = 0; pass < 4; pass += 1) {
+      let moved = false;
+      for (let i = 0; i < f.alive.length; i += 1) {
+        if (f.alive[i] === 0) continue;
+        for (let j = i + 1; j < f.alive.length; j += 1) {
+          if (f.alive[j] === 0) continue;
+          const a = f.box(i, this.box);
+          const b = f.box(j, this.boxB);
+          if (!(a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y)) continue;
+          const older = f.key[i] === HEADLINE_KEY ? i : f.key[j] === HEADLINE_KEY ? j : f.born[i]! <= f.born[j]! ? i : j;
+          const younger = older === i ? j : i;
+          const o = older === i ? a : b;
+          const y = older === i ? b : a;
+          f.y[younger] = f.y[younger]! + (o.y + o.h - y.y) + 2;
+          if (f.vy[younger]! < 0) f.vy[younger] = 0;
+          moved = true;
+        }
+      }
+      if (!moved) break;
     }
   }
 
