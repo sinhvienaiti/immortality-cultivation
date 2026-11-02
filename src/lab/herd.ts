@@ -384,6 +384,12 @@ export class LabHerd implements TargetField {
       this.caught[i] = 0;
       this.shownDis[i] = this.shownLift[i] = 0;
     }
+    // A death cut short keeps its slice plane on the instance (only a finished death clears it): clear them all,
+    // or the next leave or spawn dissolve (march) eats along that stale plane instead of the noise.
+    for (const a of this.cutAttr) {
+      (a.array as Float32Array).fill(0);
+      a.needsUpdate = true;
+    }
     this.vortex.on = false;
   }
 
