@@ -17,7 +17,7 @@
  * - MID swords (32 on High): no hilt, a white tapered spine (HDR 4.5, brighter
  *   in waves running down the stream), a cyan body, a narrow navy edge and a
  *   short streak, flowing in five braided lanes;
- * - FAR streaks (96 on High): directional white-to-cyan streaks in the river's
+ * - FAR streaks (100 on High): directional white-to-cyan streaks in the river's
  *   outer lanes and above it, for scale only.
  * Every sword flies tip first. White, cyan and deep navy only; bodies are
  * premultiplied alpha, only spines, streaks, sparks and glints are added; no
@@ -89,12 +89,12 @@ export interface VanKiemTextures {
 }
 
 /** River size per tier: mid swords and far streaks (the diagnosis: ~6 leads, 16–32 readable swords, 40–100 streaks). */
-export const VAN_KIEM_SWORDS = { low: { mid: 16, far: 40 }, medium: { mid: 24, far: 64 }, high: { mid: 32, far: 96 }, ultra: { mid: 32, far: 96 } } as const;
+export const VAN_KIEM_SWORDS = { low: { mid: 16, far: 40 }, medium: { mid: 24, far: 64 }, high: { mid: 32, far: 100 }, ultra: { mid: 32, far: 100 } } as const;
 const HERO_N = 6;
 const SEEDS = 40;
 /** Lengths (m): a mid sword, a far streak, the lead blades leaving the hand and the lead blades in the river. */
 const SWORD_M = 1.9;
-const FAR_M = 2.8;
+const FAR_M = 3.4;
 const HERO_M = 2.2;
 const LEAD_M = 4.2;
 /** Blade half widths (m) and half-width floors (px at 1080p): lead, mid, far. */
@@ -103,11 +103,11 @@ const MID_HALF = 0.055;
 const FAR_HALF = 0.02;
 const LEAD_FLOOR_PX = 5;
 const MID_FLOOR_PX = 4;
-const FAR_FLOOR_PX = 2;
+const FAR_FLOOR_PX = 2.5;
 /** Spine levels (linear HDR entering the bloom; the diagnosis asks 4–8 at threshold 1): lead, mid (× the stream's wave), far head. */
 const LEAD_SPINE = 5.5;
 const MID_SPINE = 5.2;
-const FAR_HEAD = 1.3;
+const FAR_HEAD = 1.6;
 
 /** Timeline (s) at 60 Hz. */
 const TICK = 1 / 60;
@@ -1487,7 +1487,7 @@ export class VanKiemFx {
         } else {
           // A far streak's tail stretches behind it while it dives.
           const k = st === S_DIVE ? 1.6 : 1;
-          S.push(tx - this.dx[i]! * len * k, ty - this.dy[i]! * len * k, tz - this.dz[i]! * len * k, tx, ty, tz, FAR_HALF, SWORD_FAR, s * fading * (0.45 + 0.4 * b), FAR_HEAD * (0.7 + 0.3 * b), 0, FAR_FLOOR_PX);
+          S.push(tx - this.dx[i]! * len * k, ty - this.dy[i]! * len * k, tz - this.dz[i]! * len * k, tx, ty, tz, FAR_HALF, SWORD_FAR, s * fading * (0.6 + 0.4 * b), FAR_HEAD * (0.7 + 0.3 * b), 0, FAR_FLOOR_PX);
         }
       }
     }
