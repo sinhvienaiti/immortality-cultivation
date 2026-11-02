@@ -47,6 +47,21 @@ describe("screen effects by tier (power pass)", () => {
     expect(fx.advance(1 / 60)).toBeCloseTo(1 / 60, 6);
   });
 
+  it("never lets an older blow stop or slow the world in the 50 ms after a release", () => {
+    const fx = new ScreenFx(host());
+    // The key: a release cuts. An older skill's finisher lands on the next frame and must not hold the release.
+    fx.cut();
+    fx.impact("ultimate", "finisher");
+    expect(fx.stopping).toBe(false);
+    let world = 0;
+    for (let i = 0; i < 3; i += 1) world += fx.advance(1 / 60);
+    expect(world).toBeCloseTo(3 / 60, 6);
+    // Past the guard, blows stop the world again.
+    fx.advance(1 / 60);
+    fx.impact("skill", "primary");
+    expect(fx.stopping).toBe(true);
+  });
+
   it("slows the world on a finisher and comes back to full speed", () => {
     const fx = new ScreenFx(host());
     fx.impact("ultimate", "finisher");

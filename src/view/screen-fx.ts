@@ -7,7 +7,8 @@
  *   roll of at most 0.1°), along the camera's own axes;
  * - a camera punch (FOV narrowed by a share, about 2 % for the ultimate);
  * - a hit-stop per tier, counted to the part of a frame, eased out, and cut
- *   by a new release (the player's key never waits on it);
+ *   by a new release; for 50 ms after a release an older blow's stop or slow
+ *   motion is dropped, so the player's key never waits on one (D58 (1));
  * - slow motion as a world-time scale;
  * - world darkening, a short flash and an edge-only chromatic split in ONE
  *   ShaderPass inserted into the post chain right before its OutputPass, so
@@ -73,6 +74,11 @@ const STOP_SCALE = 0.05;
 const STOP_EXIT_S = 0.03;
 /** Slow motion eases back to full speed over this (s). */
 const SLOW_EXIT_S = 0.06;
+/**
+ * After a release (cut), no blow may stop or slow the world for this long (real s): an older skill's strike
+ * landing a frame after the key held the new release's body and blades (key to body release 83 ms, gate 50).
+ */
+const RELEASE_GUARD_S = 0.05;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const smooth01 = (t: number): number => {
@@ -216,6 +222,8 @@ export class ScreenFx {
   private slowScale = 1;
   private slowLeft = 0;
   private slowExit = SLOW_EXIT_S;
+  /** Real seconds left in which a stop or slow motion is dropped (a release just happened). */
+  private guardLeft = 0;
   private darkAmp = 0;
   private darkAge = 1;
   private darkS = 0.2;
@@ -292,10 +300,12 @@ export class ScreenFx {
   }
 
   hitStop(ms: number): void {
+    if (this.guardLeft > 0) return;
     this.stopLeft = Math.max(this.stopLeft, ms / 1000);
   }
 
   slow(scale: number, seconds: number): void {
+    if (this.guardLeft > 0) return;
     if (this.slowLeft > 0 && scale > this.slowScale) {
       this.slowLeft = Math.max(this.slowLeft, seconds);
       return;
@@ -343,13 +353,17 @@ export class ScreenFx {
     this.punchS = Math.max(0.05, seconds);
   }
 
-  /** A new release cuts a hit-stop and slow motion still running (the key never waits on a stop). */
+  /**
+   * A new release cuts a hit-stop and slow motion still running, and for RELEASE_GUARD_S drops new ones (the
+   * key never waits on a stop, an older blow's included).
+   */
   cut(): void {
     this.stopLeft = 0;
     this.stopExit = STOP_EXIT_S;
     this.slowLeft = 0;
     this.slowExit = SLOW_EXIT_S;
     this.slowScale = 1;
+    this.guardLeft = RELEASE_GUARD_S;
   }
 
   /** True while a hit-stop holds the world. */
@@ -359,6 +373,7 @@ export class ScreenFx {
 
   /** World seconds for a frame of `dt` real seconds (hit-stop, then slow motion). */
   advance(dt: number): number {
+    this.guardLeft = Math.max(0, this.guardLeft - dt);
     let rest = dt;
     let world = 0;
     if (this.stopLeft > 0) {
@@ -520,6 +535,7 @@ export class ScreenFx {
     this.punchAge = this.darkAge = this.flashAge = this.splitAge = 10;
     this.darkHold = this.darkHoldGoal = 0;
     this.cut();
+    this.guardLeft = 0;
     this.offset.set(0, 0, 0);
     this.roll = 0;
     this.punchNow = 0;
