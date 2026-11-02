@@ -40,6 +40,7 @@ import { CameraKick, FlashLights, smooth01 } from "./feel";
 import { ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
+import { CutIn } from "./cutin";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
@@ -267,7 +268,8 @@ void ribbonNoise;
 // Damage numbers (canon D58 (5)): compiled per target over 150 ms (key 7: 500 ms), a cluster total for 5+ small
 // beasts together, gold-edged crits, the skill's colour on the lower stroke. Lab hits are stand-ins: each skill's
 // damage comes from canon §12.1 in W (1 W = 90 × g(K), g = 1.12^K; ?realm=K, default 0) with a seeded 15 % crit.
-const numbers = createSkillNumbers(view, 140);
+// Elegant serif numerals (Cormorant Garamond, OFL; loaded before the atlas is painted at the first number).
+const numbers = createSkillNumbers(view, 140, 'italic 700 54px "Cormorant Garamond", "Be Vietnam Pro", serif');
 const compiler = new DamageCompiler(numbers);
 const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 0));
 const W_HP = 90 * realmG;
@@ -382,6 +384,35 @@ const van = new VanKiemFx(
   { glow: textures.glow, slash: textures.slash, star: textures.star },
   VAN_KIEM_SWORDS[quality],
 );
+/**
+ * The ultimate's cut-in (canon D58 (4)): Thiên Hà's last key starts it; the world and the typing timer hold about
+ * 1 s while it plays (lab time), then the skill fires.
+ */
+const cutin = new CutIn(document.body);
+const ULT_CUTIN = { name: "MILKY-WAY SWORD RAIN", hanzi: "天河劍雨", seconds: Number(params.get("cutin") ?? "1") || 1 };
+const ultAim = { x: 0, z: -9 };
+function startUltimate(tx: number, tz: number): void {
+  ultAim.x = tx;
+  ultAim.z = tz;
+  typing = null;
+  cutin.start(ULT_CUTIN);
+  // The world stops now: the callout and the world-change sound, a short flash in the skill's colour.
+  const c = bus.callout;
+  c.slot = "k5";
+  c.tier = "ultimate";
+  bus.emit(c);
+  worldEvent("k5", "open");
+  screen.setFlashColor(fx.paletteOf("k5").flash);
+  screen.flash(0.12, 0.06);
+  screen.punch(0.012, 0.2);
+}
+function fireUltimate(): void {
+  probe.lastKey("k5");
+  screen.cut();
+  caster.release("k5", ultAim.x, ultAim.z);
+  emitRelease("k5", ultAim.x, ultAim.z);
+  queueCast("k5", ultAim.x, ultAim.z);
+}
 /** Key 7 waits for the caster's update (its blades leave from the hand as drawn), like the other casts. */
 let pendingVan = false;
 let vanFirstHit = false;
@@ -498,6 +529,13 @@ let typedMode = params.get("typed") === "1";
 type LabSlot = KiemSlot | "k7";
 
 function type(slot: LabSlot): void {
+  // Keys wait while the cut-in holds the world (the typing timer is stopped too).
+  if (cutin.active) return;
+  if (slot === "k5" && !typedMode) {
+    probe.event("cutin", "k5");
+    startUltimate(TARGET.k5[0], TARGET.k5[1]);
+    return;
+  }
   if (slot === "k7") {
     typing = null;
     probe.lastKey("k7");
@@ -561,6 +599,11 @@ function updateTyping(dt: number): void {
     typing.typed += 1;
     typing.next += perLetter;
     const p = typing.typed / typing.letters;
+    if (typing.typed >= typing.letters && typing.slot === "k5") {
+      // Thiên Hà's last letter: the cut-in first, the release when it ends.
+      startUltimate(typing.tx, typing.tz);
+      break;
+    }
     if (typing.typed >= typing.letters) {
       probe.lastKey(typing.slot);
       screen.cut();
@@ -593,6 +636,7 @@ function reset(): void {
   deathFx.reset();
   compiler.reset();
   van.reset();
+  cutin.stop();
   pendingVan = false;
   herd.toughness = 1;
   lights.reset();
@@ -711,7 +755,9 @@ function frame(dt: number): void {
   labTime += dt;
   // Last frame's roll and punch come off before the camera is placed again.
   screen.restoreCamera(view.camera);
-  const world = screen.advance(dt);
+  // The cut-in holds the world (and the typing timer, which runs on world time); its last frame fires the ultimate.
+  if (cutin.update(dt)) fireUltimate();
+  const world = cutin.active ? 0 : screen.advance(dt);
   updateTyping(world);
   updateBolt(world);
   herd.update(world);
@@ -874,6 +920,8 @@ declare global {
       events(): Record<string, number>;
       /** Key 7's state: its clock (s, −1 idle), swords drawn, strikes so far. */
       van(): { clock: number; shown: number; strikes: number; dives: number };
+      /** The cut-in's time (s), −1 when none runs. */
+      cutin(): number;
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
     };
@@ -883,7 +931,13 @@ declare global {
 void (async () => {
   const wanted = params.get("weapon") ?? DEFAULT_WEAPON;
   const equipped = setWeapon(wanted).then((ok) => (ok ? true : setWeapon(DEFAULT_WEAPON)));
-  await Promise.all([herd.load(), caster.load(), look.ready, equipped]);
+  // The cut-in's and the numbers' fonts, loaded before the first use (a capture never shows a fallback face).
+  const fonts = Promise.all([
+    document.fonts.load('400 120px "Ma Shan Zheng"', ULT_CUTIN.hanzi),
+    document.fonts.load('600 36px "Cormorant Garamond"', ULT_CUTIN.name),
+    document.fonts.load('italic 700 54px "Cormorant Garamond"', "0123456789.KM×"),
+  ]).catch(() => undefined);
+  await Promise.all([herd.load(), caster.load(), look.ready, equipped, fonts]);
   if (caster.model !== null) {
     presence.attach(caster.model);
     const names = collectLayerNames(fx, new Map());
@@ -1105,6 +1159,7 @@ void (async () => {
     setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
     events: () => ({ ...bus.counts }),
     van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
+    cutin: () => cutin.time,
     async swarm(mode) {
       const def = fx.weaponInfo;
       const hero = await loadBladeGeometry(def.model, def.fit);

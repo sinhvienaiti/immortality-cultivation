@@ -565,8 +565,10 @@ export interface NumberLook {
   readonly glyphs: string;
   readonly digitFont: string;
   readonly goldRow: boolean;
+  /** Glyph advance × this (a narrow serif face sets tighter than the kit's wide italic sans). */
+  readonly advance: number;
 }
-export const DEFAULT_NUMBER_LOOK: NumberLook = { glyphs: GLYPHS, digitFont: NUMBER_ATLAS.digitFont, goldRow: false };
+export const DEFAULT_NUMBER_LOOK: NumberLook = { glyphs: GLYPHS, digitFont: NUMBER_ATLAS.digitFont, goldRow: false, advance: 1 };
 /** The gold-edge row's top (atlas px). */
 const GOLD_ROW = 64;
 
@@ -599,6 +601,7 @@ export class IcNumberSprites {
   private readonly colorAttr: THREE.InstancedBufferAttribute;
   private readonly tintAttr: THREE.InstancedBufferAttribute;
   private readonly glyphs: string;
+  private readonly advanceK: number;
   /** The tint of the next quads (set per number in write). */
   private tr = 0.5;
   private tg = 0.5;
@@ -625,6 +628,7 @@ export class IcNumberSprites {
     look: NumberLook = DEFAULT_NUMBER_LOOK,
   ) {
     this.glyphs = look.glyphs;
+    this.advanceK = look.advance;
     const { colors, label, labelColor } = profile.numbers;
     this.colors = colors.map((color) => new THREE.Color(color));
     this.labelColor = new THREE.Color(labelColor);
@@ -768,7 +772,7 @@ export class IcNumberSprites {
       const number = tierRow(field.tier[i]!, field.profile.tiers).number;
       const px = field.fontPx * field.size[i]! * (number === null ? 1 : 1 + (number.pop - 1) * field.pop[i]!);
       const color = this.colors[style] ?? this.colors[0]!;
-      const advance = px * A.advance;
+      const advance = px * A.advance * this.advanceK;
       let x = field.x[i]! - (text.length * advance) / 2;
       const y = field.y[i]! - px / 2;
       const times = text.indexOf("×");
@@ -1046,8 +1050,8 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
  * with short labels, the skill's colour, gold-edged crits. `digitFont` should
  * be loaded before the first number is drawn (the atlas is painted once).
  */
-export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont = NUMBER_ATLAS.digitFont): SkillNumbers {
-  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true });
+export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont: string = NUMBER_ATLAS.digitFont): SkillNumbers {
+  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true, advance: digitFont === NUMBER_ATLAS.digitFont ? 1 : 0.8 });
 }
 
 // ── Ink smoke ───────────────────────────────────────────────────────────────
