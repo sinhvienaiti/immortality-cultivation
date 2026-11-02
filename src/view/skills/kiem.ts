@@ -33,6 +33,7 @@
 import * as THREE from "three";
 import { BladeSet, guardBand, loadBladeGeometry, loadWeaponModel } from "./blades";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
+import { GraphicSwords, SWORD_SPINE } from "./sword-grammar";
 import type { TargetField } from "./targets";
 import { DEFAULT_WEAPON, glowOf, rimOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
@@ -106,6 +107,11 @@ const SMOKE = [0.1, 0.11, 0.13] as const;
 /** Sigil light level (× unit rim colour): ≤ 0.64 so the shader's 1.4 cap keeps it ≤ 0.9. */
 const SIGIL_LIGHT = 0.62;
 
+/** The flying blade of the basic shot and slot 1 (× 1.1 m): 1.55 is ~75 px at the play camera (round 3a; was 1.3). */
+const FLIGHT_SCALE = 1.55;
+/** Their spine (HDR entering the bloom, × the grammar's cyan-tinted white) and trail (m; ≥ 4 px at the play camera). */
+const FLIGHT_SPINE = 5;
+const FLIGHT_TRAIL_M = 0.32;
 /** Canon §12.1 hit ticks in seconds (60 Hz). */
 const TICK = 1 / 60;
 const T_AUTO_HIT = 18 * TICK;
@@ -277,7 +283,8 @@ const SLOT_TONE: Readonly<Record<KiemSlot, SlotTone>> = {
 };
 /** The seal glyph each slot draws under the caster (fxkit SEAL_SHAPE). */
 const SLOT_SHAPE: Readonly<Record<KiemSlot, number>> = {
-  auto: SEAL_SHAPE.none,
+  // Round 3a (P8): the basic shot takes the Sword glyph too, so its seal flares under the caster on the release.
+  auto: SEAL_SHAPE.k1,
   k1: SEAL_SHAPE.k1,
   k2: SEAL_SHAPE.k2,
   guard: SEAL_SHAPE.guard,
@@ -304,8 +311,9 @@ function renorm(u: [number, number, number]): [number, number, number] {
  * near hue 150 and cyan near 195, both apart from the typing colour (#7FF5E0, hue 170); no violet.
  */
 const CLEAR_WIND_TONE: Readonly<Record<KiemSlot, readonly [accent: string, rim: string]>> = {
-  auto: ["#a8e4f0", "#6fc6e2"],
-  k1: ["#8fe2b2", "#3fc48e"],
+  // Round 3a (P8): the basic shot and slot 1 in the school's white and cyan (slot 1 was jade: "a green smudge").
+  auto: ["#bfeeff", "#2aaeea"],
+  k1: ["#a6e4ff", "#1f9ee8"],
   k2: ["#74d0f2", "#3ba9e0"],
   guard: ["#f0e2b4", "#cfa65a"],
   dash: ["#d6e9f0", "#97c3d8"],
@@ -595,6 +603,13 @@ export class KiemFx {
   /** Release light burning behind the caster (pushed along the view ray, behindCaster; no pull): the body stays readable. */
   private readonly backGlow: SpritePool;
   private readonly backStar: SpritePool;
+  /**
+   * Round 3a (P8): the basic shot and slot 1 read at the play camera: a seal ring that flares at the hand on the
+   * release and spins out over the flight, a white spine with a cyan rim laid over the flying blade (the grammar's
+   * SPINE), a white-core trail ≥ 4 px, and a graphic hit (a white star, the slash, a thin ring; no soft glow).
+   */
+  private readonly handRing: SpritePool;
+  private readonly spines = new GraphicSwords(24, 13);
   /** Ground cracks: K5's zone and Lạc Kiếm Trận's heart. */
   private readonly sigCrack: GroundSigil;
   private readonly sigCrackS: GroundSigil;
@@ -730,17 +745,18 @@ export class KiemFx {
     // they fade out at the ground like the aura. Low: the star goes (one draw call fewer).
     this.backGlow = new SpritePool(48, tex.glow, "add", "camera", 10, { pull: 0, groundFade: 0.15, crop: CROP_LIGHT });
     this.backStar = this.lite ? this.backGlow : new SpritePool(32, tex.star, "add", "camera", 10, { pull: 0, groundFade: 0.15 });
+    this.handRing = new SpritePool(24, tex.ring, "add", "camera", 14, { pull: 0.4 });
     // Each pool once (shared pools appear under several names): it is updated once a frame.
     this.pools = [
       ...new Set([
         this.groundDark, this.groundInk, this.groundGlow, this.groundRing, this.groundShock, this.twirl, this.smoke, this.splash,
-        this.aura, this.backGlow, this.backStar, this.glow, this.slash, this.bladeGlow, this.spark, this.motes, this.shock, this.star, this.flare,
+        this.aura, this.backGlow, this.backStar, this.glow, this.slash, this.bladeGlow, this.spark, this.motes, this.shock, this.star, this.flare, this.handRing,
       ]),
     ];
     this.sigils = [this.sigCrack, this.sigCrackS, this.sigHex, this.sigSpiral, this.sigArcs, this.sigLine, this.sigArrow, this.sigSeal];
     for (const s of this.sigils) L.add(s.mesh);
     for (const p of this.pools) L.add(p.mesh);
-    L.add(this.blades.mesh, this.ribbons.mesh, this.beams.mesh);
+    L.add(this.blades.mesh, this.ribbons.mesh, this.beams.mesh, this.spines.mesh);
     for (let i = 0; i < 24; i += 1) {
       this.flights.push({ active: false, blade: 0, ribbon: 0, silk: -1, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, big: false, hit: -1, sx: 0, sy: 0, sz: 0, acc: 0, d0x: 0, d0y: 0, d0z: 0, turn: FLIGHT_TURN_S, ldx: 0, ldy: 0, ldz: 1, slot: "auto" });
     }
@@ -1214,18 +1230,49 @@ export class KiemFx {
       this.behindCaster(c, this.c.x, this.c.z);
       this.backStar.emit();
     }
-    const g = this.backGlow.spec.reset();
-    g.x = hx;
-    g.y = hy;
-    g.z = hz;
-    g.life = 0.28;
-    g.size0 = size * 3.6;
-    g.size1 = size * 4.6;
-    g.fadeIn = RELEASE_RISE_S;
-    this.col(g, this.pal.rim, 1);
-    g.a = 0.6;
-    this.behindCaster(g, this.c.x, this.c.z);
-    this.backGlow.emit();
+    if (tier >= 3) {
+      const g = this.backGlow.spec.reset();
+      g.x = hx;
+      g.y = hy;
+      g.z = hz;
+      g.life = 0.28;
+      g.size0 = size * 3.6;
+      g.size1 = size * 4.6;
+      g.fadeIn = RELEASE_RISE_S;
+      this.col(g, this.pal.rim, 1);
+      g.a = 0.6;
+      this.behindCaster(g, this.c.x, this.c.z);
+      this.backGlow.emit();
+    } else {
+      // The basic shot and slot 1 (round 3a, P8): no broad soft glow; a bigger hot star and eight speed lines at
+      // the hand, a seal ring that flares there (full on its first frame) and spins out over the flight, a second
+      // one inside it, both in the skill's cyan.
+      const b = this.star.spec.reset();
+      b.x = hx;
+      b.y = hy;
+      b.z = hz;
+      b.life = 0.11;
+      b.size0 = 2.1;
+      b.size1 = 2.6;
+      b.rot = rot + Math.PI / 4;
+      this.col(b, this.pal.core, 1.1);
+      this.star.emit();
+      this.rays(hx, hy, hz, this.n(8), 2.2, 0.12, 0.14, 0.45);
+      for (let k = 0; k < 2; k += 1) {
+        const r = this.handRing.spec.reset();
+        r.x = hx;
+        r.y = hy;
+        r.z = hz;
+        r.life = k === 0 ? 0.32 : 0.2;
+        r.size0 = k === 0 ? 1.2 : 0.7;
+        r.size1 = k === 0 ? 2.1 : 1.0;
+        r.rot = this.rand.range(0, 6.28);
+        r.rotV = k === 0 ? 5 : -7;
+        this.col(r, this.pal.rim, 1);
+        r.a = 0.95;
+        this.handRing.emit();
+      }
+    }
     this.shockAt(hx, hy, hz, 0.8 + 0.4 * tier, 0.2 + 0.03 * tier, 0.65);
     this.rays(hx, hy, hz, this.n(4 + 2 * tier), 1.1 + 0.45 * tier, 0.12 + 0.03 * tier, 0.16 + 0.02 * tier, 0.55);
     this.riseS = 0;
@@ -1244,8 +1291,8 @@ export class KiemFx {
     }
     this.sparkBurst(hx, hy, hz, this.n(6 + 4 * tier), 0.8 + 0.2 * tier);
     this.burstMotes(v, this.n(5 + 3 * tier), 1.3);
-    // The caster's seal blazes for typed skills; the basic attack stays a plain flash (Low: no blaze, the seal just fades).
-    if (tier >= 2 && !this.lite) this.blazeGoal = Math.max(this.blazeGoal, 0.9 + 0.35 * tier);
+    // The caster's seal blazes on every release (round 3a: the basic shot's too, its charge sigil; Low: none).
+    if (!this.lite) this.blazeGoal = Math.max(this.blazeGoal, 0.9 + 0.35 * Math.max(2, tier));
     this.presence.releases += 1;
     this.presence.tier = tier;
     this.host.flash(v, this.pal.flash, intensity);
@@ -1260,7 +1307,7 @@ export class KiemFx {
     this.host.hand(this.v);
     this.autoSlot = this.pickAutoSlot();
     this.launch(HERO.auto + this.autoSlot, this.v.x, this.v.y, this.v.z, target, T_AUTO_HIT, 0.9, 0.35, -1, 0.24, false, "auto");
-    this.releaseFlash(0.5, 3, 1.0, 1);
+    this.releaseFlash(0.7, 3.5, 1.2, 1);
   }
 
   private k1Socket(j: number, out: THREE.Vector3): THREE.Vector3 {
@@ -1282,7 +1329,7 @@ export class KiemFx {
     this.k1.launched = 0;
     this.k1.tx = tx;
     this.k1.tz = tz;
-    this.releaseFlash(0.6, 4, 1.8, 2);
+    this.releaseFlash(0.75, 4, 1.8, 2);
     this.k1Launch(0);
     this.k1.launched = 1;
   }
@@ -1931,8 +1978,9 @@ export class KiemFx {
     }
     // The trail grows with the flight: on a short flight (Ngự Kiếm, 0.1 s) it eases in over half of it, or the
     // fade-in and the growing length together put over 30 % of its light into the last frame (fxkit RibbonPool).
-    this.ribbons.start(f.ribbon, fx, fy, fz, width, this.pal.body[0] * 2.6, this.pal.body[1] * 2.6, this.pal.body[2] * 2.6, 1, Math.min(0.1, dur * 0.5));
-    this.ribbons.setRim(f.ribbon, this.pal.rim[0], this.pal.rim[1], this.pal.rim[2]);
+    // A white core (cyan-tinted: its bloom stays cyan) in the skill's rim, at least FLIGHT_TRAIL_M wide.
+    this.ribbons.start(f.ribbon, fx, fy, fz, Math.max(width, FLIGHT_TRAIL_M), 0.62 * 2.4, 0.88 * 2.4, 2.4, 1, Math.min(0.1, dur * 0.5));
+    this.ribbons.setRim(f.ribbon, this.pal.rim[0] * 0.8, this.pal.rim[1] * 0.8, this.pal.rim[2] * 0.8);
     f.silk = this.startSilk(fx, fy, fz, Math.min(0.1, dur * 0.5));
     this.bladeTint(blade, 1.8);
   }
@@ -1944,6 +1992,10 @@ export class KiemFx {
    * off at different rates (the star in 6 frames, the ring in 12, the ink last).
    */
   private impact(at: THREE.Vector3, scale: number, dx: number, dz: number, power: number, big: boolean): void {
+    if (this.palSlot === "auto" || this.palSlot === "k1") {
+      this.basicImpact(at, scale, dx, dz, power);
+      return;
+    }
     const rot = this.rand.range(0, Math.PI);
     this.starPair(at.x, at.y, at.z, 3.8 * scale, 0.12, rot);
     const x = this.star.spec.reset();
@@ -2013,6 +2065,57 @@ export class KiemFx {
       this.groundShockAt(at.x, at.z, 0.2, 1.8 * scale, 0.35, 0.7);
     }
     this.motifAt(at.x, at.z, scale);
+  }
+
+  /**
+   * The basic shot's and slot 1's hit (round 3a, P8; judges: "a soft green bloom beside the pack, no hit spark, no
+   * flinch"): centred on the target and graphic: a hot white star and a crossing glint, short speed rays, a thin
+   * cyan ring on the ground and a camera-facing one, sparks along the blow, the ink splash and stain under it; the
+   * screen's local graphic frame (an inverted burst) and the beast's one-frame silhouette come from the host. No
+   * broad soft glow, no big rim-coloured star.
+   */
+  private basicImpact(at: THREE.Vector3, scale: number, dx: number, dz: number, power: number): void {
+    const rot = this.rand.range(0, Math.PI);
+    this.starPair(at.x, at.y, at.z, 2.2 * scale, 0.1, rot);
+    this.darkDisc(at.x, at.z, 1.0 * scale, 0.4, 0.45);
+    this.rays(at.x, at.y, at.z, this.n(6), 1.5 * scale, 0.1, 0.12, 0.5);
+    this.groundShockAt(at.x, at.z, 0.2, 1.4 * scale, 0.26, 0.75);
+    this.shockAt(at.x, at.y, at.z, 1.2 * scale, 0.16, 0.9);
+    this.hitSparks(at.x, at.y, at.z, dx, dz, this.n(8 + 8 * power), power, true);
+    const inkPool = this.lite ? this.smoke : this.splash;
+    const k = inkPool.spec.reset();
+    k.x = at.x + dx * 0.15;
+    k.y = at.y;
+    k.z = at.z + dz * 0.15;
+    k.vx = dx * 2.2;
+    k.vz = dz * 2.2;
+    k.vy = 0.6;
+    k.drag = 4;
+    k.life = 0.42;
+    k.size0 = 0.8 * scale;
+    k.size1 = 1.3 * scale;
+    k.rot = this.rand.range(0, 6.28);
+    k.r = INK[0];
+    k.g = INK[1];
+    k.b = INK[2];
+    k.a = 0.9;
+    inkPool.emit();
+    if (!this.lite) {
+      const gi = this.groundInk.spec.reset();
+      gi.x = at.x + dx * 0.3;
+      gi.y = 0.025;
+      gi.z = at.z + dz * 0.3;
+      gi.life = 2.2;
+      gi.size0 = 0.6 * scale;
+      gi.size1 = 0.9 * scale;
+      gi.rot = this.rand.range(0, 6.28);
+      gi.aspect = 1.4;
+      gi.r = INK[0];
+      gi.g = INK[1];
+      gi.b = INK[2];
+      gi.a = 0.5;
+      this.groundInk.emit();
+    }
   }
 
   /**
@@ -2487,6 +2590,27 @@ export class KiemFx {
     }
   }
 
+  /** The flying blades' spines (round 3a, P8): guard to just short of the tip, eased with the blade's presence. */
+  private emitSpines(): void {
+    const B = this.blades;
+    const S = this.spines;
+    S.begin();
+    for (const f of this.flights) {
+      if (!f.active) continue;
+      const i = f.blade;
+      const q = this.bCard[i]!;
+      if (q <= 0.02 || !B.isVisible(i)) continue;
+      const L = B.len[i]!;
+      // BladeSet's centre sits 0.45 L past the guard.
+      const gx = B.cx[i]! - B.tx[i]! * L * 0.45;
+      const gy = B.cy[i]! - B.ty[i]! * L * 0.45;
+      const gz = B.cz[i]! - B.tz[i]! * L * 0.45;
+      const fade = f.hit >= 0 ? Math.max(0, 1 - f.hit / 0.18) : 1;
+      S.push(gx + B.tx[i]! * L * 0.1, gy + B.ty[i]! * L * 0.1, gz + B.tz[i]! * L * 0.1, gx + B.tx[i]! * L, gy + B.ty[i]! * L, gz + B.tz[i]! * L, 0.035, SWORD_SPINE, q * fade, FLIGHT_SPINE, 0, 3.2);
+    }
+    S.end();
+  }
+
   // ── Per frame ────────────────────────────────────────────────────────────
 
   /**
@@ -2528,6 +2652,7 @@ export class KiemFx {
     this.settleBlades(dt);
     this.updateHand();
     this.emitBladeGlows();
+    this.emitSpines();
     for (const p of this.pools) p.update(dt);
     this.beams.update(dt);
     this.ribbons.update(dt, this.host.camera);
@@ -3084,7 +3209,7 @@ export class KiemFx {
           continue;
         }
         const back = 0.2 * easeOutCubic(clamp01(f.hit / (FLIGHT_HOLD_S + FLIGHT_FOLD_S)));
-        this.show(f.blade, f.tx - f.ldx * back, f.ty - f.ldy * back, f.tz - f.ldz * back, f.ldx, f.ldy, f.ldz, 1.3 * (1 - fold), false, 1 - fold);
+        this.show(f.blade, f.tx - f.ldx * back, f.ty - f.ldy * back, f.tz - f.ldz * back, f.ldx, f.ldy, f.ldz, FLIGHT_SCALE * (1 - fold), false, 1 - fold);
         continue;
       }
       f.t += dt;
@@ -3127,7 +3252,7 @@ export class KiemFx {
       f.ldx = dx;
       f.ldy = dy;
       f.ldz = dz;
-      this.show(f.blade, x, y, z, dx, dy, dz, 1.3);
+      this.show(f.blade, x, y, z, dx, dy, dz, FLIGHT_SCALE);
       this.ribbons.push(f.ribbon, x, y, z);
       if (f.silk >= 0) this.pushSilk(f.silk, x, y, z, dx, dy, dz, 0.55, f.blade * 1.3);
       if (u < 1) {

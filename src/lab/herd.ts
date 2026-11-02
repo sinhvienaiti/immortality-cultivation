@@ -501,6 +501,11 @@ export class LabHerd implements TargetField {
     this.air[i] = 0.001;
   }
 
+  /** A one-frame white-cyan silhouette on a struck beast (the basic shot's and slot 1's target, round 3a P8). */
+  silhouette(i: number): void {
+    if (i >= 0 && i < this.count && this.live[i] === 1) this.whiteNow(i);
+  }
+
   /** The white-cyan silhouette on this frame's draw (cleared by the next update). */
   private whiteNow(i: number): void {
     const a = this.whiteAttr[this.sp[i]!];

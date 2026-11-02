@@ -348,6 +348,8 @@ function emitImpact(slot: string, target: number, dx: number, dz: number, power:
   e.rgb = rgb;
   bus.emit(e);
   if (e.tier === "basic") herd.holdBeast(target, 0.014);
+  // The basic shot's and slot 1's target flashes a one-frame white-cyan silhouette (round 3a, P8).
+  if ((slot === "auto" || slot === "k1") && role !== "secondary") herd.silhouette(target);
   if (killed) {
     const d = bus.death;
     d.target = target;
