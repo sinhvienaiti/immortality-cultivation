@@ -444,7 +444,7 @@ const van = new VanKiemFx(
       lights.flash(at, view.camera.position, colour, intensity);
     },
   },
-  { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch },
+  { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch, noise: ribbonNoise },
   VAN_KIEM_SWORDS[quality],
 );
 /**
@@ -615,7 +615,8 @@ function type(slot: LabSlot): void {
     bigSkillBeat();
     pendingVan = true;
     vanFirstHit = false;
-    herd.toughness = 2;
+    // A tide's toughness while key 7 runs: its ~400 dives spread over the herd and the cut still has beasts to cut.
+    herd.toughness = 1.4;
     return;
   }
   if (slot === "auto" || !typedMode) {
@@ -982,6 +983,8 @@ declare global {
       setGrip(g: Partial<GripPose>): void;
       /** Shows or hides the hand prop. */
       showHand(on: boolean): void;
+      /** Lab debugging: the fx layer's meshes now (render order, shown, instances drawn). */
+      fxMeshes(): { order: number; visible: boolean; count: number }[];
       /** Lab debugging: shows or hides a part ("swarm", "blades", every other "fx" layer, "actors") and redraws the frame. */
       debugShow(part: "swarm" | "blades" | "fx" | "actors", on: boolean): void;
       /** Forces the hand prop's jade and ridge-core levels (−1: live), for the bloom check. */
@@ -1140,6 +1143,11 @@ void (async () => {
     showHand(on) {
       if (handSword !== null) handSword.enabled = on;
     },
+    fxMeshes: () =>
+      view.layers.fx.children.map((c) => {
+        const g = (c as THREE.Mesh).geometry as THREE.InstancedBufferGeometry | undefined;
+        return { order: c.renderOrder, visible: c.visible, count: g?.instanceCount ?? -1 };
+      }),
     debugShow(part, on) {
       // Lab debugging: hide a part and redraw this frame (no time passes).
       if (part === "swarm") {

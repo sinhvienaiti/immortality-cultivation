@@ -255,6 +255,12 @@ export interface SpritePoolOptions {
    * flashes stay full on their first frame (VFX_STANDARD §3.1 rule 5).
    */
   fadeIn?: number;
+  /**
+   * Draw both faces. A "ground" quad's winding faces down, so with the default front-face culling it never draws
+   * from a camera above it (found 03/11/2026, power pass round 2: key 7's lit pools, rings and scar never showed).
+   * Off by default so the Kiếm skills keep what was reviewed until their redesign (SKILL_CATALOG_V2).
+   */
+  twoSided?: boolean;
 }
 
 export class SpritePool {
@@ -328,6 +334,7 @@ export class SpritePool {
       blendSrc: THREE.OneFactor,
       blendDst: blend === "add" ? THREE.OneFactor : THREE.OneMinusSrcAlphaFactor,
       blendEquation: THREE.AddEquation,
+      side: opts.twoSided === true ? THREE.DoubleSide : THREE.FrontSide,
     });
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.frustumCulled = false;
@@ -680,6 +687,11 @@ export class RibbonPool {
     this.live[L] = x;
     this.live[L + 1] = y;
     this.live[L + 2] = z;
+  }
+
+  /** The width of ribbon `i` from now on (m; a lead blade's trail widens as it grows). */
+  setWidth(i: number, widthM: number): void {
+    this.widthM[i] = widthM;
   }
 
   setAlpha(i: number, a: number): void {

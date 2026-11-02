@@ -472,6 +472,18 @@ export class BladeSet {
     this.material.emissiveIntensity = intensity;
   }
 
+  /**
+   * The per-blade tint colours the rail's glow too, not only the steel (key 7's two-tone river: one emissive
+   * colour made every sword glow the same mint). This set's own material; the Kiếm skills' sets keep theirs.
+   */
+  tintGlow(): void {
+    this.material.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;");
+    };
+    this.material.customProgramCacheKey = () => "blade-tint-glow";
+    this.material.needsUpdate = true;
+  }
+
   isVisible(i: number): boolean {
     return this.visible[i] === 1;
   }

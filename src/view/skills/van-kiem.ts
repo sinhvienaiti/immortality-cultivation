@@ -3,36 +3,45 @@
  * field-wide prototype of the power pass (canon D58 (2); POWER_RESEARCH.md
  * "Chiêu cả sân mẫu", direction A "Celestial Sword River"). The four readable
  * states: the sky changes, the swords gather, each sword picks its prey, one
- * stroke ends it. Timeline at 60 Hz from the last key (F0):
- * - F0: 8 real blades (the weapon's full model) leave the hand at once for the
- *   nearest threats; they strike around F15.
- * - F1–4: the world darkens (the host's screen effects) and a pale jade seam
- *   opens diagonally across the sky.
- * - F4–30: 64 seeds rise from the field into the river; the rest of the river
- *   (320 swords on High, the weapon's swarm LOD) fades in along it, flowing,
- *   until it covers nearly the whole 40 m field.
- * - F30–168: the hunt. Every 100 ms 30–40 swords peel off: each turns its tip
- *   to its prey (a faint lock thread shows the choice for ~0.12 s), then dives
- *   on a curve, strikes, stands in the wound a moment, fades and comes back
- *   upstream: 320 swords make ~800 strikes. Targets are held by reservation
- *   (priority = gate threat × 2 + elite × 1.5 + nearness × 0.8 − held swords;
- *   at most 2 swords on a small beast, 5 on an elite, 10 on the king); a sword
- *   whose prey died picks a near one; 18 % pick another beast near the best.
- * - F168–192: the swords left climb, spiral once and line up into one huge
- *   diagonal stroke over the field.
- * - F192: the stroke slams down into one giant cut across the field and its
- *   light sweeps out both ways over the whole field in 0.2 s (every beast it
- *   passes is struck: small beasts twice, elites and the king three times),
- *   the host's ultimate-strength finisher.
+ * stroke ends it. Round 2 (both blind judges: "a heap of glowing sticks, one
+ * mint colour, no hero swords, no hot cores, no ground light") gives the
+ * river a hierarchy of three sizes and two tones:
+ * - LEAD blades: the 8 swords that leave the hand on F0 are the weapon's full
+ *   model; after their first strike they rise into the river growing to 6.4 m
+ *   (3.7× a river sword), with a white-gold core along the blade, a saturated
+ *   jade or cyan rim and long tapered ribbon trails; they ride the river's
+ *   crest, dive one at a time on the gravest prey (elites, the king), and take
+ *   the middle of the final stroke.
+ * - MID streams: the river's swords (320 on High, the swarm LOD) flow in five
+ *   braided lanes along the river's curve at 5–7 m/s with motion trails,
+ *   jade and cyan bodies with white-gold cores, brighter in waves running down
+ *   the stream; a hunt batch peels off the river where it passes nearest its
+ *   prey, as one sheaf bending one way.
+ * - Fine glitter: gold and white glints shed along the river and the dives.
+ * - Lit ground pools under the river, under every strike and along the cut.
+ * Timeline at 60 Hz from the last key (F0):
+ * - F0: 8 lead blades leave the hand for the nearest threats (strike ~F15).
+ * - F1–20: the world darkens (the host) and a jade seam opens across the sky.
+ * - F4–30: 64 seeds rise from the field; the rest of the river fades in.
+ * - F30–168: the hunt: every 100 ms 14–20 river swords turn their tips to their
+ *   prey (a faint lock thread shows the choice), dive on a curve, strike, fade
+ *   and come back upstream; every 0.3 s a lead blade dives on the gravest prey.
+ *   Targets are held by reservation (2 swords a small beast, 5 an elite, 10 the
+ *   king; retarget on death; 18 % pick another beast near the best).
+ * - F168–192: everything left climbs, spirals once and lines up into one huge
+ *   diagonal stroke, the lead blades in its middle row.
+ * - F192: the stroke slams down; its light sweeps out both ways over the field
+ *   in 0.2 s (small beasts struck twice, elites and the king three times), the
+ *   host's ultimate-strength finisher; a scar and a lit seam stay on the ground.
  * - F192–207: the river folds into a point above the hero and is gone.
- * Colours: Clear Wind's jade, cyan and silver with a touch of gold (no violet).
- * Each sword reads ≥ 20 px at the play camera: 1.75 m long, inside a jade-to-
- * cyan tail card (one instanced draw). View only: the sim owns damage; the
- * host turns `struck` into its hit events. No allocation per frame.
+ * Colours: Clear Wind's jade and cyan bodies, white-gold cores, a touch of gold
+ * (no violet). Halos stay ≤ 0.9 a channel, only thin cores are HDR. View only:
+ * the sim owns damage; the host turns `struck` into its hit events. No
+ * allocation per frame.
  */
 import * as THREE from "three";
 import { BladeSet, loadBladeGeometry, loadWeaponModel } from "./blades";
-import { BeamPool, Rand, smooth01, SpritePool } from "./fxkit";
+import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
 
@@ -45,7 +54,7 @@ export interface VanKiemHost {
   readonly targets: TargetField;
   caster(out: { x: number; z: number; fx: number; fz: number }): void;
   hand(out: THREE.Vector3): void;
-  /** A sword struck `target` from (dx, dz); `killed` as the field said. */
+  /** A sword struck `target` from (dx, dz); `killed` as the field said; `power` ≥ 0.9 a lead blade or the cut. */
   struck(target: number, dx: number, dz: number, power: number, role: VanKiemRole, killed: boolean): void;
   /** The skill's timeline: the host answers with screen effects and sound on this frame. */
   phase(p: VanKiemPhase): void;
@@ -61,15 +70,18 @@ export interface VanKiemTextures {
   /** A thin ring (ground marks of the strikes) and an ink stain (the cut's scorched scar). */
   readonly ring: THREE.Texture;
   readonly scorch: THREE.Texture;
+  /** A soft noise (the lead blades' ribbon trails erode with it). */
+  readonly noise: THREE.Texture;
 }
 
 /** River size per tier (canon §20.2's sword pool: 150 / 300 / 500; this skill takes 120 / 200 / 320). */
 export const VAN_KIEM_SWORDS = { low: 120, medium: 200, high: 320, ultra: 320 } as const;
 const HERO_N = 8;
 const SEEDS = 64;
-/** Sword length (m) and the hero blades' (the weapon's own model). */
+/** Sword length (m) in the river, the lead blades leaving the hand, and the lead blades in the river (3.7×). */
 const SWORD_M = 1.75;
 const HERO_M = 1.9;
+const LEAD_M = 6.4;
 
 /** Timeline (s) at 60 Hz. */
 const TICK = 1 / 60;
@@ -84,12 +96,25 @@ const T_FIN = 192 * TICK;
 const T_FOLD_END = 207 * TICK;
 const T_DONE = 230 * TICK;
 const BATCH_S = 0.1;
+/** Swords a hunt batch sends (a third fewer than round 1's 30–40: a readable sheaf, not a heap). */
+const BATCH_MIN = 14;
+const BATCH_SPAN = 7;
 const AIM_S = 0.12;
 const WOUND_S = 0.06;
 const FADE_S = 0.12;
 const SWEEP_S = 0.2;
 /** How far the cut's light runs out each way (m): past every beast of the field. */
 const SWEEP_R = 18;
+/** A lead blade rises from its wound into the crest over this (s), and one dives every LEAD_EVERY s of the hunt. */
+const LEAD_RISE_S = 0.42;
+const LEAD_EVERY = 0.3;
+/** River flow (share of the river a second): mid swords and the lead blades on the crest. */
+const FLOW_MIN = 0.13;
+const FLOW_MAX = 0.18;
+const LEAD_FLOW = 0.15;
+/** The river's five braided lanes: across (m) and up (m). */
+const LANES = 5;
+const LANE_W = 1.45;
 
 /** Reservation caps by size class (TargetField.tier): swarm/small 2, elite 5, king 10. */
 const CAP_SMALL = 2;
@@ -110,23 +135,28 @@ const S_FADE = 6;
 const S_GATHER = 7;
 const S_STROKE = 8;
 const S_FOLD = 9;
+/** A lead blade rising from its wound into the crest, and riding it. */
+const S_RISE = 10;
+const S_LEAD = 11;
 
-/** Clear Wind's light (linear): jade, cyan, silver, gold; halos ≤ 0.9, cores HDR. */
-const JADE = [0.22, 0.86, 0.55] as const;
-const CYAN = [0.25, 0.78, 0.95] as const;
-const SILVER = [0.78, 0.84, 0.9] as const;
-const GOLD = [0.95, 0.72, 0.3] as const;
+/** Clear Wind's light (linear): jade, cyan, silver, gold bodies (halos ≤ 0.9); the white-gold core (HDR in the shaders). */
+const JADE = [0.08, 0.78, 0.5] as const;
+const CYAN = [0.06, 0.55, 0.95] as const;
+const SILVER = [0.66, 0.8, 0.9] as const;
+const GOLD = [0.98, 0.76, 0.32] as const;
+const CORE = [1.0, 0.9, 0.66] as const;
 /** The number tint and flash colour hosts read (linear jade-cyan, sRGB hex). */
 export const VAN_KIEM_COLOUR = [0.3, 0.86, 0.74] as const;
 /** A silver flash with a breath of jade (a green full-screen wash read sickly at 17 %). */
 export const VAN_KIEM_FLASH = "#eafcf4";
 
-// ── Tail cards: one camera-facing strip per sword, jade at the tail, a thin hot core at the head ──
+// ── Light strips: one camera-facing strip per sword, head → tail, one instanced draw per kind ──
 
-const TAIL_VERTEX = /* glsl */ `
+const STRIP_VERTEX = /* glsl */ `
 attribute vec4 iHead; // xyz, width (m)
 attribute vec4 iTail; // xyz, alpha
 attribute vec3 iCol;
+uniform float uTaper;
 varying vec2 vUv;
 varying vec3 vCol;
 varying float vA;
@@ -143,30 +173,51 @@ void main() {
   side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
   // position.x in [-0.5, 0.5] across, position.y in [-0.5, 0.5] head → tail.
   float along = position.y + 0.5;
-  vec3 p = h + axis * along + side * position.x * iHead.w * mix(1.0, 0.35, along);
+  vec3 p = h + axis * along + side * position.x * iHead.w * mix(1.0, uTaper, along);
   vUv = vec2(position.x + 0.5, along);
   vCol = iCol;
   vA = iTail.w;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`;
+
+/** A mid sword's motion trail: its body colour falling off to deep teal, a thin white-gold core near the head. */
 const TAIL_FRAGMENT = /* glsl */ `
+uniform vec3 uCore;
 varying vec2 vUv;
 varying vec3 vCol;
 varying float vA;
 void main() {
   float across = abs(vUv.x - 0.5) * 2.0;
-  float soft = 1.0 - smoothstep(0.35, 1.0, across);
-  float core = 1.0 - smoothstep(0.0, 0.22, across);
+  float soft = 1.0 - smoothstep(0.3, 1.0, across);
+  float core = 1.0 - smoothstep(0.0, 0.2, across);
   // Clamped before pow(): under MSAA (Ultra) an edge pixel is shaded past the card, vUv.y > 1, and pow of a
   // negative base is NaN, which the bloom spread into black blocks.
-  float fade = pow(clamp(1.0 - vUv.y, 0.0, 1.0), 1.6);
-  float head = 1.0 - smoothstep(0.0, 0.25, vUv.y);
+  float y = clamp(vUv.y, 0.0, 1.0);
+  float fade = pow(1.0 - y, 1.3);
+  float head = 1.0 - smoothstep(0.0, 0.32, y);
+  vec3 body = mix(vCol, vec3(0.015, 0.2, 0.24), smoothstep(0.15, 1.0, y));
   // Halo ≤ 0.9 in the sword's colour; a thin HDR core near the head only (it alone blooms).
-  vec3 c = vCol * soft * fade * 0.85 + mix(vCol, vec3(1.0), 0.3) * core * head * 2.6;
+  vec3 c = body * soft * fade * 0.8 + uCore * core * head * 2.9;
   gl_FragColor = vec4(c * vA, 1.0);
 }`;
 
-class TailCards {
+/** A lead blade's aura along the blade (head at the guard, tail at the tip): a white-hot core, a saturated rim. */
+const AURA_FRAGMENT = /* glsl */ `
+uniform vec3 uCore;
+varying vec2 vUv;
+varying vec3 vCol;
+varying float vA;
+void main() {
+  float across = abs(vUv.x - 0.5) * 2.0;
+  float y = clamp(vUv.y, 0.0, 1.0);
+  float ends = smoothstep(0.0, 0.1, y) * (1.0 - smoothstep(0.82, 1.0, y));
+  float rim = 1.0 - smoothstep(0.3, 1.0, across);
+  float core = 1.0 - smoothstep(0.0, 0.14, across);
+  vec3 c = vCol * rim * rim * 0.75 * ends + uCore * core * ends * 3.4;
+  gl_FragColor = vec4(c * vA, 1.0);
+}`;
+
+class StripCards {
   readonly mesh: THREE.Mesh;
   private readonly head: Float32Array;
   private readonly tail: Float32Array;
@@ -177,7 +228,7 @@ class TailCards {
   private readonly ranges = [{ start: 0, count: 0 }, { start: 0, count: 0 }, { start: 0, count: 0 }];
   private n = 0;
 
-  constructor(readonly capacity: number) {
+  constructor(readonly capacity: number, fragment: string, taper: number, renderOrder: number) {
     const base = new THREE.PlaneGeometry(1, 1, 1, 1);
     const g = new THREE.InstancedBufferGeometry();
     g.index = base.index;
@@ -193,8 +244,9 @@ class TailCards {
     g.instanceCount = 0;
     this.geometry = g;
     const m = new THREE.ShaderMaterial({
-      vertexShader: TAIL_VERTEX,
-      fragmentShader: TAIL_FRAGMENT,
+      vertexShader: STRIP_VERTEX,
+      fragmentShader: fragment,
+      uniforms: { uCore: { value: new THREE.Vector3(CORE[0], CORE[1], CORE[2]) }, uTaper: { value: taper } },
       transparent: true,
       depthWrite: false,
       depthTest: true,
@@ -207,7 +259,7 @@ class TailCards {
     });
     this.mesh = new THREE.Mesh(g, m);
     this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 12;
+    this.mesh.renderOrder = renderOrder;
   }
 
   begin(): void {
@@ -248,13 +300,17 @@ class TailCards {
 
 export class VanKiemFx {
   readonly blades: BladeSet;
-  private readonly tails: TailCards;
+  private readonly tails: StripCards;
+  private readonly auras: StripCards;
+  private readonly ribbons: RibbonPool;
   private readonly river: SpritePool;
   private readonly hits: SpritePool;
   private readonly stars: SpritePool;
+  private readonly glitter: SpritePool;
   private readonly beams: BeamPool;
-  /** Ground: a jade ring where each sword lands, and the cut's ink scar and its glowing seam. */
+  /** Ground: a jade ring where each sword lands, lit pools (under the river, the strikes and the cut), the cut's ink scar. */
   private readonly marks: SpritePool;
+  private readonly pools: SpritePool;
   private readonly scar: SpritePool;
   private readonly rand = new Rand(7717);
   private readonly n: number;
@@ -270,10 +326,14 @@ export class VanKiemFx {
   private readonly dy: Float32Array;
   private readonly dz: Float32Array;
   private readonly sc: Float32Array;
+  /** Shown length (m): a lead blade grows from HERO_M to LEAD_M as it rises. */
+  private readonly lenM: Float32Array;
+  private readonly lenFrom: Float32Array;
   private readonly u: Float32Array;
   private readonly lat: Float32Array;
   private readonly hgt: Float32Array;
   private readonly flow: Float32Array;
+  private readonly lane: Uint8Array;
   private readonly ax: Float32Array; // path start
   private readonly ay: Float32Array;
   private readonly az: Float32Array;
@@ -292,6 +352,8 @@ export class VanKiemFx {
   private active = false;
   private t = 0;
   private batchAcc = 0;
+  private leadAcc = 0;
+  private leadNext = 0;
   private seedLeft = 0;
   private fillLeft = 0;
   private sweepT = -1;
@@ -314,9 +376,12 @@ export class VanKiemFx {
   private kMove = 0.45;
   private kSettle = 0.3;
   private kPlunge = 0.35;
-  /** Strikes and dives so far in this cast (the "~800 perceived strikes" check). */
+  /** Glitter owed (a rate, the same at any frame rate). */
+  private glintAcc = 0;
+  /** Strikes and dives so far in this cast (the perceived-strikes check) and the lead blades' dives. */
   strikes = 0;
   dives = 0;
+  leadDives = 0;
   private weaponSeq = 0;
 
   constructor(
@@ -327,15 +392,21 @@ export class VanKiemFx {
     this.n = Math.max(16, Math.min(500, Math.floor(swords)));
     this.cap = HERO_N + this.n;
     this.blades = new BladeSet(this.cap, 1, HERO_N);
-    this.blades.setRail("#6fd8b4", 0.9);
-    this.tails = new TailCards(this.cap);
-    this.river = new SpritePool(48, tex.glow, "add", "camera", 9, { pull: 0 });
+    // A warm white rail whose glow each blade's tint colours: jade and cyan swords, white-gold lead blades.
+    this.blades.setRail("#fff2d6", 0.8);
+    this.blades.tintGlow();
+    this.tails = new StripCards(this.cap, TAIL_FRAGMENT, 0.3, 12);
+    this.auras = new StripCards(HERO_N, AURA_FRAGMENT, 0.28, 13);
+    this.ribbons = new RibbonPool(HERO_N, 46, tex.noise, 12);
+    this.river = new SpritePool(24, tex.glow, "add", "camera", 9, { pull: 0 });
     this.hits = new SpritePool(160, tex.slash, "add", "camera", 13);
-    this.stars = new SpritePool(160, tex.star, "add", "camera", 14);
+    this.stars = new SpritePool(220, tex.star, "add", "camera", 14);
+    this.glitter = new SpritePool(420, tex.star, "add", "camera", 14);
     this.beams = new BeamPool(160, 13);
-    this.marks = new SpritePool(160, tex.ring, "add", "ground", 6);
-    this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05 });
-    host.layer.add(this.scar.mesh, this.marks.mesh, this.river.mesh, this.blades.mesh, this.tails.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh);
+    this.marks = new SpritePool(160, tex.ring, "add", "ground", 6, { twoSided: true });
+    this.pools = new SpritePool(220, tex.glow, "add", "ground", 5, { crop: 0.8, twoSided: true });
+    this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05, twoSided: true });
+    host.layer.add(this.scar.mesh, this.pools.mesh, this.marks.mesh, this.river.mesh, this.blades.mesh, this.ribbons.mesh, this.tails.mesh, this.auras.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh);
     const N = this.cap;
     this.st = new Uint8Array(N);
     this.age = new Float32Array(N);
@@ -347,10 +418,13 @@ export class VanKiemFx {
     this.dy = new Float32Array(N);
     this.dz = new Float32Array(N);
     this.sc = new Float32Array(N);
+    this.lenM = new Float32Array(N);
+    this.lenFrom = new Float32Array(N);
     this.u = new Float32Array(N);
     this.lat = new Float32Array(N);
     this.hgt = new Float32Array(N);
     this.flow = new Float32Array(N);
+    this.lane = new Uint8Array(N);
     this.ax = new Float32Array(N);
     this.ay = new Float32Array(N);
     this.az = new Float32Array(N);
@@ -368,7 +442,10 @@ export class VanKiemFx {
     this.sweepHit = new Uint8Array(host.targets.size);
     for (let i = 0; i < N; i += 1) {
       const r = this.rand.next();
-      this.hue[i] = r < 0.42 ? 0 : r < 0.8 ? 1 : r < 0.94 ? 2 : 3;
+      // Two tones: jade and cyan bodies, a little silver and gold (lead blades alternate jade and cyan).
+      this.hue[i] = i < HERO_N ? i % 2 : r < 0.46 ? 0 : r < 0.88 ? 1 : r < 0.95 ? 2 : 3;
+      this.lane[i] = i % LANES;
+      this.lenM[i] = i < HERO_N ? HERO_M : SWORD_M;
     }
     const dlx = this.s1.x - this.s0.x;
     const dlz = this.s1.z - this.s0.z;
@@ -382,7 +459,7 @@ export class VanKiemFx {
     }
   }
 
-  /** The equipped weapon: the hero blades take its model, the river its swarm LOD (D55). */
+  /** The equipped weapon: the lead blades take its full model, the river its swarm LOD (D55). */
   async setWeapon(def: WeaponDef): Promise<void> {
     const seq = ++this.weaponSeq;
     const hero = await loadBladeGeometry(def.model, def.fit);
@@ -399,16 +476,20 @@ export class VanKiemFx {
     return this.active ? this.t : -1;
   }
 
-  /** The last key: the cast starts on this frame; the 8 hero blades leave now. */
+  /** The last key: the cast starts on this frame; the 8 lead blades leave now. */
   cast(): void {
     this.reset();
     this.active = true;
     this.t = 0;
     this.batchAcc = 0;
+    this.leadAcc = 0;
+    this.leadNext = 0;
+    this.glintAcc = 0;
     this.seedLeft = SEEDS;
     this.fillLeft = this.n - SEEDS;
     this.strikes = 0;
     this.dives = 0;
+    this.leadDives = 0;
     this.flybys = 0;
     this.host.caster(this.c);
     this.host.hand(this.v);
@@ -429,8 +510,10 @@ export class VanKiemFx {
       this.cz[i] = this.c.fx * side;
       this.tgt[i] = target;
       this.sc[i] = 1;
+      this.lenM[i] = HERO_M;
       this.flown[i] = 0;
       this.reserved[target] = this.reserved[target]! + 1;
+      this.startRibbon(i, 0.5);
       this.host.flyby(this.v.x, this.v.y, this.v.z, 30);
     }
   }
@@ -451,14 +534,31 @@ export class VanKiemFx {
     return out.set(x + nx * lat * wide, y + h * wide, z + nz * lat * wide);
   }
 
+  /** The lanes braid: a sword's place across the river at u (m) and its height (m). */
+  private laneLat(i: number, u: number): number {
+    const ln = this.lane[i]! - (LANES - 1) / 2;
+    return ln * LANE_W + Math.sin(u * 9.0 - this.t * 1.7 + ln * 1.3) * 0.55 + this.lat[i]!;
+  }
+
+  private laneHgt(i: number, u: number): number {
+    const ln = this.lane[i]! - (LANES - 1) / 2;
+    return Math.cos(u * 7.0 - this.t * 1.3 + ln) * 0.35 + ln * 0.12 + this.hgt[i]!;
+  }
+
+  /** The stream's brightness at u: waves of light running down the river (0.45–1). */
+  private brightAt(u: number): number {
+    const w = 0.5 + 0.5 * Math.sin((u * 2.3 - this.t * 0.85) * Math.PI * 2);
+    return 0.45 + 0.55 * w * w;
+  }
+
   /** A sword joins the river at u (fades in). */
   private toRiver(i: number, u: number, fadeIn: boolean): void {
     this.st[i] = S_RIVER;
     this.age[i] = fadeIn ? 0 : 1;
     this.u[i] = u;
-    this.lat[i] = this.rand.range(-1, 1) * 3.4;
-    this.hgt[i] = this.rand.range(-0.9, 1.1);
-    this.flow[i] = this.rand.range(0.05, 0.09);
+    this.lat[i] = this.rand.range(-0.3, 0.3);
+    this.hgt[i] = this.rand.range(-0.25, 0.25);
+    this.flow[i] = this.rand.range(FLOW_MIN, FLOW_MAX);
     this.tgt[i] = -1;
   }
 
@@ -510,6 +610,27 @@ export class VanKiemFx {
     return best;
   }
 
+  /** The best beast with room within `r` of (x, z) (a batch's sheaf shares one area); −1 if none. */
+  private pickNear(x: number, z: number, r: number): number {
+    const T = this.host.targets;
+    let best = -1;
+    let bestS = -1e8;
+    for (let i = 0; i < T.size; i += 1) {
+      if (this.score[i]! < -1e8) continue;
+      const res = this.reserved[i]!;
+      if (res >= this.capOf(i)) continue;
+      const ddx = T.x(i) - x;
+      const ddz = T.z(i) - z;
+      if (ddx * ddx + ddz * ddz > r * r) continue;
+      const s = this.score[i]! - res * 0.6 + this.rand.next() * 0.3;
+      if (s > bestS) {
+        bestS = s;
+        best = i;
+      }
+    }
+    return best;
+  }
+
   /** A live beast within `r` of beast `b` with room, other than `b`, at random among the first found. */
   private nearOther(b: number, r: number): number {
     const T = this.host.targets;
@@ -526,35 +647,49 @@ export class VanKiemFx {
     return -1;
   }
 
-  /** A batch of the hunt: 30–40 river swords turn to their prey. */
+  /**
+   * A batch of the hunt: 14–20 river swords turn to their prey. The batch's prey area is the best beast; its
+   * swords peel off the river where it passes nearest that area (one sheaf), each taking a beast near it.
+   */
   private batch(): void {
     this.rankTargets(1);
-    const want = 30 + Math.floor(this.rand.next() * 11);
+    const T = this.host.targets;
+    const head = this.pick(true);
+    if (head < 0) return;
+    const ax = T.x(head);
+    const az = T.z(head);
+    const uT = Math.min(0.97, Math.max(0.03, (ax + 19.5) / 39));
+    const want = BATCH_MIN + Math.floor(this.rand.next() * BATCH_SPAN);
+    const bend = this.rand.next() < 0.5 ? -1 : 1;
     let got = 0;
-    // Start at a random sword so the whole river takes part.
-    const start = HERO_N + Math.floor(this.rand.next() * this.n);
-    for (let k = 0; k < this.n && got < want; k += 1) {
-      const i = HERO_N + ((start - HERO_N + k * 7) % this.n);
-      if (this.st[i] !== S_RIVER || this.age[i]! < 0.15) continue;
-      const target = this.pick();
-      if (target < 0) break;
-      this.reserved[target] = this.reserved[target]! + 1;
-      this.tgt[i] = target;
-      this.st[i] = S_AIM;
-      this.age[i] = 0;
-      // The lock thread: the choice shows for the aim's length.
-      this.lockThread(i, target);
-      got += 1;
+    // The swords nearest uT first: widening windows of the river.
+    for (let win = 0; win < 3 && got < want; win += 1) {
+      const du = win === 0 ? 0.07 : win === 1 ? 0.14 : 0.3;
+      const start = HERO_N + Math.floor(this.rand.next() * this.n);
+      for (let k = 0; k < this.n && got < want; k += 1) {
+        const i = HERO_N + ((start - HERO_N + k * 7) % this.n);
+        if (this.st[i] !== S_RIVER || this.age[i]! < 0.15 || Math.abs(this.u[i]! - uT) > du) continue;
+        let target = this.pickNear(ax, az, 5.5);
+        if (target < 0) target = this.pick(true);
+        if (target < 0) break;
+        this.reserved[target] = this.reserved[target]! + 1;
+        this.tgt[i] = target;
+        this.st[i] = S_AIM;
+        this.age[i] = 0;
+        // The sheaf bends one way.
+        this.cx[i] = bend * this.rand.range(1.2, 2.6);
+        this.lockThread(i, target);
+        got += 1;
+      }
     }
     // Fly-bys: the dives nearest the hero this batch (at most 2 a batch, 12 a cast).
-    let near = 0;
     for (let k = 0; k < 2 && this.flybys < 12; k += 1) {
       let bi = -1;
       let bd = 1e9;
       for (let i = HERO_N; i < this.cap; i += 1) {
         if (this.st[i] !== S_AIM || this.flown[i] === 1) continue;
         const t = this.tgt[i]!;
-        const d = Math.hypot(this.host.targets.x(t) - this.c.x, this.host.targets.z(t) - this.c.z);
+        const d = Math.hypot(T.x(t) - this.c.x, T.z(t) - this.c.z);
         if (d < bd) {
           bd = d;
           bi = i;
@@ -563,10 +698,44 @@ export class VanKiemFx {
       if (bi < 0 || bd > 14) break;
       this.flown[bi] = 1;
       this.flybys += 1;
-      near += 1;
       this.host.flyby(this.px[bi]!, this.py[bi]!, this.pz[bi]!, 24);
     }
-    void near;
+  }
+
+  /** A lead blade on the crest dives on the gravest prey (elites and the king first). */
+  private leadDive(): void {
+    const T = this.host.targets;
+    let lead = -1;
+    for (let k = 0; k < HERO_N; k += 1) {
+      const i = (this.leadNext + k) % HERO_N;
+      if (this.st[i] === S_LEAD && this.age[i]! > 0.25) {
+        lead = i;
+        break;
+      }
+    }
+    if (lead < 0) return;
+    this.leadNext = (lead + 1) % HERO_N;
+    this.rankTargets(0.6);
+    let best = -1;
+    let bestS = -1e8;
+    for (let i = 0; i < T.size; i += 1) {
+      if (this.score[i]! < -1e8 || this.reserved[i]! >= this.capOf(i)) continue;
+      const s = this.score[i]! + (T.tier(i) >= 2 ? 2 : 0) - this.reserved[i]! * 0.4;
+      if (s > bestS) {
+        bestS = s;
+        best = i;
+      }
+    }
+    if (best < 0) return;
+    this.reserved[best] = this.reserved[best]! + 1;
+    this.tgt[lead] = best;
+    this.leadDives += 1;
+    this.dive(lead);
+    // A high, decisive arc.
+    this.cx[lead] = this.rand.range(-2, 2);
+    this.cy[lead] = 3.2;
+    this.cz[lead] = -1.5;
+    this.dur[lead] = 0.34;
   }
 
   private lockThread(i: number, target: number): void {
@@ -587,21 +756,21 @@ export class VanKiemFx {
     b.dz = dz / l;
     b.len0 = b.len1 = l;
     b.grow = 0.06;
-    b.w0 = 0.07;
-    b.w1 = 0.03;
+    b.w0 = 0.06;
+    b.w1 = 0.025;
     b.life = AIM_S + 0.08;
-    b.cr = JADE[0] * 0.9;
-    b.cg = JADE[1] * 0.9;
-    b.cb = JADE[2] * 0.9;
-    b.hr = JADE[0] * 0.35;
-    b.hg = JADE[1] * 0.35;
-    b.hb = JADE[2] * 0.35;
+    b.cr = CYAN[0] * 1.4;
+    b.cg = CYAN[1] * 1.4;
+    b.cb = CYAN[2] * 1.4;
+    b.hr = JADE[0] * 0.3;
+    b.hg = JADE[1] * 0.3;
+    b.hb = JADE[2] * 0.3;
     b.fadeBase = 0.2;
     b.fadeTip = 0.2;
     this.beams.emit();
   }
 
-  /** Starts sword i's dive from where it is to its target. */
+  /** Starts sword i's dive from where it is to its target (a batch set its bend in cx). */
   private dive(i: number): void {
     this.dives += 1;
     this.st[i] = S_DIVE;
@@ -609,15 +778,13 @@ export class VanKiemFx {
     this.ax[i] = this.px[i]!;
     this.ay[i] = this.py[i]!;
     this.az[i] = this.pz[i]!;
-    // A curved dive: the control point bends sideways and keeps some height.
-    const side = this.rand.range(-1, 1) * 3;
-    this.cx[i] = side;
-    this.cy[i] = this.rand.range(0.5, 2.2);
-    this.cz[i] = -side * 0.5;
+    // A curved dive: the control point bends sideways (the batch's way) and keeps some height.
+    this.cy[i] = this.rand.range(0.6, 2.0);
+    this.cz[i] = -this.cx[i]! * 0.4;
     const T = this.host.targets;
     const t = this.tgt[i]!;
     const d = Math.hypot(T.x(t) - this.px[i]!, T.midY(t) - this.py[i]!, T.z(t) - this.pz[i]!);
-    this.dur[i] = Math.min(0.55, Math.max(0.28, d / 26));
+    this.dur[i] = Math.min(0.45, Math.max(0.24, d / 30));
   }
 
   /** A sword's prey died before it arrived: a live one near it with room, else −1. */
@@ -637,16 +804,22 @@ export class VanKiemFx {
 
   update(dt: number): void {
     this.river.dropOneFrame();
+    this.pools.dropOneFrame();
     this.tails.begin();
+    this.auras.begin();
     if (this.active) this.step(dt);
     this.drawSwords();
     this.tails.end();
+    this.auras.end();
     this.blades.sync();
+    this.ribbons.update(dt, this.host.camera);
     this.river.update(dt);
     this.hits.update(dt);
     this.stars.update(dt);
+    this.glitter.update(dt);
     this.beams.update(dt);
     this.marks.update(dt);
+    this.pools.update(dt);
     this.scar.update(dt);
   }
 
@@ -664,7 +837,7 @@ export class VanKiemFx {
     }
     // Seeds rise from the field (F4–12); the rest of the river fades in along it (F12–30).
     if (t >= T_SEEDS && this.seedLeft > 0) {
-      const due = Math.ceil((SEEDS * Math.min(1, (t - T_SEEDS) / (T_FILL - T_SEEDS))) - (SEEDS - this.seedLeft));
+      const due = Math.ceil(SEEDS * Math.min(1, (t - T_SEEDS) / (T_FILL - T_SEEDS)) - (SEEDS - this.seedLeft));
       for (let k = 0; k < due && this.seedLeft > 0; k += 1) this.seed(HERO_N + (SEEDS - this.seedLeft--));
     }
     if (t >= T_FILL && this.fillLeft > 0) {
@@ -681,6 +854,11 @@ export class VanKiemFx {
       while (this.batchAcc >= BATCH_S) {
         this.batchAcc -= BATCH_S;
         this.batch();
+      }
+      this.leadAcc += dt;
+      while (this.leadAcc >= LEAD_EVERY) {
+        this.leadAcc -= LEAD_EVERY;
+        this.leadDive();
       }
     }
     if (t0 < T_GATHER && t >= T_GATHER) {
@@ -703,9 +881,10 @@ export class VanKiemFx {
         if (this.tgt[i]! >= 0) this.reserved[this.tgt[i]!] = 0;
         this.st[i] = S_OFF;
       }
+      for (let k = 0; k < HERO_N; k += 1) this.ribbons.stop(k, 0.2);
     }
     for (let i = 0; i < this.cap; i += 1) if (this.st[i] !== S_OFF) this.stepSword(i, dt);
-    this.riverGlow();
+    this.riverLight(dt);
   }
 
   private seed(i: number): void {
@@ -719,34 +898,41 @@ export class VanKiemFx {
     this.ay[i] = this.py[i] = 0.2;
     this.az[i] = this.pz[i] = z;
     this.u[i] = Math.min(0.95, Math.max(0.05, (x + 19.5) / 39 + this.rand.range(-0.08, 0.08)));
-    this.lat[i] = this.rand.range(-1, 1) * 3.4;
-    this.hgt[i] = this.rand.range(-0.9, 1.1);
-    this.flow[i] = this.rand.range(0.05, 0.09);
+    this.lat[i] = this.rand.range(-0.3, 0.3);
+    this.hgt[i] = this.rand.range(-0.25, 0.25);
+    this.flow[i] = this.rand.range(FLOW_MIN, FLOW_MAX);
     this.sc[i] = 0;
   }
 
   private gather(): void {
-    // Every sword still in the sky lines up along the stroke, spiralling once on the way.
+    // Every sword still in the sky lines up along the stroke, spiralling once on the way; the lead blades take the
+    // middle row, evenly spaced.
     let k = 0;
     let total = 0;
     for (let i = HERO_N; i < this.cap; i += 1) if (this.st[i] === S_RIVER || this.st[i] === S_AIM) total += 1;
-    for (let i = HERO_N; i < this.cap; i += 1) {
-      if (this.st[i] !== S_RIVER && this.st[i] !== S_AIM) continue;
-      if (this.st[i] === S_AIM && this.tgt[i]! >= 0) this.reserved[this.tgt[i]!] = Math.max(0, this.reserved[this.tgt[i]!]! - 1);
+    for (let i = 0; i < this.cap; i += 1) {
+      const lead = i < HERO_N;
+      const s0 = this.st[i];
+      if (lead ? s0 !== S_LEAD && s0 !== S_RISE && s0 !== S_DIVE && s0 !== S_WOUND : s0 !== S_RIVER && s0 !== S_AIM) continue;
+      if (this.tgt[i]! >= 0) this.reserved[this.tgt[i]!] = Math.max(0, this.reserved[this.tgt[i]!]! - 1);
       this.tgt[i] = -1;
       this.st[i] = S_GATHER;
       this.age[i] = 0;
-      this.dur[i] = (T_FIN - T_GATHER) * this.rand.range(0.8, 1);
+      this.dur[i] = (T_FIN - T_GATHER) * (lead ? 0.92 : this.rand.range(0.8, 1));
       this.ax[i] = this.px[i]!;
       this.ay[i] = this.py[i]!;
       this.az[i] = this.pz[i]!;
-      // Three rows along the line: one huge sword-light stroke.
-      const s = total > 1 ? k / (total - 1) : 0.5;
-      const row = (k % 3) - 1;
+      // Three rows along the line: one huge sword-light stroke (the lead blades in the middle row, a little higher).
+      const s = lead ? (i + 0.5) / HERO_N : total > 1 ? k / (total - 1) : 0.5;
+      const row = lead ? 0 : (k % 3) - 1;
       this.bx[i] = this.s0.x + (this.s1.x - this.s0.x) * s + this.sweepNx * row * 0.45;
-      this.by[i] = 4 + row * 0.35 + s * 1.6;
+      this.by[i] = (lead ? 5.6 : 4) + row * 0.35 + s * 1.6;
       this.bz[i] = this.s0.z + (this.s1.z - this.s0.z) * s + this.sweepNz * row * 0.45;
-      k += 1;
+      if (lead) {
+        this.lenFrom[i] = this.lenM[i]!;
+        // The trail eases out: the gather's spiral and the stroke read cleaner without it.
+        this.ribbons.stop(i, 0.25);
+      } else k += 1;
     }
   }
 
@@ -770,41 +956,96 @@ export class VanKiemFx {
       b.len1 = l * 1.05;
       b.grow = 0.08 + 0.02 * k;
       b.w0 = 0.12;
-      b.w1 = 1.4;
+      b.w1 = 1.1;
       b.life = 0.7;
-      b.cr = CYAN[0] * 2.6;
-      b.cg = CYAN[1] * 2.6;
-      b.cb = CYAN[2] * 2.6;
-      b.hr = JADE[0] * 0.8;
-      b.hg = JADE[1] * 0.8;
-      b.hb = JADE[2] * 0.8;
+      b.cr = CORE[0] * 3;
+      b.cg = CORE[1] * 3;
+      b.cb = CORE[2] * 3;
+      b.hr = CYAN[0] * 0.8;
+      b.hg = CYAN[1] * 0.8;
+      b.hb = CYAN[2] * 0.8;
       b.fadeBase = 0.05;
       b.fadeTip = 0.05;
       this.beams.emit();
     }
   }
 
-  /** The river's soft light: a few big glow cards along it (one-frame sprites), up while the river stands. */
-  private riverGlow(): void {
+  /**
+   * The river's light while it stands: a thin soft glow along it (one-frame cards), lit pools on the ground under
+   * it that beat with the stream's waves, and glitter shed along it.
+   */
+  private riverLight(dt: number): void {
     const t = this.t;
     const on = smooth01((t - T_SEEDS) / 0.3) * (1 - smooth01((t - T_GATHER) / 0.25));
     if (on <= 0.01) return;
-    for (let k = 0; k < 14; k += 1) {
-      const u = (k + 0.5) / 14;
+    for (let k = 0; k < 12; k += 1) {
+      const u = (k + 0.5) / 12;
       this.riverAt(u, 0, 0, this.v);
       const s = this.river.spec.reset();
       s.x = this.v.x;
       s.y = this.v.y;
       s.z = this.v.z;
       s.life = 0;
-      s.size0 = s.size1 = 9;
-      const c = k % 3 === 0 ? CYAN : JADE;
+      s.size0 = s.size1 = 6;
+      const c = k % 2 === 0 ? CYAN : JADE;
       s.r = c[0] * 0.5;
       s.g = c[1] * 0.5;
       s.b = c[2] * 0.5;
-      s.a = 0.32 * on * (0.85 + 0.15 * Math.sin(t * 3 + k));
+      s.a = 0.1 * on;
       this.river.emit();
+      // The pool it casts on the ground below, long along the river.
+      const p = this.pools.spec.reset();
+      p.x = this.v.x;
+      p.y = 0.04;
+      p.z = this.v.z;
+      p.life = 0;
+      p.size0 = p.size1 = 6.4;
+      p.aspect = 1.9;
+      p.rot = Math.atan2(12, 39) + Math.PI / 2;
+      const b = this.brightAt(u);
+      p.r = c[0] * 0.7 * b;
+      p.g = c[1] * 0.7 * b;
+      p.b = c[2] * 0.7 * b;
+      p.a = on;
+      this.pools.emit();
     }
+    // Glitter: ~420 glints a second along the river, drifting with the stream and falling a little.
+    this.glintAcc += 420 * on * dt;
+    while (this.glintAcc >= 1) {
+      this.glintAcc -= 1;
+      const u = this.rand.next();
+      this.riverAt(u, this.rand.range(-1, 1) * 3.6, this.rand.range(-0.8, 0.9), this.v);
+      const g = this.glitter.spec.reset();
+      g.x = this.v.x;
+      g.y = this.v.y;
+      g.z = this.v.z;
+      g.vx = 39 * 0.15 * 0.6;
+      g.vz = -12 * 0.15 * 0.6;
+      g.vy = -0.6;
+      g.life = this.rand.range(0.18, 0.4);
+      g.size0 = this.rand.range(0.22, 0.38);
+      g.size1 = 0.05;
+      g.rot = this.rand.range(0, Math.PI);
+      const gold = this.rand.next() < 0.6;
+      const k = this.brightAt(u) * 3;
+      g.r = (gold ? CORE[0] : CYAN[0] + 0.3) * k;
+      g.g = (gold ? CORE[1] : CYAN[1] + 0.2) * k;
+      g.b = (gold ? CORE[2] : CYAN[2]) * k;
+      this.glitter.emit();
+    }
+  }
+
+  private startRibbon(i: number, widthM: number): void {
+    const c = this.hue[i] === 0 ? JADE : CYAN;
+    this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, widthM, CORE[0] * 2.6, CORE[1] * 2.6, CORE[2] * 2.6, 1, 0.08);
+    this.ribbons.setRim(i, c[0] * 0.9, c[1] * 0.9, c[2] * 0.9);
+  }
+
+  /** A lead blade's place on the crest: ahead of and above the stream, alternating sides. */
+  private leadAt(i: number, u: number, out: THREE.Vector3): THREE.Vector3 {
+    // Mostly on the river's near side and just over it, so the 6.4 m blades stay in the play camera's frame.
+    const side = (i % 2 === 0 ? 1.7 : -0.5) + 0.45 * (i % 3);
+    return this.riverAt(u, side, 0.9 + 0.3 * Math.sin(u * 8 + i), out);
   }
 
   private stepSword(i: number, dt: number): void {
@@ -815,7 +1056,7 @@ export class VanKiemFx {
       case S_SEED: {
         const k = Math.min(1, a / this.dur[i]!);
         const e = smooth01(k);
-        this.riverAt(this.u[i]!, this.lat[i]!, this.hgt[i]!, this.v);
+        this.riverAt(this.u[i]!, this.laneLat(i, this.u[i]!), this.laneHgt(i, this.u[i]!), this.v);
         // Up first, then into the river.
         const x = this.ax[i]! + (this.v.x - this.ax[i]!) * e;
         const y = this.ay[i]! + (this.v.y - this.ay[i]!) * Math.min(1, k * 1.6);
@@ -832,7 +1073,7 @@ export class VanKiemFx {
         this.u[i] = this.u[i]! + this.flow[i]! * dt;
         if (this.u[i]! > 1.02) this.u[i] = this.u[i]! - 1.04;
         const u = this.u[i]!;
-        this.riverAt(u, this.lat[i]!, this.hgt[i]!, this.v);
+        this.riverAt(u, this.laneLat(i, u), this.laneHgt(i, u), this.v);
         this.move(i, this.v.x, this.v.y, this.v.z);
         // Fade in on joining; thin out at the river's two ends (no pop on the wrap).
         const ends = smooth01((u + 0.02) / 0.08) * smooth01((1.02 - u) / 0.08);
@@ -871,8 +1112,9 @@ export class VanKiemFx {
           t = this.retarget(i);
           this.tgt[i] = t;
           if (t < 0) {
-            this.st[i] = S_FADE;
+            this.st[i] = i < HERO_N && this.t < T_GATHER ? S_RISE : S_FADE;
             this.age[i] = 0;
+            if (i < HERO_N) this.riseFrom(i);
             break;
           }
         }
@@ -891,22 +1133,60 @@ export class VanKiemFx {
         const z = o * o * this.az[i]! + 2 * o * s * mz + s * s * this.bz[i]!;
         this.move(i, x, y, z);
         this.sc[i] = 1;
+        // Glints shed from the diving head.
+        if (this.rand.next() < 0.35 * dt * 60) this.glint(x, y, z, 0.8);
         if (k >= 1) this.strike(i, t, i < HERO_N ? "primary" : "secondary");
         break;
       }
       case S_WOUND: {
         this.sc[i] = 1;
         if (a >= WOUND_S) {
-          this.st[i] = S_FADE;
+          if (i < HERO_N && this.t < T_GATHER) {
+            this.st[i] = S_RISE;
+            this.age[i] = 0;
+            this.riseFrom(i);
+          } else {
+            this.st[i] = S_FADE;
+            this.age[i] = 0;
+          }
+        }
+        break;
+      }
+      case S_RISE: {
+        // A lead blade climbs from its wound to the crest, growing to its river size on the way.
+        const k = Math.min(1, a / LEAD_RISE_S);
+        const e = smooth01(k);
+        this.u[i] = this.u[i]! + LEAD_FLOW * dt;
+        this.leadAt(i, this.u[i]!, this.v);
+        const x = this.ax[i]! + (this.v.x - this.ax[i]!) * e;
+        const y = this.ay[i]! + (this.v.y - this.ay[i]!) * Math.min(1, k * 1.5) + Math.sin(Math.PI * k) * 1.2;
+        const z = this.az[i]! + (this.v.z - this.az[i]!) * e;
+        this.move(i, x, y, z);
+        this.lenM[i] = this.lenFrom[i]! + (LEAD_M - this.lenFrom[i]!) * e;
+        this.sc[i] = 1;
+        if (k >= 1) {
+          this.st[i] = S_LEAD;
           this.age[i] = 0;
         }
+        break;
+      }
+      case S_LEAD: {
+        this.u[i] = this.u[i]! + LEAD_FLOW * dt;
+        if (this.u[i]! > 1.04) this.u[i] = this.u[i]! - 1.08;
+        const u = this.u[i]!;
+        this.leadAt(i, u, this.v);
+        this.move(i, this.v.x, this.v.y, this.v.z);
+        // Dips into the river's ends (shrinks) instead of jumping back upstream in sight.
+        this.sc[i] = smooth01((u + 0.04) / 0.1) * smooth01((1.04 - u) / 0.1);
         break;
       }
       case S_FADE: {
         this.sc[i] = 1 - smooth01(a / FADE_S);
         if (a >= FADE_S) {
-          if (i < HERO_N || this.t >= T_GATHER) this.st[i] = S_OFF;
-          else this.toRiver(i, this.rand.range(0.05, 0.95), true);
+          if (i < HERO_N || this.t >= T_GATHER) {
+            this.st[i] = S_OFF;
+            if (i < HERO_N) this.ribbons.stop(i, 0.15);
+          } else this.toRiver(i, this.rand.range(0.05, 0.95), true);
         }
         break;
       }
@@ -915,10 +1195,11 @@ export class VanKiemFx {
         const e = smooth01(k);
         // One turn of a spiral about the straight path (radius 1.6 m at the middle).
         const ang = e * Math.PI * 2;
-        const rad = 1.6 * Math.sin(Math.PI * e);
+        const rad = (i < HERO_N ? 0.8 : 1.6) * Math.sin(Math.PI * e);
         const x = this.ax[i]! + (this.bx[i]! - this.ax[i]!) * e + Math.cos(ang) * rad;
         const y = this.ay[i]! + (this.by[i]! - this.ay[i]!) * e + 1.5 * Math.sin(Math.PI * e) + Math.sin(ang) * rad * 0.5;
         const z = this.az[i]! + (this.bz[i]! - this.az[i]!) * e;
+        if (i < HERO_N) this.lenM[i] = this.lenFrom[i]! + (LEAD_M - this.lenFrom[i]!) * e;
         if (k < 0.92) this.move(i, x, y, z);
         else {
           // Settled: tip along the stroke.
@@ -951,10 +1232,30 @@ export class VanKiemFx {
         const z = this.az[i]! + (this.bz[i]! - this.az[i]!) * e;
         this.move(i, x, y, z);
         this.sc[i] = 1 - smooth01((k - 0.5) / 0.5);
-        if (k >= 1) this.st[i] = S_OFF;
+        if (k >= 1) {
+          this.st[i] = S_OFF;
+          if (i < HERO_N) this.ribbons.stop(i, 0.12);
+        }
         break;
       }
     }
+    // The lead blades' ribbon heads trail from the guard end.
+    if (i < HERO_N && this.st[i] !== S_OFF) {
+      const L = this.lenM[i]! * (0.55 + 0.45 * this.sc[i]!);
+      this.ribbons.push(i, this.px[i]! - this.dx[i]! * L * 0.45, this.py[i]! - this.dy[i]! * L * 0.45, this.pz[i]! - this.dz[i]! * L * 0.45);
+    }
+  }
+
+  /** A lead blade leaves its wound for the crest: it joins the river where the beast stood. */
+  private riseFrom(i: number): void {
+    this.ax[i] = this.px[i]!;
+    this.ay[i] = this.py[i]!;
+    this.az[i] = this.pz[i]!;
+    this.u[i] = Math.min(0.9, Math.max(0.05, (this.px[i]! + 19.5) / 39));
+    this.lenFrom[i] = this.lenM[i]!;
+    this.tgt[i] = -1;
+    if (!this.ribbons.isOn(i)) this.startRibbon(i, 1.3);
+    else this.ribbons.setWidth(i, 1.3);
   }
 
   /** Moves sword i to (x, y, z), turning it along its motion (damped, so it never snaps). */
@@ -988,7 +1289,7 @@ export class VanKiemFx {
     this.dz[i] = z;
   }
 
-  /** Sword i reaches beast t: the blow, its slash and star, the wound. */
+  /** Sword i reaches beast t: the blow, its slash and star, a lit pool, the wound. */
   private strike(i: number, t: number, role: VanKiemRole): void {
     const T = this.host.targets;
     this.reserved[t] = Math.max(0, this.reserved[t]! - 1);
@@ -997,23 +1298,27 @@ export class VanKiemFx {
     const l = Math.hypot(dx, dz) || 1;
     dx /= l;
     dz /= l;
-    this.impactAt(T.x(t), T.midY(t), T.z(t), dx, dz, role === "primary" ? 1.4 : 1, this.hue[i]!);
-    // A hunting sword takes one stand-in HP (TargetField.hit below power 0.5): the river lands ~5–9 blows on a beast.
-    const power = role === "primary" ? 0.85 : 0.3;
+    const lead = i < HERO_N;
+    const big = lead && this.lenM[i]! > HERO_M + 0.5;
+    this.impactAt(T.x(t), T.midY(t), T.z(t), dx, dz, big ? 2.4 : lead ? 1.4 : 1, this.hue[i]!);
+    // A river sword takes one stand-in HP (TargetField.hit below power 0.5); a lead blade lands a heavy blow.
+    const power = big ? 0.95 : lead ? 0.85 : 0.3;
     const killed = T.hit(t, dx, dz, power, 0x8ff0d2);
     this.strikes += 1;
     this.host.struck(t, dx, dz, power, role, killed);
     this.st[i] = S_WOUND;
     this.age[i] = 0;
     this.tgt[i] = -1;
-    if (role === "primary") {
+    if (lead) {
       this.v.set(T.x(t), T.midY(t), T.z(t));
-      this.host.flash(this.v, VAN_KIEM_FLASH, 3);
+      this.host.flash(this.v, VAN_KIEM_FLASH, big ? 5 : 3);
+      if (big) this.leadImpact(T.x(t), T.z(t));
     }
   }
 
   private impactAt(x: number, y: number, z: number, dx: number, dz: number, k: number, hue: number): void {
     const c = hue === 0 ? JADE : hue === 1 ? CYAN : hue === 2 ? SILVER : GOLD;
+    // A sharp slash across the blow in the sword's colour, a white-gold star at its heart.
     const s = this.hits.spec.reset();
     s.x = x;
     s.y = y;
@@ -1021,10 +1326,11 @@ export class VanKiemFx {
     s.life = 0.14;
     s.size0 = 1.5 * k;
     s.size1 = 1.9 * k;
-    s.rot = Math.atan2(-dz, dx) + this.rand.range(-0.5, 0.5);
-    s.r = c[0] * 3;
-    s.g = c[1] * 3;
-    s.b = c[2] * 3;
+    s.aspect = 0.55;
+    s.rot = Math.atan2(-dz, dx) + Math.PI / 2 + this.rand.range(-0.35, 0.35);
+    s.r = c[0] * 3.2;
+    s.g = c[1] * 3.2;
+    s.b = c[2] * 3.2;
     this.hits.emit();
     const r = this.stars.spec.reset();
     r.x = x;
@@ -1034,11 +1340,33 @@ export class VanKiemFx {
     r.size0 = 0.9 * k;
     r.size1 = 0.5 * k;
     r.rot = this.rand.range(0, Math.PI);
-    r.r = 2.4 + c[0];
-    r.g = 2.4 + c[1];
-    r.b = 2.4 + c[2];
+    r.r = CORE[0] * 3;
+    r.g = CORE[1] * 3;
+    r.b = CORE[2] * 3;
     this.stars.emit();
-    // Where it landed: a jade ring opening on the ground under the beast.
+    // Sparks thrown along the blow.
+    for (let n = 0; n < 2; n += 1) {
+      const p = this.stars.spec.reset();
+      p.x = x;
+      p.y = y;
+      p.z = z;
+      const sp = this.rand.range(5, 9);
+      const side = this.rand.range(-0.6, 0.6);
+      p.vx = (dx - dz * side) * sp;
+      p.vz = (dz + dx * side) * sp;
+      p.vy = this.rand.range(1, 3);
+      p.gravity = -6;
+      p.drag = 3;
+      p.stretch = 0.05;
+      p.life = 0.22;
+      p.size0 = 0.22 * k;
+      p.size1 = 0.06;
+      p.r = CORE[0] * 2.6;
+      p.g = CORE[1] * 2.6;
+      p.b = CORE[2] * 2.6;
+      this.stars.emit();
+    }
+    // Where it landed: a jade ring opening on the ground and a lit pool under the beast.
     const g = this.marks.spec.reset();
     g.x = x;
     g.y = 0.04;
@@ -1051,29 +1379,118 @@ export class VanKiemFx {
     g.b = JADE[2] * 0.8;
     g.a = 0.75;
     this.marks.emit();
+    const p = this.pools.spec.reset();
+    p.x = x;
+    p.y = 0.03;
+    p.z = z;
+    p.life = 0.5;
+    p.size0 = 2.2 * k;
+    p.size1 = 3.0 * k;
+    p.r = c[0] * 0.8;
+    p.g = c[1] * 0.8;
+    p.b = c[2] * 0.8;
+    this.pools.emit();
+  }
+
+  /** A lead blade's blow: a shock ring and a wide lit pool, a short pillar of light. */
+  private leadImpact(x: number, z: number): void {
+    const g = this.marks.spec.reset();
+    g.x = x;
+    g.y = 0.05;
+    g.z = z;
+    g.life = 0.5;
+    g.size0 = 1.2;
+    g.size1 = 6.5;
+    g.r = CYAN[0] * 0.9;
+    g.g = CYAN[1] * 0.9;
+    g.b = CYAN[2] * 0.9;
+    this.marks.emit();
+    const p = this.pools.spec.reset();
+    p.x = x;
+    p.y = 0.03;
+    p.z = z;
+    p.life = 0.9;
+    p.size0 = 5;
+    p.size1 = 6.5;
+    p.r = CYAN[0] * 0.75;
+    p.g = CYAN[1] * 0.75;
+    p.b = CYAN[2] * 0.75;
+    this.pools.emit();
+    const b = this.beams.spec.reset();
+    b.x = x;
+    b.y = 0;
+    b.z = z;
+    b.dx = 0;
+    b.dy = 1;
+    b.dz = 0;
+    b.len0 = 3;
+    b.len1 = 7;
+    b.w0 = 0.9;
+    b.w1 = 0.3;
+    b.life = 0.3;
+    b.cr = CORE[0] * 4;
+    b.cg = CORE[1] * 4;
+    b.cb = CORE[2] * 4;
+    b.hr = CYAN[0] * 0.8;
+    b.hg = CYAN[1] * 0.8;
+    b.hb = CYAN[2] * 0.8;
+    b.fadeBase = 0.05;
+    b.fadeTip = 0.6;
+    this.beams.emit();
+  }
+
+  private glint(x: number, y: number, z: number, k: number): void {
+    const g = this.glitter.spec.reset();
+    g.x = x;
+    g.y = y;
+    g.z = z;
+    g.vy = -0.4;
+    g.life = this.rand.range(0.15, 0.3);
+    g.size0 = 0.3 * k;
+    g.size1 = 0.05;
+    g.rot = this.rand.range(0, Math.PI);
+    g.r = CORE[0] * 3;
+    g.g = CORE[1] * 3;
+    g.b = CORE[2] * 3;
+    this.glitter.emit();
   }
 
   private finisherBeam(): void {
-    // The cut: a bright seam along the line, then its light sliding out both ways (cyan core, a gold rim beam).
+    // The cut: a thin white-hot seam along the line, then two narrow light fronts sliding out both ways (cyan and
+    // jade with white-gold cores: no wide milky wave), sparks thrown off the line, lit pools and the scar.
     const dx = this.s1.x - this.s0.x;
     const dz = this.s1.z - this.s0.z;
     const l = Math.hypot(dx, dz);
-    // The scar it leaves: ink stains along the line (dark under the light) and a glowing seam that cools.
+    // The scar it leaves: ink stains along the line (dark under the light) and lit pools that cool.
     for (let k = 0; k <= 16; k += 1) {
       const u = k / 16;
       const sc = this.scar.spec.reset();
       sc.x = this.s0.x + dx * u + this.rand.range(-0.3, 0.3);
       sc.y = 0.02;
       sc.z = this.s0.z + dz * u + this.rand.range(-0.3, 0.3);
-      sc.life = 2.2;
-      sc.size0 = 2.6;
-      sc.size1 = 3.4;
+      sc.life = 2.6;
+      sc.size0 = 2.4;
+      sc.size1 = 3.0;
       sc.rot = this.rand.range(0, 6.28);
       sc.r = 0.03;
       sc.g = 0.045;
       sc.b = 0.05;
-      sc.a = 0.7;
+      sc.a = 0.75;
       this.scar.emit();
+      const p = this.pools.spec.reset();
+      p.x = this.s0.x + dx * u;
+      p.y = 0.035;
+      p.z = this.s0.z + dz * u;
+      p.life = 1.6;
+      p.size0 = 3.6;
+      p.size1 = 2.6;
+      p.aspect = 2.2;
+      p.rot = Math.atan2(dz, dx) + Math.PI / 2;
+      const c = k % 2 === 0 ? CYAN : JADE;
+      p.r = c[0] * 0.6;
+      p.g = c[1] * 0.6;
+      p.b = c[2] * 0.6;
+      this.pools.emit();
     }
     const seam = this.beams.spec.reset();
     seam.x = this.s0.x - (dx / l) * 1.5;
@@ -1084,47 +1501,72 @@ export class VanKiemFx {
     seam.dz = dz / l;
     seam.len0 = seam.len1 = l + 3;
     seam.grow = 0.06;
-    seam.w0 = 0.9;
-    seam.w1 = 0.35;
-    seam.life = 1.6;
-    seam.cr = JADE[0] * 3.4;
-    seam.cg = JADE[1] * 3.4;
-    seam.cb = JADE[2] * 3.4;
-    seam.hr = CYAN[0] * 0.7;
-    seam.hg = CYAN[1] * 0.7;
-    seam.hb = CYAN[2] * 0.7;
+    seam.w0 = 0.7;
+    seam.w1 = 0.3;
+    seam.life = 2.2;
+    seam.cr = CORE[0] * 4.2;
+    seam.cg = CORE[1] * 4.2;
+    seam.cb = CORE[2] * 4.2;
+    seam.hr = CYAN[0] * 0.8;
+    seam.hg = CYAN[1] * 0.8;
+    seam.hb = CYAN[2] * 0.8;
     seam.fadeBase = 0.05;
     seam.fadeTip = 0.05;
     this.beams.emit();
     for (let k = 0; k < 5; k += 1) {
       const side = k === 0 ? 0 : k <= 2 ? 1 : -1;
-      const gold = k === 2 || k === 4;
+      const back = k === 2 || k === 4;
       const b = this.beams.spec.reset();
       b.x = this.s0.x - (dx / l) * 3;
-      b.y = 0.6;
+      b.y = back ? 0.3 : 0.6;
       b.z = this.s0.z - (dz / l) * 3;
       b.dx = dx / l;
       b.dy = 0;
       b.dz = dz / l;
       b.len0 = b.len1 = l + 6;
       b.grow = side === 0 ? 0.05 : 0;
-      // Wide soft fronts (a wave of light, not a laser line); the seam at rest is the thin bright one.
-      b.w0 = side === 0 ? 2.6 : gold ? 3.4 : 3.0;
-      b.w1 = side === 0 ? 0.6 : gold ? 4.2 : 1.6;
-      b.vx = (this.sweepNx * side * SWEEP_R) / SWEEP_S;
-      b.vz = (this.sweepNz * side * SWEEP_R) / SWEEP_S;
-      b.life = side === 0 ? 0.45 : SWEEP_S + 0.1;
-      const core = gold ? GOLD : CYAN;
-      const kc = gold ? 1.4 : side === 0 ? 4 : 2.6;
-      b.cr = core[0] * kc;
-      b.cg = core[1] * kc;
-      b.cb = core[2] * kc;
-      b.hr = JADE[0] * 0.85;
-      b.hg = JADE[1] * 0.85;
-      b.hb = JADE[2] * 0.85;
+      // Narrow fronts with hot cores (round 1's 3–4 m soft waves washed the field milky).
+      b.w0 = side === 0 ? 1.4 : back ? 1.0 : 1.3;
+      b.w1 = side === 0 ? 0.4 : back ? 1.6 : 0.5;
+      const lag = back ? 0.82 : 1;
+      b.vx = (this.sweepNx * side * SWEEP_R * lag) / SWEEP_S;
+      b.vz = (this.sweepNz * side * SWEEP_R * lag) / SWEEP_S;
+      b.life = side === 0 ? 0.4 : SWEEP_S + 0.08;
+      const halo = back ? JADE : CYAN;
+      const kc = side === 0 ? 5 : back ? 2.2 : 3.6;
+      b.cr = CORE[0] * kc;
+      b.cg = CORE[1] * kc;
+      b.cb = CORE[2] * kc;
+      b.hr = halo[0] * (back ? 0.5 : 0.75);
+      b.hg = halo[1] * (back ? 0.5 : 0.75);
+      b.hb = halo[2] * (back ? 0.5 : 0.75);
       b.fadeBase = 0.06;
       b.fadeTip = 0.06;
       this.beams.emit();
+    }
+    // Sparks and glints thrown off the whole line.
+    for (let k = 0; k < 60; k += 1) {
+      const u = this.rand.next();
+      const p = this.stars.spec.reset();
+      p.x = this.s0.x + dx * u;
+      p.y = 0.5;
+      p.z = this.s0.z + dz * u;
+      const sd = this.rand.next() < 0.5 ? -1 : 1;
+      const sp = this.rand.range(6, 14);
+      p.vx = this.sweepNx * sd * sp;
+      p.vz = this.sweepNz * sd * sp;
+      p.vy = this.rand.range(2, 7);
+      p.gravity = -9;
+      p.drag = 2.5;
+      p.stretch = 0.04;
+      p.life = this.rand.range(0.3, 0.55);
+      p.size0 = this.rand.range(0.25, 0.45);
+      p.size1 = 0.06;
+      const gold = k % 3 === 0;
+      p.r = (gold ? GOLD[0] : CORE[0]) * 3;
+      p.g = (gold ? GOLD[1] : CORE[1]) * 3;
+      p.b = (gold ? GOLD[2] : CORE[2]) * 3;
+      this.stars.emit();
     }
   }
 
@@ -1149,21 +1591,22 @@ export class VanKiemFx {
       const nz = d < 0 ? -this.sweepNz : this.sweepNz;
       const tier = T.tier(i);
       const blows = tier >= 2 ? 3 : 2;
-      this.impactAt(T.x(i), T.midY(i), T.z(i), nx, nz, tier >= 2 ? 1.8 : 1.3, (i & 3) as number);
+      this.impactAt(T.x(i), T.midY(i), T.z(i), nx, nz, tier >= 2 ? 1.8 : 1.3, (i & 1) as number);
       for (let b = 0; b < blows && T.alive(i); b += 1) {
-        const killed = T.hit(i, nx, nz, 1, 0xa8f5dd);
+        // The cut's light: power 1.2, past every other blow (the field flings small beasts on it).
+        const killed = T.hit(i, nx, nz, 1.2, 0xa8f5dd);
         this.strikes += 1;
-        this.host.struck(i, nx, nz, 1, first ? "finisher" : "secondary", killed);
+        this.host.struck(i, nx, nz, 1.2, first ? "finisher" : "secondary", killed);
         first = false;
         this.finHit = true;
       }
     }
     // The stroke's swords plunge into the cut in the first 40 % of the sweep.
     const drop = smooth01(k1 / 0.4);
-    for (let i = HERO_N; i < this.cap; i += 1) {
+    for (let i = 0; i < this.cap; i += 1) {
       if (this.st[i] !== S_STROKE) continue;
-      this.py[i] = this.ay[i]! + (0.5 - this.ay[i]!) * drop;
-      this.turn(i, this.sweepNx * 0.25 + (this.s1.x - this.s0.x) / 34.5 * 0.4, -0.88, this.sweepNz * 0.25 + (this.s1.z - this.s0.z) / 34.5 * 0.4, this.kPlunge);
+      this.py[i] = this.ay[i]! + ((i < HERO_N ? 2.2 : 0.5) - this.ay[i]!) * drop;
+      this.turn(i, this.sweepNx * 0.25 + ((this.s1.x - this.s0.x) / 34.5) * 0.4, -0.88, this.sweepNz * 0.25 + ((this.s1.z - this.s0.z) / 34.5) * 0.4, this.kPlunge);
     }
     if (k1 >= 1) {
       this.sweepT = -1;
@@ -1194,8 +1637,9 @@ export class VanKiemFx {
         B.hide(i);
         continue;
       }
-      const hero = i < HERO_N;
-      const len = (hero ? HERO_M : SWORD_M) * (0.55 + 0.45 * s);
+      const lead = i < HERO_N;
+      const st = this.st[i];
+      const len = this.lenM[i]! * (0.55 + 0.45 * s);
       // BladeSet places the guard: the sword's point (px) is its middle.
       const gx = this.px[i]! - this.dx[i]! * len * 0.5;
       const gy = this.py[i]! - this.dy[i]! * len * 0.5;
@@ -1203,17 +1647,26 @@ export class VanKiemFx {
       B.set(i, gx, gy, gz, this.dx[i]!, this.dy[i]!, this.dz[i]!, len);
       const h = this.hue[i]!;
       const c = h === 0 ? JADE : h === 1 ? CYAN : h === 2 ? SILVER : GOLD;
-      B.tint(i, 0.75 + c[0] * 0.5, 0.75 + c[1] * 0.5, 0.75 + c[2] * 0.5);
-      // The tail: longer while diving, a short glow in the river; it starts a little ahead of the tip.
-      const st = this.st[i];
-      const tail = st === S_DIVE ? 3.2 : st === S_GATHER || st === S_FOLD ? 2.2 : st === S_STROKE ? 1.6 : st === S_AIM ? 1.2 : 1.6;
+      // Brighter where the stream's wave runs (river swords), at full on a dive and on the lead blades.
+      const b = st === S_RIVER || st === S_SEED ? this.brightAt(this.u[i]!) : 1;
+      if (lead) {
+        // The lead blade's steel glows white-gold toward its core; its aura: a white-hot core, a saturated rim.
+        B.tint(i, 0.12 + c[0] * 1.2, 0.12 + c[1] * 1.2, 0.12 + c[2] * 1.2);
+        const aw = len * 0.13;
+        this.auras.push(gx, gy, gz, gx + this.dx[i]! * len * 1.04, gy + this.dy[i]! * len * 1.04, gz + this.dz[i]! * len * 1.04, aw, s, c[0], c[1], c[2]);
+        continue;
+      }
+      const kb = 0.55 + 0.75 * b;
+      B.tint(i, 0.08 + c[0] * kb, 0.08 + c[1] * kb, 0.08 + c[2] * kb);
+      // The motion trail: long while diving, a flowing streak in the river; it starts a little ahead of the tip.
+      const tail = st === S_DIVE ? 4.4 : st === S_GATHER || st === S_FOLD ? 2.6 : st === S_STROKE ? 1.6 : st === S_AIM ? 1.0 : 2.8;
       const hx = this.px[i]! + this.dx[i]! * len * 0.62;
       const hy = this.py[i]! + this.dy[i]! * len * 0.62;
       const hz = this.pz[i]! + this.dz[i]! * len * 0.62;
       const tl = len * 0.5 + tail;
-      const width = (hero ? 0.55 : 0.42) * (st === S_DIVE ? 1.15 : 1);
-      const alpha = s * (st === S_WOUND ? 0.4 : st === S_FADE ? 0.5 : 1);
-      this.tails.push(hx, hy, hz, hx - this.dx[i]! * tl, hy - this.dy[i]! * tl, hz - this.dz[i]! * tl, width, alpha, c[0], c[1], c[2]);
+      const width = st === S_DIVE ? 0.5 : 0.38;
+      const alpha = s * (st === S_WOUND ? 0.4 : st === S_FADE ? 0.5 : 1) * (0.55 + 0.45 * b);
+      this.tails.push(hx, hy, hz, hx - this.dx[i]! * tl, hy - this.dy[i]! * tl, hz - this.dz[i]! * tl, width, alpha, c[0] * b, c[1] * b, c[2] * b);
     }
   }
 
@@ -1228,13 +1681,17 @@ export class VanKiemFx {
     this.river.clear();
     this.hits.clear();
     this.stars.clear();
+    this.glitter.clear();
     this.beams.clear();
     this.marks.clear();
+    this.pools.clear();
     this.scar.clear();
+    for (let k = 0; k < HERO_N; k += 1) this.ribbons.kill(k);
     for (let i = 0; i < this.cap; i += 1) {
       this.dx[i] = 0;
       this.dy[i] = 1;
       this.dz[i] = 0;
+      this.lenM[i] = i < HERO_N ? HERO_M : SWORD_M;
     }
   }
 
