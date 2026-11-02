@@ -24,8 +24,12 @@ import type { KiemFx } from "../view/skills/kiem";
 import type { WeaponDef, WeaponHold } from "../view/skills/weapons";
 import { Tassel } from "./tassel";
 import type { BodyProxy } from "./body-proxy";
+import { HERO } from "./hero-select";
 
-/** How the grip sits in Lam's fist (hand_r's frame: +Y wrist → fingers, +Z the thumb side, forward in the rest pose). */
+/**
+ * How the grip sits in the fist (hand_r's frame: +Y wrist → fingers, +Z the thumb side; Lam and the Mesh2Motion
+ * human share the convention, each with its own grip in its hero profile, hero-select.ts).
+ */
 export interface GripPose {
   /** Grip centre in the hand's frame (m). */
   readonly x: number;
@@ -39,8 +43,8 @@ export interface GripPose {
   readonly yawDeg: number;
 }
 
-/** Tuned on the frame sheets (idle, walk, strikes): the grip in the fist, the blade forward and a little down. */
-export const DEFAULT_GRIP: GripPose = { x: -0.01, y: 0.125, z: 0.0, tiltDeg: 28, rollDeg: 0, yawDeg: 0 };
+/** The shown hero's grip (Lam's was tuned on the round-3 frame sheets: the blade forward and a little down). */
+export const DEFAULT_GRIP: GripPose = HERO.grip;
 
 /** Dissolve out (thrown) and back in (s). */
 const OUT_S = 0.1;

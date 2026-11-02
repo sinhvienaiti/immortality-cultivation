@@ -37,6 +37,13 @@
  * look-at) → arm aims → foot IK → spring chains. VFX read the hand after
  * this (skills-main).
  *
+ * Round 4 (key-pose.ts): a slot with authored key poses on this rig (the
+ * human proxy's fan sweep) plays them over Idle in the "pose" state instead
+ * of a strike clip and a gesture: the typing moves it through the coil, the
+ * last key starts the release on its own frame, and the poses are written
+ * after the world layers and before the foot IK (the legs bend to the planted
+ * feet under the lowered hips; the springs run after). The acting stays idle.
+ *
  * The state machine knows clip keys and bone names only, so a later hero
  * with the same names reuses it (MOTION_PLAN step 5). No allocation per frame.
  */
@@ -45,6 +52,7 @@ import { Acting, moveDef, type MoveId } from "./acting";
 import { FootLock, type FootMode } from "./foot-ik";
 import { analyseGait, type GaitFeet, type GaitInfo } from "./gait";
 import { Inertializer } from "./inertial";
+import { KeyPoser } from "./key-pose";
 import { Layers } from "./layers";
 import { Locomotion } from "./locomotion";
 import { clamp, criticalSpring, DEG, LabRng, smoothstep, wrapPi } from "./math";
@@ -90,7 +98,7 @@ export interface AnimatorClip {
   release?: number;
 }
 
-type State = "loco" | "fidget" | "charge" | "strike" | "dash";
+type State = "loco" | "fidget" | "charge" | "strike" | "dash" | "pose";
 
 /**
  * The swing runs faster and the recovery slower than authored (plan step 2.3: ×1.3, ×0.9; appendix C §2.9
@@ -160,6 +168,10 @@ export class Animator {
   readonly acting: Acting;
   readonly feet: FootLock | null;
   readonly springs: SpringChains;
+  /** Authored key-pose skills on this rig (round 4); empty for Lam. */
+  readonly keyPoses: KeyPoser;
+  /** The key poses' last stance request handed to the feet. */
+  private keyStanceSeq = 0;
   readonly keys: ClipKey[] = [];
   readonly actions: THREE.AnimationAction[] = [];
   private readonly loops: boolean[] = [];
@@ -253,6 +265,7 @@ export class Animator {
     const hit = clips.find((c) => c.key === "hit");
     this.layers = new Layers(this.rig, hit ? hit.clip : null);
     this.acting = new Acting(this.rig);
+    this.keyPoses = new KeyPoser(this.rig, root);
     this.handR = model.getObjectByName("FX_HAND_R") ?? this.rig.bone("hand_r");
     const leg = (s: "l" | "r") => {
       const thigh = this.rig.bone("thigh_" + s);
@@ -421,6 +434,7 @@ export class Animator {
     this.transition = -1;
     this.intendedPose = false;
     this.acting.reset();
+    this.keyPoses.reset();
     this.layers.reset();
     this.springs.trailBoost = 1;
     this.inertial.reset();
@@ -486,6 +500,11 @@ export class Animator {
       this.lookHold = Math.max(this.lookHold, 0.6);
       return;
     }
+    if (this.keyPoses.has(move)) {
+      this.chargePose(move, p, keysLeft, tx, tz);
+      return;
+    }
+    if (this.keyPoses.active) this.keyPoses.cancel();
     const st = this.strikes.get(key);
     if (!st) return;
     this.loco.stop();
@@ -508,6 +527,11 @@ export class Animator {
    * acting releases; hold, settle and recovery follow the acting's timeline (acting.ts).
    */
   release(move: MoveId, key: ClipKey, tx: number, tz: number, hasTarget: boolean): void {
+    if (this.keyPoses.has(move)) {
+      this.releasePose(move, tx, tz, hasTarget);
+      return;
+    }
+    if (this.keyPoses.active) this.keyPoses.cancel();
     const st = this.strikes.get(key);
     if (!st) return;
     this.loco.stop();
@@ -534,13 +558,47 @@ export class Animator {
     this.lookHold = def.gesture === "overheadRaise" || def.gesture === "skyLift" ? 0.45 : 0.5;
   }
 
+  /**
+   * A key-pose skill's word: the body enters the "pose" state over Idle (the acting lets go), turns to the target
+   * while typed, and the typing moves the poses through the coil (key-pose.ts).
+   */
+  private chargePose(move: MoveId, p: number, keysLeft: number, tx: number, tz: number): void {
+    this.loco.stop();
+    this.leaveDash();
+    if (this.state !== "pose") this.enterPose();
+    this.keyPoses.charge(move, p, keysLeft);
+    this.castFace(tx, tz);
+    this.layers.breathWeight = 0.2;
+  }
+
+  /** A key-pose skill's last key: the release starts on this frame (≤ 50 ms gate), the body still coming round. */
+  private releasePose(move: MoveId, tx: number, tz: number, hasTarget: boolean): void {
+    this.loco.stop();
+    this.leaveDash();
+    if (this.state !== "pose") this.enterPose();
+    this.keyPoses.release(move);
+    this.layers.breathWeight = 0.1;
+    if (hasTarget) this.castFace(tx, tz);
+    this.onClip?.("idle");
+  }
+
+  private enterPose(): void {
+    this.acting.cancel();
+    this.state = "pose";
+    if (this.keys[this.main] !== "idle" || this.blend >= 0) this.setMain("idle", 0, 1, HALFLIFE.toIdle);
+    this.gaitShown = -1;
+    this.layers.lookWeightGoal = 0;
+  }
+
   /** The strike the lab released last, its age (s): a host's own play() right after a release is the same strike. */
   get strikeAgeS(): number {
+    if (this.state === "pose" && this.keyPoses.releaseAge >= 0) return this.keyPoses.releaseAge;
     return this.state === "strike" ? this.strikeAge : Infinity;
   }
 
   /** The dash: a glide a hand above the ground along kiem.ts's path (the shown root eases in), then a landing. */
   dash(): void {
+    if (this.keyPoses.active) this.keyPoses.cancel();
     this.state = "dash";
     this.dashAge = 0;
     this.landed = -1;
@@ -580,7 +638,8 @@ export class Animator {
 
   walkPath(xzs: readonly number[], keepFacing: boolean): void {
     this.loco.setPath(xzs, keepFacing);
-    if (this.state === "fidget" || this.state === "charge") this.toIdle(HALFLIFE.fidget);
+    if (this.keyPoses.active) this.keyPoses.cancel();
+    if (this.state === "fidget" || this.state === "charge" || this.state === "pose") this.toIdle(HALFLIFE.fidget);
     if (this.state !== "dash") this.acting.cancel();
   }
 
@@ -590,6 +649,11 @@ export class Animator {
 
   /** A wind-up left without its release (a primed attack that never fired): back to Idle on the recovery springs. */
   cancelCharge(): void {
+    if (this.state === "pose") {
+      this.keyPoses.cancel();
+      this.toIdle(HALFLIFE.toIdle);
+      return;
+    }
     if (this.state !== "charge") return;
     this.acting.cancel();
     this.toIdle(HALFLIFE.toIdle);
@@ -639,7 +703,7 @@ export class Animator {
     // skill code reads stays where the sim puts it.
     this.loco.showX += act.offX;
     this.loco.showZ += act.offZ;
-    this.intendedPose = act.intended;
+    this.intendedPose = act.intended || this.keyPoses.intended;
     this.updateState(dt);
     this.evaluate(dt);
     // Root: the glide lifts it; the model's front is −z (lam.glb), so the yaw turns by π.
@@ -661,6 +725,8 @@ export class Animator {
     this.layers.applyWorld(fx, fz, act);
     act.applyArms(fx, fz);
     act.limitArms();
+    // Authored key poses over everything above (a blow still shows through: the stagger takes part of the weight).
+    this.keyPoses.apply(dt, 1 - 0.7 * act.hitEnvelope);
     if (this.settleIn >= 0) {
       this.settleIn -= dt;
       // The settle step after a stop: the feet that stand off their place under the body step to it.
@@ -668,12 +734,24 @@ export class Animator {
     }
     if (this.feet) {
       // The gesture's stance: offsets per foot, anchored where the logical body stands unless a blow moves the body.
-      const st = act.stance;
-      const an = act.anchor;
-      this.feet.setStance(st.lf, st.lr, st.lyaw * DEG, st.rf, st.rr, st.ryaw * DEG, -act.offX * an, -act.offZ * an);
-      if (act.stanceSeq !== this.stanceSeq) {
-        this.stanceSeq = act.stanceSeq;
-        this.feet.requestSteps(st.stepS, st.liftM, act.stanceFirst);
+      const kp = this.keyPoses;
+      if (kp.active || kp.stanceSeq !== this.keyStanceSeq) {
+        // A key-pose skill's feet (back under the body once its recovery asks for no stance).
+        const ks = kp.stance;
+        if (ks) this.feet.setStance(ks.l[0], ks.l[1], ks.l[2] * DEG, ks.r[0], ks.r[1], ks.r[2] * DEG, 0, 0);
+        else this.feet.setStance(0, 0, 0, 0, 0, 0, 0, 0);
+        if (kp.stanceSeq !== this.keyStanceSeq) {
+          this.keyStanceSeq = kp.stanceSeq;
+          this.feet.requestSteps(ks ? ks.stepS : 0.2, ks ? ks.liftM : 0.05, ks?.first === "l" ? 0 : ks?.first === "r" ? 1 : -1);
+        }
+      } else {
+        const st = act.stance;
+        const an = act.anchor;
+        this.feet.setStance(st.lf, st.lr, st.lyaw * DEG, st.rf, st.rr, st.ryaw * DEG, -act.offX * an, -act.offZ * an);
+        if (act.stanceSeq !== this.stanceSeq) {
+          this.stanceSeq = act.stanceSeq;
+          this.feet.requestSteps(st.stepS, st.liftM, act.stanceFirst);
+        }
       }
       // A cast turn re-plants in quicker steps.
       this.feet.turnStepS = this.loco.turnBoost > 1 ? CAST_STEP_S : 0.3;
@@ -718,7 +796,26 @@ export class Animator {
     // A look lasts while held or while a word is charged; a charge left without a release (walking off) lets go too.
     if (this.lookHold > 0) this.lookHold -= dt;
     if (this.lookHold <= 0 && this.state !== "charge") this.layers.lookWeightGoal = 0;
+    this.keyPoses.update(dt);
     switch (this.state) {
+      case "pose": {
+        // Idle runs under the authored poses (the legs, and what shows through as their weight drops).
+        this.mainTime += dt;
+        this.mainRate = 1;
+        const dur = this.durationOf(this.main);
+        if (this.mainTime >= dur) this.mainTime -= dur;
+        if (loco.hasPath) {
+          this.keyPoses.cancel();
+          this.toIdle(HALFLIFE.toIdle);
+        } else if (!this.keyPoses.active || this.keyPoses.stage === "recover") {
+          // The recovery hands back to Idle (the poses fade over it).
+          this.state = "loco";
+          this.gaitShown = -1;
+          this.idleT = 0;
+          this.layers.breathWeight = 1;
+        }
+        break;
+      }
       case "charge": {
         criticalSpring(this.chargeS, 0, this.chargeGoal, 0.1, dt);
         this.mainTime = Math.max(0, this.chargeS[0]!);

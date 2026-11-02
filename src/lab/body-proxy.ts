@@ -9,7 +9,9 @@
  * per bone, the vertices' principal axis gives a segment (10th–90th
  * percentile along it) and a radius (90th percentile off it), stored in the
  * bone's own frame so the capsule follows the bone. Bones in `skip` (the
- * holding arm, the tail) get none. `update` moves the capsules to this frame's
+ * holding arm, the tail) get none; a skipped hand takes its fingers with it
+ * (canonical names: the Mesh2Motion human's index_01_r … thumb_03_r close
+ * round the grip and would push the sword out of its own fist). `update` moves the capsules to this frame's
  * pose; `push` gives a sphere's way out. No allocation per frame.
  */
 import * as THREE from "three";
@@ -30,8 +32,16 @@ export class BodyProxy {
   readonly radius: Float32Array;
   readonly names: string[] = [];
 
-  constructor(model: THREE.Object3D, skip: readonly string[]) {
+  constructor(model: THREE.Object3D, skipNames: readonly string[]) {
     model.updateWorldMatrix(true, true);
+    // A skipped hand's descendants (fingers) are skipped too.
+    const skip = new Set(skipNames);
+    for (const nm of skipNames) {
+      if (!nm.startsWith("hand_")) continue;
+      model.getObjectByName(nm)?.traverse((o) => {
+        if ((o as THREE.Bone).isBone) skip.add(o.name);
+      });
+    }
     const groups = new Map<THREE.Object3D, number[]>();
     model.traverse((o) => {
       const mesh = o as THREE.SkinnedMesh;
@@ -47,7 +57,7 @@ export class BodyProxy {
           // Every bone with a fair share of the vertex (joints count for both sides: the collar for the neck too).
           if (sw.getComponent(i, k) < MIN_WEIGHT) continue;
           const bone = mesh.skeleton.bones[si.getComponent(i, k)];
-          if (bone === undefined || skip.includes(bone.name)) continue;
+          if (bone === undefined || skip.has(bone.name)) continue;
           if (!posed) mesh.getVertexPosition(i, _v).applyMatrix4(mesh.matrixWorld);
           posed = true;
           let list = groups.get(bone);
