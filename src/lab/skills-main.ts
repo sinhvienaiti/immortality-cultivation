@@ -1502,26 +1502,40 @@ void (async () => {
       const out: Record<string, number> = {};
       const ga = new THREE.Vector3();
       const gb = new THREE.Vector3();
-      const sets: [string, BladeSet, number][] = [
-        ["kiem", fx.blades, 0],
-        ["van", van.blades, 8],
-      ];
-      for (const [name, set, from] of sets) {
-        const px: number[] = [];
-        for (let i = from; i < set.capacity; i += 1) {
-          if (!set.isVisible(i) || set.len[i]! < 0.3) continue;
-          const L = set.len[i]!;
-          ga.set(set.cx[i]! - set.tx[i]! * L * 0.45, set.cy[i]! - set.ty[i]! * L * 0.45, set.cz[i]! - set.tz[i]! * L * 0.45);
-          gb.set(ga.x + set.tx[i]! * L, ga.y + set.ty[i]! * L, ga.z + set.tz[i]! * L);
-          ga.project(view.camera);
-          gb.project(view.camera);
-          px.push(Math.hypot(((gb.x - ga.x) * innerWidth) / 2, ((gb.y - ga.y) * innerHeight) / 2));
-        }
+      const stats = (name: string, px: number[]): void => {
         px.sort((p, q) => p - q);
         out[name + "N"] = px.length;
         out[name + "P10"] = px.length > 0 ? Math.round(px[Math.floor(px.length * 0.1)]!) : -1;
         out[name + "Median"] = px.length > 0 ? Math.round(px[Math.floor(px.length * 0.5)]!) : -1;
+      };
+      const span = (): number => {
+        ga.project(view.camera);
+        gb.project(view.camera);
+        return Math.hypot(((gb.x - ga.x) * innerWidth) / 2, ((gb.y - ga.y) * innerHeight) / 2);
+      };
+      const kiem: number[] = [];
+      const set = fx.blades;
+      for (let i = 0; i < set.capacity; i += 1) {
+        if (!set.isVisible(i) || set.len[i]! < 0.3) continue;
+        const L = set.len[i]!;
+        ga.set(set.cx[i]! - set.tx[i]! * L * 0.45, set.cy[i]! - set.ty[i]! * L * 0.45, set.cz[i]! - set.tz[i]! * L * 0.45);
+        gb.set(ga.x + set.tx[i]! * L, ga.y + set.ty[i]! * L, ga.z + set.tz[i]! * L);
+        kiem.push(span());
       }
+      stats("kiem", kiem);
+      // Key 7 by class (round 3a: lead, mid, far), base to tip as drawn.
+      const pose: SwordPose = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, len: 0, cls: 0 };
+      const byCls: number[][] = [[], [], []];
+      for (let i = 0; i < van.swordCount; i += 1) {
+        if (!van.poseOf(i, pose)) continue;
+        const h = pose.len * 0.5;
+        ga.set(pose.x - pose.dx * h, pose.y - pose.dy * h, pose.z - pose.dz * h);
+        gb.set(pose.x + pose.dx * h, pose.y + pose.dy * h, pose.z + pose.dz * h);
+        byCls[pose.cls]!.push(span());
+      }
+      stats("vanLead", byCls[0]!);
+      stats("vanMid", byCls[1]!);
+      stats("vanFar", byCls[2]!);
       return out;
     },
     sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played }),

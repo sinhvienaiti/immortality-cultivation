@@ -127,7 +127,7 @@ export default async function (page) {
         const name = `${skill}-${String(n++).padStart(2, "0")}-${label}`;
         await page.shot(join(out, name + ".png"));
         report.taken += 1;
-        rows.push({ f, label, screen: await page.eval("window.__lab.screen()"), numbers: await page.eval("window.__lab.numbers()") });
+        rows.push({ f, label, screen: await page.eval("window.__lab.screen()"), numbers: await page.eval("window.__lab.numbers()"), bladePx: skill === "k7" ? await page.eval("window.__lab.bladePx()") : null });
         if ((BLOOM_OFF[skill] ?? []).includes(f)) {
           await check(await page.eval("window.__lab.post({ bloom: 0 })"));
           await page.shot(join(out, name + "-bloom0.png"));
