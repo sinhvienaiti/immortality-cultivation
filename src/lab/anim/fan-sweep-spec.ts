@@ -3,15 +3,19 @@
  * pose-author.ts (`__labPose.bake("k4")` in the skills lab) into fan-sweep-poses.ts, which the runtime plays.
  * Directions are (right, up, forward) in the character frame; turns are [x, y, z] degrees (key-pose.ts).
  *
- * Designed for the 55° rear play camera at 30–70 px (pose rules, MOTION_PLAN "Vòng 4"): a forehand sweep.
- * - Coil (typing): the hips sink (to ~22 % of hip height), the shoulders wind right against the hips (to ~30°), the
- *   sword hand draws back and up behind the right shoulder (out to the right of the back, never over it), and the
- *   off hand's sword fingers reach out at the target (up the screen from the left shoulder): the direction reads
- *   before the release.
- * - Release (last key, ~5 frames): the torso unwinds past square, the sword arm sweeps round to point at the target,
- *   raised so it clears the head from behind; the off hand flies back to the left as a counterweight; the right foot
- *   drives forward.
- * - Follow-through: the sword carries on across to the front-left, flat and high; the chest keeps turning; settle.
+ * Designed for the 55° rear play camera at 30–70 px (pose rules, MOTION_PLAN "Vòng 4"), version 2. The first
+ * blind phase and direction test (v1, a forehand sweep cocked back to the right) failed: at this size a still is
+ * read by the sword's line (where the blade points is where the attack goes), so a blade drawn back pointed the
+ * attack the wrong way, and a follow-through still read as a release. So the phases are told apart by the blade's
+ * height and the blade always points along the attack:
+ * - Coil (typing): the hips sink (to ~23 % of hip height), the shoulders wind right over the hips (to ~30°), the
+ *   sword hand climbs above the right shoulder with the elbow high and out, the blade raised and aimed over the head
+ *   at the target, and the off hand's sword fingers point at it at full reach: raised = gathering, aimed = where.
+ * - Release (last key, ~5 frames): a diagonal sweep down onto the line: the torso unwinds past square and the body
+ *   lunges (the right foot drives forward), the arm comes down straight and level at the target, the blade on the
+ *   line; the off hand flies back to the left hip.
+ * - Follow-through: the blade carries on down to point low in front (tip down), the chest keeps turning; settle;
+ *   the recovery hands back to Idle.
  * Arms are cheated sideways and up wherever an anatomical line would cross the back at the camera.
  */
 import type { SkillSpec } from "./pose-author";
@@ -30,7 +34,7 @@ export const FAN_SWEEP_SPEC: SkillSpec = {
   settleS: 0.1,
   settleBack: 0.12,
   recoverS: 0.22,
-  circle: { torso: 2.5, arm: 4.5, wrist: 2, hz: 2 },
+  circle: { torso: 3, arm: 6.5, wrist: 3, hz: 2.2 },
   armBone: "upperarm_r",
   wristBone: "hand_r",
   hands: {
@@ -58,33 +62,34 @@ export const FAN_SWEEP_SPEC: SkillSpec = {
   },
   poses: [
     {
-      // Key 1: weight down, the sword hand low out to the right, the seal raised before the face.
+      // Key 1: weight down, the sword hand up beside the right shoulder with the blade aimed at the target, the seal
+      // raised before the chest.
       name: "ready",
-      hips: [0.05, 0, 0],
+      hips: [0.06, 0, 0],
       pelvis: [-4, -4, 0],
       spine1: [-3, -5, 0],
-      spine2: [-4, -6, 0],
-      spine3: [-5, -8, 0],
+      spine2: [-4, -7, 0],
+      spine3: [-5, -9, 0],
       neck: [-2, -4, 0],
       head: [-6, 0, 0],
-      r: { upper: [0.6, -0.72, -0.35], fore: [0.55, -0.55, -0.62], fingers: [0.45, -0.6, -0.65], sword: [0.5, -0.5, -0.7] },
-      l: { upper: [-0.5, -0.3, 0.8], upperTwist: -30, fore: [-0.05, 0.95, 0.3], fingers: [0, 1, 0.25], thumb: [0.6, 0, 0.5] },
+      r: { upper: [0.7, -0.35, -0.6], fore: [0.2, 0.75, 0.6], fingers: [0.15, 0.7, 0.7], sword: [0.05, 0.4, 0.92] },
+      l: { upper: [-0.5, -0.45, 0.72], upperTwist: -30, fore: [-0.1, 0.45, 0.88], fingers: [-0.05, 0.4, 0.92], thumb: [0.6, 0.6, 0] },
       hands: [FIST, SEAL],
       stance: null,
     },
     {
-      // The coil starts: shoulders wind right (12° over the hips), the seal reaches out at the target, the sword draws
-      // back to the right; the left foot steps forward and out, the right turns out.
+      // The coil starts: shoulders wind right, the sword hand climbs, the seal reaches out at the target; the left
+      // foot steps forward and out, the right turns out.
       name: "early anticipation",
-      hips: [0.1, -0.01, 0.01],
+      hips: [0.11, -0.01, 0.01],
       pelvis: [-5, -6, 0],
       spine1: [-5, -9, -1],
-      spine2: [-6, -13, -2],
-      spine3: [-8, -18, -3],
+      spine2: [-6, -14, -2],
+      spine3: [-8, -19, -3],
       neck: [-3, -8, 0],
       head: [-7, 0, 0],
-      r: { clav: [0, -6, 3], upper: [0.82, -0.2, -0.53], fore: [0.78, 0.1, -0.6], fingers: [0.7, 0.05, -0.7], sword: [0.78, 0.05, -0.62] },
-      l: { upper: [-0.45, 0.05, 0.9], fore: [-0.3, 0.15, 0.95], fingers: [-0.2, 0.12, 1], thumb: [0.3, 0.8, 0] },
+      r: { clav: [0, 0, 6], upper: [0.75, 0.25, -0.6], fore: [0.25, 0.85, 0.45], fingers: [0.2, 0.8, 0.55], sword: [0.02, 0.5, 0.86] },
+      l: { upper: [-0.4, 0.0, 0.92], fore: [-0.25, 0.08, 0.96], fingers: [-0.2, 0.08, 0.98], thumb: [0.3, 0.8, 0] },
       hands: [FIST, SEAL],
       stance: { l: [0.12, -0.1, 10], r: [-0.1, 0.12, -30], stepS: 0.16, liftM: 0.05, first: "l" },
     },
@@ -92,61 +97,61 @@ export const FAN_SWEEP_SPEC: SkillSpec = {
       name: "mid coil",
       hips: [0.15, -0.02, 0.02],
       pelvis: [-7, -9, -1],
-      spine1: [-7, -15, -2],
-      spine2: [-9, -23, -4],
-      spine3: [-11, -31, -5],
+      spine1: [-6, -15, -2],
+      spine2: [-7, -23, -4],
+      spine3: [-8, -31, -5],
       neck: [-4, -14, 0],
-      head: [-8, 0, 0],
-      r: { clav: [0, -10, 6], upper: [0.78, 0.12, -0.6], fore: [0.62, 0.45, -0.62], fingers: [0.55, 0.45, -0.7], sword: [0.82, 0.3, -0.48] },
-      l: { upper: [-0.35, 0.15, 0.92], fore: [-0.25, 0.2, 0.95], fingers: [-0.18, 0.2, 1], thumb: [0.3, 0.8, 0] },
+      head: [-7, 0, 0],
+      r: { clav: [0, 0, 12], upper: [0.7, 0.55, -0.45], fore: [0.25, 0.9, 0.35], fingers: [0.2, 0.85, 0.45], sword: [0, 0.58, 0.81] },
+      l: { upper: [-0.32, 0.12, 0.94], fore: [-0.22, 0.15, 0.96], fingers: [-0.18, 0.15, 0.97], thumb: [0.3, 0.8, 0] },
       hands: [FIST, SEAL],
       stance: null,
     },
     {
-      // Maximum coil: hips ~23 % down, shoulders 32° over the hips, the sword cocked out flat to the right of the back
-      // (on screen: a bar out to the right), the seal at full reach up the screen.
+      // Maximum coil: hips ~23 % down, shoulders ~30° over the hips, the sword hand high over the right shoulder (elbow
+      // up and out), the blade raised and aimed at the target over the head; the seal at full reach on the same line.
       name: "maximum coil",
       hips: [0.19, -0.03, 0.03],
-      pelvis: [-9, -12, -2],
-      spine1: [-9, -22, -3],
-      spine2: [-11, -31, -6],
-      spine3: [-13, -40, -8],
-      neck: [-5, -20, 0],
-      head: [-9, 0, 0],
-      r: { clav: [0, -14, 10], upper: [0.7, 0.35, -0.62], fore: [0.45, 0.7, -0.55], fingers: [0.4, 0.65, -0.65], sword: [0.72, 0.55, -0.42] },
-      l: { upper: [-0.3, 0.2, 0.93], fore: [-0.2, 0.22, 0.95], fingers: [-0.15, 0.22, 1], thumb: [0.3, 0.8, 0] },
+      pelvis: [-8, -12, -2],
+      spine1: [-6, -21, -3],
+      spine2: [-6, -34, -6],
+      spine3: [-6, -45, -8],
+      neck: [-4, -20, 0],
+      head: [-6, 0, 0],
+      r: { clav: [0, 0, 18], upper: [0.62, 0.72, -0.32], fore: [0.3, 0.88, 0.38], fingers: [0.25, 0.85, 0.45], sword: [-0.02, 0.62, 0.78] },
+      l: { upper: [-0.25, 0.2, 0.95], fore: [-0.18, 0.22, 0.96], fingers: [-0.15, 0.22, 0.97], thumb: [0.3, 0.8, 0] },
       hands: [FIST, SEAL],
       stance: null,
     },
     {
-      // Release: the torso unwinds 18° past square and leans in, the sword arm comes round to point at the target,
-      // raised so arm and blade stand clear above and right of the head; the off hand flies back to the left.
+      // Release: the diagonal sweep lands on the line: the torso unwinds 18° past square and leans in, the hips lunge,
+      // the sword arm straight and level at the target, the blade on the line; the off hand flies back to the hip.
       name: "release",
-      hips: [0.17, 0.12, 0],
+      hips: [0.16, 0.15, 0],
       pelvis: [-12, 10, 0],
       spine1: [-14, 16, 1],
       spine2: [-16, 22, 2],
       spine3: [-18, 28, 2],
       neck: [-8, 12, 0],
       head: [-10, 0, 0],
-      r: { clav: [0, 12, 4], upper: [0.35, 0.35, 0.87], fore: [0.2, 0.35, 0.92], fingers: [0.15, 0.25, 0.96], sword: [0.15, 0.3, 0.94] },
-      l: { clav: [0, 10, 0], upper: [-0.8, -0.15, -0.55], fore: [-0.7, -0.3, -0.65], fingers: [-0.6, -0.35, -0.7], thumb: [0, 1, 0] },
+      r: { clav: [0, 14, 0], upper: [0.22, 0.12, 0.97], fore: [0.1, 0.02, 0.99], fingers: [0.08, 0, 1], sword: [-0.04, -0.1, 0.99] },
+      l: { clav: [0, -6, 0], upper: [-0.6, -0.6, -0.52], fore: [-0.45, -0.65, -0.6], fingers: [-0.4, -0.7, -0.6], thumb: [0, 1, 0] },
       hands: [FIST, OPEN],
-      stance: { l: [0.08, -0.12, 15], r: [0.18, 0.08, -15], stepS: 0.12, liftM: 0.05, first: "r" },
+      stance: { l: [0.06, -0.1, 15], r: [0.22, 0.06, -15], stepS: 0.12, liftM: 0.05, first: "r" },
     },
     {
-      // Follow-through: the chest keeps turning, the blade carries on across and down to the front-left (still towards
-      // the target's side), the off hand back and a little up.
+      // Follow-through: the blade carries on down to point low in front (tip down), the chest keeps turning, the off
+      // hand back.
       name: "follow-through",
-      hips: [0.16, 0.14, -0.01],
-      pelvis: [-12, 16, 0],
-      spine1: [-13, 24, 1],
-      spine2: [-14, 32, 2],
-      spine3: [-15, 40, 2],
-      neck: [-7, 18, 0],
+      hips: [0.14, 0.13, -0.01],
+      pelvis: [-10, 16, 0],
+      spine1: [-11, 23, 1],
+      spine2: [-12, 30, 2],
+      spine3: [-12, 36, 2],
+      neck: [-6, 16, 0],
       head: [-9, 2, 0],
-      r: { clav: [0, 14, 2], upper: [0.1, 0.25, 0.96], fore: [-0.25, 0.1, 0.96], fingers: [-0.35, 0.0, 0.94], sword: [-0.5, -0.25, 0.83] },
-      l: { clav: [0, 10, 0], upper: [-0.75, 0.1, -0.65], fore: [-0.6, 0.0, -0.8], fingers: [-0.55, 0.0, -0.83], thumb: [0, 1, 0] },
+      r: { clav: [0, 8, -4], upper: [0.15, -0.55, 0.82], fore: [-0.05, -0.6, 0.8], fingers: [-0.1, -0.65, 0.75], sword: [-0.15, -0.6, 0.78] },
+      l: { clav: [0, -6, 0], upper: [-0.55, -0.7, -0.45], fore: [-0.35, -0.8, -0.5], fingers: [-0.3, -0.85, -0.4], thumb: [0, 1, 0] },
       hands: [FIST, OPEN],
       stance: null,
     },

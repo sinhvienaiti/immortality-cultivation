@@ -290,7 +290,7 @@ export class PoseProbe {
     };
     this.samples.push(s);
     this.f += 1;
-    return { f: s.f, stage: s.stage, phase: round(s.phase), w: round(s.w), widthPx: round(w), heightPx: round(h), handSepPx: round(handSepPx), tipSepPx: round(tipSepPx), hipDropM: round(s.hipDropM), coilDeg: round(coil), cx: round((this.bbox[0] + this.bbox[2]) / 2), cy: round((this.bbox[1] + this.bbox[3]) / 2) };
+    return { f: s.f, stage: s.stage, phase: round(s.phase), w: round(s.w), widthPx: round(w), heightPx: round(h), handSepPx: round(handSepPx), tipSepPx: round(tipSepPx), hipDropM: round(s.hipDropM), coilDeg: round(coil), pts: pts.map((v) => round(v)).join(" "), cx: round((this.bbox[0] + this.bbox[2]) / 2), cy: round((this.bbox[1] + this.bbox[3]) / 2) };
   }
 
   /** The measured cast's pose-rule numbers (MOTION_PLAN "Vòng 4"), with px at 30, 50 and 70 px hero heights. */

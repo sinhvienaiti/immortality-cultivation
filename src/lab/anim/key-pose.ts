@@ -115,6 +115,7 @@ const _c = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
+const _mInv = new THREE.Matrix4();
 const _X = new THREE.Vector3(1, 0, 0);
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
@@ -150,6 +151,8 @@ export class KeyPoser {
   /** Per slot: the parent's rest turn in the character frame (P), and the bone's rest local rotation (L). */
   private readonly restParent: THREE.Quaternion[];
   private readonly restLocal: THREE.Quaternion[];
+  /** Per slot: the bone's rest direction in the character frame (the circulating hold's cone). */
+  private readonly restDir: THREE.Vector3[];
   private readonly pelvis: THREE.Bone | null;
   private cur: Baked | null = null;
   private slot = "";
@@ -192,6 +195,7 @@ export class KeyPoser {
     this.bones = this.names.map((n) => rig.bone(n));
     this.pelvis = rig.bone("pelvis");
     this.restParent = this.names.map(() => new THREE.Quaternion());
+    this.restDir = this.names.map(() => new THREE.Vector3(1, 0, 0));
     this.restLocal = this.names.map(() => new THREE.Quaternion());
     // Rest turns in the character frame: the rig at rest under the caster root (identity at load).
     const q = new Float32Array(rig.count * 4);
@@ -206,6 +210,13 @@ export class KeyPoser {
       const b = this.bones[i];
       if (!b) continue;
       this.restLocal[i]!.copy(b.quaternion);
+      // The bone's rest direction (towards its first bone child) in the character frame.
+      const child = b.children.find((o) => (o as THREE.Bone).isBone);
+      if (child) {
+        b.getWorldPosition(_v);
+        child.getWorldPosition(_s);
+        this.restDir[i]!.subVectors(_s, _v).transformDirection(_mInv.copy(root.matrixWorld).invert());
+      }
       const parent = b.parent;
       if (parent) {
         parent.matrixWorld.decompose(_p, this.restParent[i]!, _s);
@@ -421,7 +432,7 @@ export class KeyPoser {
         this.phaseGoal = Math.min(this.creepCap, this.phaseGoal + this.creepRate * dt);
         criticalSpring(this.phaseS, 0, this.phaseGoal, 0.045, dt);
         criticalSpring(this.w, 0, this.wGoal, 0.05, dt);
-        this.circleK = 0.35 + 0.65 * clamp(this.phaseS[0]! / 3, 0, 1);
+        this.circleK = 0.75 + 0.25 * clamp(this.phaseS[0]! / 3, 0, 1);
         break;
       }
       case "release":
@@ -531,10 +542,11 @@ export class KeyPoser {
       if (c > 0) {
         if (nm === "spine_03") _a.premultiply(_c.setFromAxisAngle(_Y, sk.circle.torso * c * cs * DEG));
         else if (nm === "spine_02") _a.premultiply(_c.setFromAxisAngle(_X, sk.circle.torso * 0.6 * c * cc * DEG));
-        else if (nm === sk.armBone) {
-          _a.premultiply(_c.setFromAxisAngle(_Z, sk.circle.arm * c * cs * DEG));
-          _a.premultiply(_c.setFromAxisAngle(_Y, sk.circle.arm * c * cc * DEG));
-        } else if (nm === sk.wristBone) _a.premultiply(_c.setFromAxisAngle(_Z, tremor * DEG));
+        else if (nm === sk.armBone) this.cone(i, sk.circle.arm * c, cs, cc);
+        // The forearm circles slower (an incommensurate rate), so the hand's path on screen never stalls where the
+        // upper arm's ellipse turns (one cone round an arm aimed along the view projects to a flat ellipse).
+        else if (nm === this.foreBone) this.cone(i, sk.circle.arm * 0.8 * c, Math.sin(wt * 0.63 + 1.7), Math.cos(wt * 0.63 + 1.7));
+        else if (nm === sk.wristBone) _a.premultiply(_c.setFromAxisAngle(_Z, tremor * DEG));
       }
       // L = P⁻¹ · d · P · L_rest, blended over the base's local rotation.
       const P = this.restParent[i]!;
@@ -569,6 +581,22 @@ export class KeyPoser {
     }
     this.saved = true;
     this.root.updateMatrixWorld(true);
+  }
+
+  /** A small cone round bone slot i's current direction (two axes across it) on the turn in `_a`. */
+  private cone(i: number, deg: number, s: number, c: number): void {
+    _v.copy(this.restDir[i]!).applyQuaternion(_a);
+    _p.crossVectors(_v, _Y);
+    if (_p.lengthSq() < 1e-4) _p.crossVectors(_v, _X);
+    _p.normalize();
+    _s.crossVectors(_v, _p).normalize();
+    _a.premultiply(_c.setFromAxisAngle(_p, deg * s * DEG));
+    _a.premultiply(_c.setFromAxisAngle(_s, deg * c * DEG));
+  }
+
+  /** The forearm under the circulating arm (its second, slower cone). */
+  private get foreBone(): string {
+    return this.cur ? this.cur.skill.armBone.replace("upperarm", "lowerarm") : "";
   }
 
   /** The last shown pose (local rotations of the posed bones, the pelvis offset) and the cross-fade from it (s, −1 off). */
