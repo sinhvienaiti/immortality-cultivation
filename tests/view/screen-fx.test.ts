@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { describe, expect, it } from "vitest";
-import { SCREEN_TIERS, ScreenFx, type ScreenFxHost } from "../../src/view/screen-fx";
+import { IMPACT_DARK, IMPACT_INVERT, SCREEN_TIERS, ScreenFx, type ScreenFxHost } from "../../src/view/screen-fx";
 
 /** A composer stand-in: the pass list and insertPass, no WebGL. */
 function host(): ScreenFxHost & { passes: unknown[]; overlays: number } {
@@ -28,11 +28,13 @@ function host(): ScreenFxHost & { passes: unknown[]; overlays: number } {
 }
 
 describe("screen effects by tier (power pass)", () => {
-  it("inserts its one pass right before the OutputPass and its fallback quad first among the overlays", () => {
+  it("puts its linear pass right before the OutputPass, the graphic frame right after it, its fallback quad first among the overlays", () => {
     const h = host();
     new ScreenFx(h);
-    expect(h.passes.length).toBe(4);
+    expect(h.passes.length).toBe(5);
     expect(h.passes[3]).toBeInstanceOf(OutputPass);
+    expect((h.passes[2] as { uniforms?: Record<string, unknown> }).uniforms?.uDesat).toBeDefined();
+    expect((h.passes[4] as { uniforms?: Record<string, unknown> }).uniforms?.uMode).toBeDefined();
     expect(h.overlays).toBe(1);
   });
 
@@ -47,7 +49,7 @@ describe("screen effects by tier (power pass)", () => {
     expect(fx.advance(1 / 60)).toBeCloseTo(1 / 60, 6);
   });
 
-  it("never flashes or shakes a finisher past its tier's row of the table", () => {
+  it("never shakes a finisher past its tier's row, nor draws more graphic frames than its tier's", () => {
     const cam = new THREE.PerspectiveCamera(28, 16 / 9, 1, 400);
     cam.position.set(0, 40, 30);
     cam.lookAt(0, 0, 0);
@@ -55,9 +57,13 @@ describe("screen effects by tier (power pass)", () => {
     for (const tier of ["skill", "ultimate"] as const) {
       const fx = new ScreenFx(host());
       fx.impact(tier, "finisher");
-      fx.update(1e-6, cam);
-      expect(fx.shown.flash).toBeLessThanOrEqual(SCREEN_TIERS[tier].flash + 1e-6);
-      expect(fx.shown.shakePx).toBeLessThanOrEqual(SCREEN_TIERS[tier].shakePx + 1e-6);
+      let frames = 0;
+      for (let i = 0; i < 8; i += 1) {
+        fx.update(1 / 60, cam);
+        if (i === 0) expect(fx.shown.shakePx).toBeLessThanOrEqual(SCREEN_TIERS[tier].shakePx + 1e-6);
+        if (fx.shown.impactStep >= 0) frames += 1;
+      }
+      expect(frames).toBe(SCREEN_TIERS[tier].frames);
     }
   });
 
@@ -103,7 +109,7 @@ describe("screen effects by tier (power pass)", () => {
     fx.update(1 / 60, cam);
     expect(fx.shown.shakePx).toBe(0);
     expect(fx.shown.dark).toBe(0);
-    expect(fx.shown.flash).toBe(0);
+    expect(fx.shown.impactStep).toBe(-1);
   });
 
   it("never leaves a punch or roll on a camera the host placed again", () => {
@@ -147,7 +153,7 @@ describe("screen dramaturgy (power pass round 2)", () => {
     expect(sent.at(-1)).toBe(1);
   });
 
-  it("flashes the basic blow and slot 1 locally, never the whole screen", () => {
+  it("gives the basic blow and slot 1 one local graphic frame, never the whole screen", () => {
     const fx = new ScreenFx(host());
     const c = cam();
     fx.impact("basic", "primary");
@@ -155,44 +161,49 @@ describe("screen dramaturgy (power pass round 2)", () => {
     fx.release("skill", true);
     fx.impact("skill", "primary");
     fx.localFlash(0, 1, -5, "skill");
-    fx.update(1e-6, c);
-    expect(fx.shown.flash).toBe(0);
+    fx.update(1 / 60, c);
     expect(fx.shown.dark).toBe(0);
-    expect(fx.shown.local).toBeGreaterThan(0.3);
+    expect(fx.shown.impactLocal).toBe(1);
+    expect(fx.shown.impactMode).toBe(IMPACT_INVERT);
+    expect(fx.shown.impactStep).toBe(0);
+    // One frame, then a hard return.
+    fx.update(1 / 60, c);
+    expect(fx.shown.impactStep).toBe(-1);
   });
 
-  it("lands the climax as a sharp flash of three frames, a short zoom blur and a fringe", () => {
-    const fx = new ScreenFx(host());
+  it("lands key 7's finisher as two graphic frames (dark, inverted) and K5's climax as three, then a hard return", () => {
     const c = cam();
-    fx.focus(0, 0.5, -6);
-    fx.impact("ultimate", "finisher");
-    // At 60 Hz: the full flash on the first drawn frame, then 0.19 and 0.05, then none (the documented three frames).
-    const seen: number[] = [];
-    for (let i = 0; i < 4; i += 1) {
-      fx.update(1 / 60, c);
-      seen.push(fx.shown.flash);
-      if (i === 0) {
-        expect(fx.shown.blur).toBeCloseTo(SCREEN_TIERS.ultimate.blur, 3);
-        expect(fx.shown.split).toBeCloseTo(SCREEN_TIERS.ultimate.splitPx, 3);
+    for (const [frames, want] of [[undefined, [IMPACT_DARK, IMPACT_INVERT]], [3, [IMPACT_DARK, IMPACT_DARK, IMPACT_INVERT]]] as const) {
+      const fx = new ScreenFx(host());
+      fx.impact("ultimate", "finisher", frames);
+      const seen: number[] = [];
+      for (let i = 0; i < 6; i += 1) {
+        fx.update(1 / 60, c);
+        seen.push(fx.shown.impactMode);
       }
+      expect(seen).toEqual([...want, ...new Array<number>(6 - want.length).fill(0)]);
     }
-    expect(seen[0]).toBeCloseTo(SCREEN_TIERS.ultimate.flash, 3);
-    expect(seen[1]).toBeCloseTo(SCREEN_TIERS.ultimate.flash * (4 / 9), 3);
-    expect(seen[2]).toBeCloseTo(SCREEN_TIERS.ultimate.flash * (1 / 9), 3);
-    expect(seen[3]).toBe(0);
-    for (let i = 0; i < 3; i += 1) fx.update(1 / 60, c);
-    expect(fx.shown.blur).toBe(0);
+    // No tinted flash, zoom blur or chroma fringe is left in the table (round 3a removed them).
+    for (const key of ["flash", "blur", "splitPx", "local"]) expect(Object.keys(SCREEN_TIERS.ultimate)).not.toContain(key);
   });
 
-  it("shows the climax's full flash on its first frame at any frame rate", () => {
+  it("shows the climax's first graphic frame on its first drawn frame at any frame rate, each frame at least once", () => {
     for (const hz of [30, 60, 144]) {
       const fx = new ScreenFx(host());
       fx.impact("ultimate", "finisher");
       fx.update(1 / hz, cam());
-      expect(fx.shown.flash).toBeCloseTo(SCREEN_TIERS.ultimate.flash, 3);
-      fx.localFlash(0, 1, -5, "skill");
-      fx.update(1 / hz, cam());
-      expect(fx.shown.local).toBeCloseTo(SCREEN_TIERS.skill.local, 3);
+      expect(fx.shown.impactStep).toBe(0);
+      expect(fx.shown.impactMode).toBe(IMPACT_DARK);
+      const modes = new Set<number>();
+      let drawn = 1;
+      for (let i = 0; i < 20 && fx.shown.impactStep >= 0; i += 1) {
+        modes.add(fx.shown.impactMode);
+        fx.update(1 / hz, cam());
+        if (fx.shown.impactStep >= 0) drawn += 1;
+      }
+      expect(modes.has(IMPACT_INVERT)).toBe(true);
+      // About 1/60 s a step: two drawn frames at 30 and 60 Hz, three a step at 144 Hz (~21 ms each).
+      expect(drawn).toBe(hz === 144 ? 6 : 2);
     }
   });
 

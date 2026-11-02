@@ -28,7 +28,7 @@ const FRAMES = {
  * shoots these frames after it.
  */
 const CLIMAX = { k7: [[-1, "C-1"], [0, "C0"], [1, "C+1"], [2, "C+2"], [3, "C+3"], [8, "C+8-fold"], [24, "C+24-after"], [54, "C+54-scars"], [100, "C+100-late"]], k5: [[-1, "C-1"], [0, "C0"], [1, "C+1"], [2, "C+2"], [3, "C+3"], [8, "C+8"], [33, "C+33-after"], [84, "C+84-late"]] };
-const AT_CLIMAX = "(() => { const s = window.__lab.screen(); return (s.flash ?? 0) >= 0.3 || s.impactStep === 0; })()";
+const AT_CLIMAX = "(() => { const s = window.__lab.screen(); return (s.flash ?? 0) >= 0.3 || (s.impactStep === 0 && s.impactLocal === 0); })()";
 
 /** Steps one frame at a time (at most `limit`) until the climax's first frame; returns the frames stepped, −1 if none. */
 async function toClimax(page, limit = 160) {

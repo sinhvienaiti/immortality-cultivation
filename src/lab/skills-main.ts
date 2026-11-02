@@ -47,7 +47,7 @@ import { LabSound } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
-import { VAN_KIEM_COLOUR, VAN_KIEM_FLASH, VAN_KIEM_SWORDS, VanKiemFx, type SwordPose, type VanKiemPhase } from "../view/skills/van-kiem";
+import { VAN_KIEM_COLOUR, VAN_KIEM_SWORDS, VanKiemFx, type SwordPose, type VanKiemPhase } from "../view/skills/van-kiem";
 import { CasterPresence } from "./presence";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
@@ -186,8 +186,55 @@ function worldLight(k: number): void {
   for (const w of worldLights) w.light.intensity = w.base * k;
   if (envBase >= 0) view.scene.environmentIntensity = envBase * k;
 }
-const screen = new ScreenFx({ composer: view.stage.composer, composerOn: () => view.stage.bloom.enabled, addOverlay: (o) => view.addOverlay(o), worldLight });
+/**
+ * The figures for the graphic impact frame (round 3a, P2): beasts, Lam and the held sword as alpha coverage, drawn
+ * with this frame's camera into the pass's half-size mask, the ground and the VFX hidden, one plain material (no
+ * lights, no fog, no shadow-map update). Dying beasts show whole for those 1–3 frames.
+ */
+const maskMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+const maskClear = new THREE.Color();
+function drawActorMask(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget): void {
+  const scene = view.scene;
+  const { ground, fx: fxLayer } = view.layers;
+  const groundOn = ground.visible;
+  const fxOn = fxLayer.visible;
+  const background = scene.background;
+  const override = scene.overrideMaterial;
+  const shadows = renderer.shadowMap.autoUpdate;
+  const autoClear = renderer.autoClear;
+  renderer.getClearColor(maskClear);
+  const clearAlpha = renderer.getClearAlpha();
+  ground.visible = false;
+  fxLayer.visible = false;
+  scene.background = null;
+  scene.overrideMaterial = maskMaterial;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.setRenderTarget(target);
+  renderer.setClearColor(0x000000, 0);
+  renderer.autoClear = true;
+  renderer.render(scene, view.camera);
+  renderer.setClearColor(maskClear, clearAlpha);
+  renderer.autoClear = autoClear;
+  renderer.shadowMap.autoUpdate = shadows;
+  scene.overrideMaterial = override;
+  scene.background = background;
+  ground.visible = groundOn;
+  fxLayer.visible = fxOn;
+}
+const screen = new ScreenFx({ composer: view.stage.composer, composerOn: () => view.stage.bloom.enabled, addOverlay: (o) => view.addOverlay(o), worldLight, drawActorMask });
 screen.intensity = Math.max(0, Math.min(1, Number(params.get("fx") ?? "1")));
+// The authored impact masks (round 3a, ChatGPT-made sheets of 03/11/2026, white ink on black, used as alpha): radial
+// rays and a sword-streak field on the full frames, a burst star and a slash crescent on local hits, a cracked brush
+// burst at the climax's strike. Dev assets in art-src (never shipped).
+{
+  const dir = "/art-src/skills/impact-tex/";
+  const mask = (name: string): THREE.Texture => {
+    const t = texLoader.load(dir + name + "-mask.png");
+    t.colorSpace = THREE.NoColorSpace;
+    return t;
+  };
+  screen.setShapes({ rays: mask("radial-rays"), streaks: mask("sword-streak-field"), burst: mask("burst-star"), slash: mask("slash-crescent"), crack: mask("cracked-brush-burst") });
+}
 /** One event, every listener on the same frame (events.ts). */
 const bus = new LabBus();
 /** Each lab skill's screen tier: Phi Kiếm a basic blow, Thiên Hà the ultimate, the rest (key 7 too) skills. */
@@ -208,10 +255,11 @@ function screenImpact(ms: number): void {
   lastImpact.frame = frameNo;
   lastImpact.slot = slot;
   const role: ImpactRole = ms < 0 ? "secondary" : slot === "k4" && ms <= 50 ? "secondary" : ms >= 80 || slot === "k2" ? "finisher" : "primary";
-  screen.setFlashColor(fx.paletteOf(slot).flashHex);
-  // The ultimate's climax blurs and fringes toward the vortex's heart.
+  // The ultimate's climax takes three graphic frames (dark, dark, invert) centred on the vortex; other finishers their
+  // tier's, centred on the blow.
   if (slot === "k5" && role === "finisher") screen.focus(ultAim.x, 1.2, ultAim.z);
-  screen.impact(tierOf(slot), role);
+  else if (role === "finisher" && lastHit.set) screen.focus(lastHit.x, lastHit.y, lastHit.z);
+  screen.impact(tierOf(slot), role, slot === "k5" && role === "finisher" ? 3 : undefined);
   // The ultimate's last wave is its climax: the world-change sound answers on this frame; the world stays dark a
   // moment for the scars to glow, then the light comes back.
   if (slot === "k5" && role === "finisher") {
@@ -219,6 +267,8 @@ function screenImpact(ms: number): void {
     ultDarkEnd = labTime + 0.45;
   }
 }
+/** The last blow's point (a finisher's graphic frames centre on it; its strike event comes before its stop). */
+const lastHit = { x: 0, y: 0, z: 0, set: false };
 /** Slot 1 and the basic blow never tint the whole screen (round 2: both judges called the green wash a filter). */
 function localOnly(slot: string): boolean {
   return slot === "auto" || slot === "k1";
@@ -228,11 +278,14 @@ let ultDark = false;
 let ultDarkEnd = -1;
 bus.on((e) => {
   if (e.kind === "release") {
-    if (e.slot !== "k7" && e.slot !== "auto") screen.setFlashColor(fx.paletteOf(e.slot as KiemSlot).flashHex);
     screen.release(e.tier, localOnly(e.slot));
   } else if (e.kind === "impact" && e.role !== "secondary") {
-    // Primary blows flash where they land (a soft disc of light in the pass), never the whole screen.
-    screen.localFlash(e.x, e.y, e.z, e.tier);
+    // Primary blows take one local graphic frame where they land (an inverted burst), never the whole screen.
+    screen.localFlash(e.x, e.y, e.z, e.tier, 1, e.dx, e.dz);
+    lastHit.x = e.x;
+    lastHit.y = e.y;
+    lastHit.z = e.z;
+    lastHit.set = true;
   }
 });
 // Sound hooks (canon D58 (6), sound.ts): files under art-src/lab/audio/<event-id>/, silent when absent; the same
@@ -398,10 +451,7 @@ let numberRgbWeapon = "";
 const tmpColour = new THREE.Color();
 /** Key 7's number tint (linear): Clear Wind's jade-cyan. */
 const VAN_KIEM_TINT = VAN_KIEM_COLOUR;
-/** Key 7's flash, parsed once (a colour string is parsed on every set). */
-const VAN_FLASH = new THREE.Color(VAN_KIEM_FLASH);
-/** Key 7's cut: its middle on the ground (van-kiem.ts stroke s0 → s1) and the clock its sweep starts (s, F192). */
-const VAN_CUT_MID = [0, -6.5] as const;
+/** The clock key 7's sweep starts (s, F192). */
 const VAN_SWEEP_AT = 192 / 60;
 function skillRgb(slot: string): number {
   if (numberRgbWeapon !== fx.weapon) {
@@ -468,7 +518,6 @@ const van = new VanKiemFx(
       // The first of the eight blades is the volley's primary blow (one stop); the others land as secondary hits.
       if (role === "primary" && !vanFirstHit) {
         vanFirstHit = true;
-        screen.setFlashColor(VAN_FLASH);
         screen.impact("skill", "primary");
       } else if (role === "primary") screen.impact("skill", "secondary");
       // The hunt's hundreds of blows hold a low rumble under the shake (never stacking into a constant jolt).
@@ -481,15 +530,14 @@ const van = new VanKiemFx(
         screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
         worldEvent("k7", "open");
       } else if (p === "hush") {
-        // A breath before the cut: the world sinks a little deeper, so the climax's flash lands on black.
+        // A breath before the cut: the world sinks a little deeper before the graphic frames.
         screen.holdDark(Math.min(0.8, SCREEN_TIERS.ultimate.hold + 0.12), SCREEN_TIERS.ultimate.desat);
         worldEvent("k7", "hush");
       }
       else if (p === "climax") {
-        // The finisher at ultimate strength: a 100 ms stop, 0.3x slow motion, punch, a sharp 3-frame flash, a zoom
-        // blur and a fringe toward the cut's middle; the world stays dark for the scars to glow.
-        screen.setFlashColor(VAN_FLASH);
-        screen.focus(VAN_CUT_MID[0], 0.5, VAN_CUT_MID[1]);
+        // The finisher at ultimate strength: a 100 ms stop, 0.3x slow motion, punch and two graphic frames (dark,
+        // inverted) then a hard return; the world stays dark for the scars to glow.
+        screen.focus(0, 0.5, -6.5);
         screen.impact("ultimate", "finisher");
         kick.impulse(4 * KICK_M_PER_PX, 0, 1);
         worldEvent("k7", "climax");
@@ -1076,7 +1124,7 @@ declare global {
        * per-frame ms (cpu, total), draw calls, triangles, blades drawn (hero, swarm) and the GPU string.
        */
       perf(frames: number, dt?: number): { cpu: number[]; total: number[]; drawCalls: number; triangles: number; hero: number; swarm: number; gpu: string; k5n: number };
-      /** The screen effects shown this frame (darkening, flash, split, shake px, roll, punch, world speed). */
+      /** The screen effects shown this frame (darkening, the graphic impact frame's step and mode, shake px, roll, punch, world speed). */
       screen(): Record<string, number | boolean>;
       /** The post chain as it stands (round 3a, P0): passes in order, target type and colour space, tone mapping, bloom, fog. */
       pipeline(): Record<string, unknown>;
@@ -1153,6 +1201,9 @@ void (async () => {
       if (def !== undefined) void handSword?.setWeapon(def);
     });
   }
+  // The graphic frame's programs (the mask over instanced and skinned figures, the frame) compile now, not on the
+  // first climax.
+  screen.prewarm(view.stage.renderer);
   caster.onState = (kind, detail) => {
     if (kind === "clip") probe.clip(detail);
     else probe.event(kind, detail);
