@@ -14,8 +14,9 @@
  * - Release (last key, ~5 frames): a diagonal sweep down onto the line: the torso unwinds past square and the body
  *   lunges (the right foot drives forward), the arm comes down straight and level at the target, the blade on the
  *   line; the off hand flies back to the left hip.
- * - Follow-through: the blade carries on down to point low in front (tip down), the chest keeps turning; settle;
- *   the recovery hands back to Idle.
+ * - Follow-through (v3): the body rises out of the lunge and the back foot closes up, the arm lowers with the blade
+ *   still on the line ~30° down, the off hand down at the side (an extended arm read as a release in a still);
+ *   settle; the recovery hands back to Idle.
  * Arms are cheated sideways and up wherever an anatomical line would cross the back at the camera.
  */
 import type { SkillSpec } from "./pose-author";
@@ -28,9 +29,9 @@ export const FAN_SWEEP_SPEC: SkillSpec = {
   id: "fanSweep",
   name: "Fan-of-blades sweep (扇形剑雨)",
   releaseS: 0.083,
-  holdS: 0.12,
+  holdS: 0.1,
   holdDrift: 0.12,
-  followS: 0.16,
+  followS: 0.14,
   settleS: 0.1,
   settleBack: 0.12,
   recoverS: 0.22,
@@ -140,20 +141,21 @@ export const FAN_SWEEP_SPEC: SkillSpec = {
       stance: { l: [0.06, -0.1, 15], r: [0.22, 0.06, -15], stepS: 0.12, liftM: 0.05, first: "r" },
     },
     {
-      // Follow-through: the blade carries on down to point low in front (tip down), the chest keeps turning, the off
-      // hand back.
+      // Follow-through into the recovery (v3: tester 2 read v2's still extended follow-through as a release): the body
+      // rises out of the lunge and the back foot closes up, the sword arm lowers with the blade still on the attack
+      // line, ~30° down; the off hand comes down to the side.
       name: "follow-through",
-      hips: [0.14, 0.13, -0.01],
-      pelvis: [-10, 16, 0],
-      spine1: [-11, 23, 1],
-      spine2: [-12, 30, 2],
-      spine3: [-12, 36, 2],
-      neck: [-6, 16, 0],
-      head: [-9, 2, 0],
-      r: { clav: [0, 8, -4], upper: [0.15, -0.55, 0.82], fore: [-0.05, -0.6, 0.8], fingers: [-0.1, -0.65, 0.75], sword: [-0.15, -0.6, 0.78] },
-      l: { clav: [0, -6, 0], upper: [-0.55, -0.7, -0.45], fore: [-0.35, -0.8, -0.5], fingers: [-0.3, -0.85, -0.4], thumb: [0, 1, 0] },
+      hips: [0.07, 0.1, 0],
+      pelvis: [-5, 12, 0],
+      spine1: [-5, 16, 0],
+      spine2: [-5, 20, 1],
+      spine3: [-5, 24, 1],
+      neck: [-3, 10, 0],
+      head: [-8, 0, 0],
+      r: { clav: [0, 4, -6], upper: [0.3, -0.8, 0.52], fore: [0.12, -0.45, 0.88], fingers: [0.08, -0.4, 0.92], sword: [0, -0.5, 0.87] },
+      l: { clav: [0, 0, -4], upper: [-0.3, -0.92, -0.15], fore: [-0.15, -0.95, 0.2], fingers: [-0.1, -0.95, 0.25], thumb: [0, 0, 1] },
       hands: [FIST, OPEN],
-      stance: null,
+      stance: { l: [0.17, -0.07, 5], r: [0.22, 0.06, -10], stepS: 0.16, liftM: 0.04, first: "l" },
     },
   ],
 };
