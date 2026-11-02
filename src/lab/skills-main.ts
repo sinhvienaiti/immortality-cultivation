@@ -43,6 +43,7 @@ import { DeathFx } from "./death-fx";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
+import { VAN_KIEM_COLOUR, VAN_KIEM_FLASH, VAN_KIEM_SWORDS, VanKiemFx, type VanKiemPhase } from "../view/skills/van-kiem";
 import { CasterPresence } from "./presence";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
@@ -282,7 +283,7 @@ const hitsOf: Record<string, number> = {};
 const numberRgb: Record<string, number> = {};
 const tmpColour = new THREE.Color();
 /** Key 7's number tint (linear): Clear Wind's jade-cyan. */
-const VAN_KIEM_TINT = [0.3, 0.86, 0.74] as const;
+const VAN_KIEM_TINT = VAN_KIEM_COLOUR;
 function skillRgb(slot: string): number {
   const key = fx.weapon + ":" + slot;
   let v = numberRgb[key];
@@ -315,6 +316,75 @@ const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: text
 bus.on((e) => {
   if (e.kind === "death") deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
 });
+// Key 7, Vạn Kiếm Triều Tông (canon D58 (2), POWER_RESEARCH): the field-wide prototype on the skill tier with an
+// ultimate-strength finisher. Its timeline calls the screen effects and the bus on the frame each phase starts.
+function worldEvent(slot: string, phase: "open" | "hush" | "climax" | "close"): void {
+  const w = bus.world;
+  w.slot = slot;
+  w.phase = phase;
+  bus.emit(w);
+}
+const van = new VanKiemFx(
+  {
+    layer: view.layers.fx,
+    camera: view.camera,
+    targets: herd,
+    caster(out) {
+      out.x = caster.x;
+      out.z = caster.z;
+      out.fx = caster.fx;
+      out.fz = caster.fz;
+    },
+    hand(out) {
+      caster.hand(out);
+    },
+    struck(target, dx, dz, power, role, killed) {
+      // The first of the eight blades is the volley's primary blow (one stop); the others land as secondary hits.
+      if (role === "primary" && !vanFirstHit) {
+        vanFirstHit = true;
+        screen.setFlashColor(VAN_KIEM_FLASH);
+        screen.impact("skill", "primary");
+      } else if (role === "primary") screen.impact("skill", "secondary");
+      emitImpact("k7", target, dx, dz, power, role, killed, skillRgb("k7"));
+    },
+    phase(p: VanKiemPhase) {
+      if (p === "open") {
+        screen.holdDark(0.12);
+        worldEvent("k7", "open");
+      } else if (p === "hush") worldEvent("k7", "hush");
+      else if (p === "climax") {
+        // The finisher at ultimate strength: 60 ms stop, 0.45× for 180 ms, punch, edge split, flash, a dark pulse.
+        screen.setFlashColor(VAN_KIEM_FLASH);
+        screen.impact("ultimate", "finisher");
+        screen.darken(0.28, 0.45);
+        kick.impulse(4 * KICK_M_PER_PX, 0, 1);
+        worldEvent("k7", "climax");
+      } else if (p === "close") {
+        screen.holdDark(0);
+        worldEvent("k7", "close");
+      } else if (p === "end") {
+        screen.holdDark(0);
+        herd.toughness = 1;
+      }
+    },
+    flyby(x, y, z, speed) {
+      const f = bus.flyby;
+      f.x = x;
+      f.y = y;
+      f.z = z;
+      f.speed = speed;
+      bus.emit(f);
+    },
+    flash(at, colour, intensity) {
+      lights.flash(at, view.camera.position, colour, intensity);
+    },
+  },
+  { glow: textures.glow, slash: textures.slash, star: textures.star },
+  VAN_KIEM_SWORDS[quality],
+);
+/** Key 7 waits for the caster's update (its blades leave from the hand as drawn), like the other casts. */
+let pendingVan = false;
+let vanFirstHit = false;
 // The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
 const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
 
@@ -328,7 +398,10 @@ async function setWeapon(id: string): Promise<boolean> {
     return false;
   }
   const ok = await fx.setWeapon(def);
-  if (ok) for (const f of weaponListeners) f(def.id);
+  if (ok) {
+    await van.setWeapon(def);
+    for (const f of weaponListeners) f(def.id);
+  }
   return ok;
 }
 function cycleWeapon(): void {
@@ -421,7 +494,22 @@ const TARGET: Record<KiemSlot, [number, number]> = { auto: [0, -8], k1: [0, -8],
  */
 let typedMode = params.get("typed") === "1";
 
-function type(slot: KiemSlot): void {
+/** A lab key's skill: the seven Kiếm slots, and key 7's field-wide prototype (always cast at once). */
+type LabSlot = KiemSlot | "k7";
+
+function type(slot: LabSlot): void {
+  if (slot === "k7") {
+    typing = null;
+    probe.lastKey("k7");
+    screen.cut();
+    // The body takes Ngự Kiếm's quick command (its release lands inside the 50 ms gate); the eight blades leave the hand.
+    caster.release("k1", 0, -8);
+    emitRelease("k7", 0, -8);
+    pendingVan = true;
+    vanFirstHit = false;
+    herd.toughness = 2;
+    return;
+  }
   if (slot === "auto" || !typedMode) {
     typing = null;
     probe.lastKey(slot);
@@ -456,6 +544,12 @@ function flushTyping(): void {
   if (pending.cast) {
     pending.cast = false;
     fx.cast(pending.castSlot, pending.cx, pending.cz);
+  }
+  if (pendingVan) {
+    pendingVan = false;
+    van.cast();
+    // The first visible action of key 7 (its eight blades leave now): the probe's VFX release.
+    probe.flash();
   }
 }
 
@@ -498,6 +592,9 @@ function reset(): void {
   presence.reset();
   deathFx.reset();
   compiler.reset();
+  van.reset();
+  pendingVan = false;
+  herd.toughness = 1;
   lights.reset();
   probe.reset();
   bus.resetCounts();
@@ -505,7 +602,7 @@ function reset(): void {
   handSword?.reset();
 }
 
-const KEYS: Record<string, KiemSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5" };
+const KEYS: Record<string, LabSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5", "7": "k7" };
 window.addEventListener("keydown", (e) => {
   // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -541,6 +638,7 @@ if (params.get("ui") !== "0") {
     ["4", "Lưu Quang Bộ · Flowing-Light Step"],
     ["5", "Lạc Kiếm Trận · Falling Sword Array"],
     ["6", "Thiên Hà Kiếm Vũ · Milky-Way Sword Rain"],
+    ["7", "Vạn Kiếm Triều Tông · Ten-Thousand Sword Convergence"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
@@ -621,6 +719,7 @@ function frame(dt: number): void {
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   fx.update(world, dt);
+  van.update(world);
   // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
   handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);
@@ -699,7 +798,7 @@ declare global {
   interface Window {
     __lab?: {
       ready: boolean;
-      type(slot: KiemSlot): void;
+      type(slot: KiemSlot | "k7"): void;
       cast(slot: KiemSlot, tx: number, tz: number): void;
       enemyShot(): void;
       /** Steps `frames` frames of `dt` seconds (default 1/60). */
@@ -773,6 +872,8 @@ declare global {
       setFx(intensity: number): void;
       /** Event counts since the last reset (release, impact, death, flyby, world, callout). */
       events(): Record<string, number>;
+      /** Key 7's state: its clock (s, −1 idle), swords drawn, strikes so far. */
+      van(): { clock: number; shown: number; strikes: number; dives: number };
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
     };
@@ -1003,6 +1104,7 @@ void (async () => {
     screen: () => ({ ...screen.shown }),
     setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
     events: () => ({ ...bus.counts }),
+    van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
     async swarm(mode) {
       const def = fx.weaponInfo;
       const hero = await loadBladeGeometry(def.model, def.fit);

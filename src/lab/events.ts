@@ -79,7 +79,8 @@ export interface FlybyEvent {
 export interface WorldEvent {
   kind: "world";
   slot: string;
-  phase: "open" | "climax" | "close";
+  /** open: the world changes; hush: 40–60 ms of near-silence before the finisher; climax: the finisher; close: the fold and its bell. */
+  phase: "open" | "hush" | "climax" | "close";
 }
 
 export interface CalloutEvent {

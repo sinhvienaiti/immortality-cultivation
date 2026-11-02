@@ -775,7 +775,10 @@ export class IcNumberSprites {
       for (let c = 0; c < text.length; c += 1) {
         const g = glyphs.indexOf(text.charAt(c));
         const s = times >= 0 && c >= times ? 0.68 : 1;
-        const middle = x - advance * 0.2 + (advance * A.glyphQuadW * s) / 2;
+        // A point takes under half an advance, M a little more (the game's digit set has neither: unchanged).
+        const ch = text.charCodeAt(c);
+        const adv = ch === 46 ? 0.42 : ch === 77 ? 1.15 : 1;
+        const middle = x + (advance * s * adv) / 2 - advance * 0.2 * (1 - s) + (advance * (A.glyphQuadW - 1.4) * s) / 2;
         const w = advance * A.glyphQuadW * s * cellScale;
         this.qx = middle - w / 2;
         this.qy = y + px * (1 - s) * 0.9;
@@ -786,7 +789,7 @@ export class IcNumberSprites {
         this.u1 = ((g + 1) * cell) / W;
         this.v1 = (row + A.cellH) / H;
         n = this.quad(n, color);
-        x += advance * s;
+        x += advance * s * adv;
       }
       if (style === STYLE.perfect) {
         const lh = px * A.label;

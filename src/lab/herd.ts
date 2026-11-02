@@ -58,8 +58,8 @@ const TILT_Z = 0.45;
 const DIE_S = 0.6;
 const SPAWN_S = 0.5;
 const SPAWN_SINK = 0.25;
-/** Gone this long (s) before a dead slot respawns. */
-const GONE_S = 2.5;
+/** Gone this long (s) before a dead slot respawns (power pass: 1.6 s, so the tide refills during a field-wide skill). */
+const GONE_S = 1.6;
 /** Rim flash (s): 2 frames on small beasts, 3 on elites and the king; its HDR level (× the blow's colour). */
 const RIM_S = 0.034;
 const RIM_ELITE_S = 0.05;
@@ -152,6 +152,11 @@ export class LabHerd implements TargetField {
   private readonly vortex = { on: false, x: 0, z: 0, r: 0, t: 0, until: 0 };
   private count = 0;
   private mode: HerdMode = "still";
+  /**
+   * Stand-in HP scale (power pass): a field-wide skill meets a tide, not 87 beasts. Key 7 sets 2 while it runs, so
+   * its ~800 strikes spread over the herd and the finisher has beasts left to cut; 1 otherwise.
+   */
+  toughness = 1;
   private time = 0;
   private readonly m = new THREE.Matrix4();
   private readonly q = new THREE.Quaternion();
@@ -465,7 +470,7 @@ export class LabHerd implements TargetField {
         this.immune[i] = RIM_S;
       }
     }
-    this.hp[i] = this.hp[i]! - (power >= 0.9 ? 3 : power >= 0.5 ? 2 : 1);
+    this.hp[i] = this.hp[i]! - (power >= 0.9 ? 3 : power >= 0.5 ? 2 : 1) / this.toughness;
     if (this.hp[i]! <= 0) {
       this.dying[i] = 1e-4;
       // Killed while still dissolving in (or out): the death goes on from what is shown, and the spawn or
