@@ -281,7 +281,6 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
   // at most); Stage3D.resize sets the tier's DPR, then this overrides it. A pinned ratio wins over both.
   let governor: DynamicResolution | null = null;
   let pinned: number | null = null;
-  let lastFrameAt = 0;
   const deviceMax = (q: Quality): number => Math.min(TT_TIERS[q].dpr, typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
   const makeGovernor = (q: Quality): void => {
     const rule = TT_DYNAMIC_RES[q];
@@ -332,9 +331,10 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
       return counts;
     },
     render: (dt) => {
-      const now = performance.now();
-      if (governor !== null && pinned === null && lastFrameAt > 0 && governor.frame(now - lastFrameAt)) applyPixelRatio();
-      lastFrameAt = now;
+      // The governor reads the frame's dt (rAF timestamps, on the display's vsync), never a clock read here: that
+      // carries each frame's varying CPU before the draw, and its jitter (and the short gap after a stall) read as
+      // late frames and dropped the ratio while every vsync was met. dt 0 (a redraw, a capture) is not a frame.
+      if (governor !== null && pinned === null && dt > 0 && governor.frame(dt * 1000)) applyPixelRatio();
       stage.update(dt);
       stage.render(dt);
       // Plain loop: no iterator object per frame.
