@@ -5,9 +5,11 @@
  * into the game (skill game-vfx-layered "Demo or lab first"; owner 02/11).
  * Keys: 0 Phi Kiếm, 1 Ngự Kiếm Quyết, 2 Nhất Tuyến Xuyên Vân, 3 Hồi Kiếm Hộ
  * Thân, 4 Lưu Quang Bộ, 5 Lạc Kiếm Trận, 6 Thiên Hà Kiếm Vũ, B an enemy blow
- * at the guard, R reset. Each skill is "typed" at the chosen WPM: the charge
+ * at the guard, R reset. A key is the word's last correct keystroke (canon
+ * D58, instant cast): the release fires on that frame. ?typed=1 (or the
+ * panel's checkbox) types the word at the chosen WPM first: the charge
  * follows the letters and the release comes on the last one.
- * Flags: ?q= tier, ?wpm=45, ?herd=still|march, ?fixed=1 (no rAF: the capture
+ * Flags: ?q= tier, ?wpm=45, ?typed=1, ?herd=still|march, ?fixed=1 (no rAF: the capture
  * scenario steps frames with __lab.step), ?ui=0 hides the panel,
  * ?weapon=<id> the equipped sword (D55, default clear-wind; weapons.ts): its
  * blade and element colours drive every skill. W cycles the four swords.
@@ -258,13 +260,22 @@ let typing: Typing | null = null;
 const WORD_LEN: Record<KiemSlot, number> = { auto: 0, k1: 5, k2: 6, guard: 5, dash: 4, k4: 6, k5: 8 };
 const TARGET: Record<KiemSlot, [number, number]> = { auto: [0, -8], k1: [0, -8], k2: [0.2, -12], guard: [0, 3], dash: [5, 3], k4: [-5, -7], k5: [0, -9] };
 
+/**
+ * Instant cast (canon D58 (1), the default): a skill key IS the word's last correct keystroke, so the release
+ * fires on this frame and the first blade leaves at once. ?typed=1 or the panel's checkbox types the word at
+ * the WPM first (the charge follows the letters, the release comes on the last one), as before the power pass.
+ */
+let typedMode = params.get("typed") === "1";
+
 function type(slot: KiemSlot): void {
-  if (slot === "auto") {
-    probe.lastKey("auto");
+  if (slot === "auto" || !typedMode) {
+    typing = null;
+    probe.lastKey(slot);
     // A release cuts a hit-stop still holding: the body answers the last key within the 50 ms gate (feel.ts cut).
     stop.cut();
-    caster.release("auto", TARGET.auto[0], TARGET.auto[1]);
-    queueCast("auto", 0, 0);
+    const [tx, tz] = slot === "auto" ? TARGET.auto : TARGET[slot];
+    caster.release(slot, tx, tz);
+    queueCast(slot, slot === "auto" ? 0 : tx, slot === "auto" ? 0 : tz);
     return;
   }
   probe.event("type", slot);
@@ -393,6 +404,18 @@ if (params.get("ui") !== "0") {
   input.onchange = () => (wpm = Math.max(10, Number(input.value) || 45));
   w.append(input);
   panel.append(w);
+  // Typed charge (?typed=1): the word is typed at the WPM before the release; off, a key casts at once (D58).
+  const tl = document.createElement("label");
+  tl.style.cssText = "display:flex;gap:6px;align-items:center";
+  const typedBox = document.createElement("input");
+  typedBox.type = "checkbox";
+  typedBox.checked = typedMode;
+  typedBox.onchange = () => {
+    typedMode = typedBox.checked;
+    typing = null;
+  };
+  tl.append(typedBox, document.createTextNode("Typed charge (type the word first)"));
+  panel.append(tl);
   // Weapon selector: the four wave-1 swords (WEAPON_DESIGN §6); shapes are the stand-in until their GLBs exist.
   const wl = document.createElement("label");
   wl.textContent = "Sword ";
