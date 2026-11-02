@@ -16,10 +16,11 @@
 //   (__lab.zoom(1)): sheets and real-speed clips without metrics.
 // Env: URL, WPM (45), SPEC=1 (preview fan-sweep-spec.ts instead of the baked poses: run with `npx tsx`), SEED.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const FONT = ["/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"].find((f) => existsSync(f));
 const DIRS = [
   ["up", 0],
   ["up-right", 45],
@@ -234,7 +235,10 @@ export default async function (page) {
   }
 
   if (mode === "judge") {
+    // field: the play camera round the hero and the k4 zone (the lab's target, up and left of the hero); play: the
+    // hero's own neighbourhood at the play camera; close: the player's close zoom (__lab.zoom(1)).
     const views = [
+      ["field", 0],
       ["play", 0],
       ["close", 1],
     ];
@@ -249,12 +253,13 @@ export default async function (page) {
       const files = [];
       let c = null;
       const sz0 = await page.eval("window.__labPose.size()");
-      const side = view === "play" ? Math.round(sz0.heightPx * 4.5) : Math.min(page.height, Math.round(sz0.heightPx * 2.6));
+      const H0 = sz0.heightPx;
+      const side = view === "field" ? Math.min(page.height, Math.round(H0 * 14.5)) : view === "play" ? Math.round(H0 * 4.5) : Math.min(page.height, Math.round(H0 * 2.6));
       await page.eval("window.__lab.type('k4')");
       for (let f = 0; f < 170; f += 1) {
         await page.eval("window.__lab.tick(1/60)");
         const s = await page.eval("window.__labPose.sample()");
-        if (!c) c = [s.cx, s.cy - (view === "play" ? sz0.heightPx * 0.6 : 0)];
+        if (!c) c = view === "field" ? [s.cx - H0 * 2.6, s.cy - H0 * 4.3] : [s.cx, s.cy - (view === "play" ? H0 * 0.6 : 0)];
         files.push({ f, stage: s.stage, file: await crop(c[0], c[1], side, `judge-${view}`) });
       }
       // Real-speed clip and a 12-frame sheet (no numbers, phase words only).
@@ -268,7 +273,7 @@ export default async function (page) {
       const tiles = pick.map((r, i) => {
         const o = join(raw, `sheet-${view}-${i}.png`);
         const label = ["first key", "typing", "typing", "coil", "last coil", "last key", "+2 frames", "+5 frames", "+9 frames", "+16 frames", "+26 frames", "+40 frames"][i];
-        spawnSync("magick", [r.file, "-resize", "360x360", "-gravity", "south", "-fill", "white", "-undercolor", "#0008", "-pointsize", "18", "-annotate", "+0+6", label, o]);
+        spawnSync("magick", [r.file, "-resize", "360x360", ...(FONT ? ["-font", FONT] : []), "-gravity", "south", "-fill", "white", "-undercolor", "#0008", "-pointsize", "18", "-annotate", "+0+6", label, o]);
         return o;
       });
       spawnSync("magick", ["montage", ...tiles, "-tile", "4x3", "-geometry", "+3+3", "-background", "#111", join(sheets, `k4-${view}.jpg`)]);
