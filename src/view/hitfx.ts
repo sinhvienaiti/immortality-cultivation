@@ -527,6 +527,7 @@ attribute vec4 iUv;
 attribute vec4 iColor;
 attribute vec4 iTint;
 uniform vec2 uScreen;
+uniform vec2 uRowY;
 varying vec2 vUv;
 varying vec4 vColor;
 varying vec4 vTint;
@@ -535,8 +536,9 @@ void main() {
   vUv = mix(iUv.xy, iUv.zw, uv);
   vColor = iColor;
   vTint = iTint;
-  // Screen y grows down: position.y 1 is the glyph's bottom.
-  vY = position.y;
+  // Screen y grows down: position.y 1 is the glyph's bottom. vY in the kit's cell around the glyph (a taller row
+  // of a look keeps the lower stroke's tint where it was: uRowY = rowH / cellH, (midY − digitMidY) / cellH).
+  vY = position.y * uRowY.x - uRowY.y;
   vec2 p = iRect.xy + position.xy * iRect.zw;
   gl_Position = vec4(p.x / uScreen.x * 2.0 - 1.0, 1.0 - p.y / uScreen.y * 2.0, 0.0, 1.0);
 }`;
@@ -570,6 +572,15 @@ export interface NumberLook {
   /** The dark outline's width (atlas px; default the kit's) and a soft dark shadow under it (skill numbers over bright VFX). */
   readonly outline?: number;
   readonly shadow?: boolean;
+  /**
+   * The digit rows' height and the glyphs' middle in a row (atlas px; default the kit's cellH and digitMidY). A
+   * face with descending figures (Cormorant's old-style 3, 4, 5, 7, 9) under a 15 px outline and a shadow inks
+   * about 77 px: in 64 px rows it bled 12 px into the gold row (dark wedges over gold numbers) and its own
+   * descenders were cut flat at the quad's edge. The quads grow with the row, so a glyph keeps its size on screen.
+   * Rows taller than half the label row's top leave the label unpainted (skill numbers never show one).
+   */
+  readonly rowH?: number;
+  readonly midY?: number;
 }
 export const DEFAULT_NUMBER_LOOK: NumberLook = { glyphs: GLYPHS, digitFont: NUMBER_ATLAS.digitFont, goldRow: false, advance: 1 };
 /** The gold-edge row's top (atlas px). */
@@ -613,6 +624,11 @@ export class IcNumberSprites {
   private readonly screen = new THREE.Vector2(1, 1);
   readonly cellWidth: number;
   private readonly labelWidth: number;
+  /** The digit rows' height, the glyphs' middle in a row and the gold row's top (atlas px; NumberLook.rowH). */
+  private readonly rowH: number;
+  private readonly midY: number;
+  private readonly goldTop: number;
+  private readonly rowY = new THREE.Vector2(1, 0);
   private readonly colors: THREE.Color[];
   private readonly labelColor: THREE.Color;
   // The next quad, set field by field before quad(n).
@@ -635,6 +651,11 @@ export class IcNumberSprites {
     const { colors, label, labelColor } = profile.numbers;
     this.colors = colors.map((color) => new THREE.Color(color));
     this.labelColor = new THREE.Color(labelColor);
+    this.rowH = Math.min(A.height / 2, look.rowH ?? A.cellH);
+    this.midY = look.midY ?? A.digitMidY + (this.rowH - A.cellH) / 2;
+    this.goldTop = look.rowH === undefined ? GOLD_ROW : this.rowH;
+    this.rowY.set(this.rowH / A.cellH, (this.midY - A.digitMidY) / A.cellH);
+    const labelFree = this.goldTop + this.rowH <= A.labelTop;
     const canvas = document.createElement("canvas");
     canvas.width = A.width;
     canvas.height = A.height;
@@ -675,12 +696,12 @@ export class IcNumberSprites {
         }
         cellWidth = Math.min(Math.floor(A.width / look.glyphs.length / 2) * 2, Math.max(A.minCellW, Math.ceil(half) * 2));
       }
-      [...look.glyphs].forEach((char, index) => glyph(char, index * cellWidth + cellWidth / 2, A.digitMidY, digitOutline));
+      [...look.glyphs].forEach((char, index) => glyph(char, index * cellWidth + cellWidth / 2, this.midY, digitOutline));
       if (look.goldRow) {
         // Crits: a gold edge between the dark outline and the ivory fill.
         [...look.glyphs].forEach((char, index) => {
           const x = index * cellWidth + cellWidth / 2;
-          const y = GOLD_ROW + A.digitMidY;
+          const y = this.goldTop + this.midY;
           if (look.shadow === true) {
             paint.shadowColor = "rgba(0,4,10,0.9)";
             paint.shadowBlur = 7;
@@ -700,11 +721,13 @@ export class IcNumberSprites {
           paint.fillText(char, x, y);
         });
       }
-      paint.font = A.labelFont;
-      const metrics = paint.measureText(label);
-      const inked = Number.isFinite(metrics.actualBoundingBoxLeft) && Number.isFinite(metrics.actualBoundingBoxRight) ? metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight : 0;
-      labelWidth = Math.min(A.width - 8, Math.ceil(Math.max(metrics.width, inked)) + 16);
-      glyph(label, labelWidth / 2, A.labelTop + A.labelRowH / 2, A.labelOutline);
+      if (labelFree) {
+        paint.font = A.labelFont;
+        const metrics = paint.measureText(label);
+        const inked = Number.isFinite(metrics.actualBoundingBoxLeft) && Number.isFinite(metrics.actualBoundingBoxRight) ? metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight : 0;
+        labelWidth = Math.min(A.width - 8, Math.ceil(Math.max(metrics.width, inked)) + 16);
+        glyph(label, labelWidth / 2, A.labelTop + A.labelRowH / 2, A.labelOutline);
+      }
     }
     this.cellWidth = cellWidth;
     this.labelWidth = labelWidth;
@@ -728,7 +751,7 @@ export class IcNumberSprites {
     geometry.setAttribute("iTint", this.tintAttr);
     geometry.instanceCount = 0;
     const material = new THREE.ShaderMaterial({
-      uniforms: { uAtlas: { value: atlas }, uScreen: { value: this.screen } },
+      uniforms: { uAtlas: { value: atlas }, uScreen: { value: this.screen }, uRowY: { value: this.rowY } },
       vertexShader: NUMBER_VERTEX,
       fragmentShader: NUMBER_FRAGMENT,
       transparent: true,
@@ -787,7 +810,7 @@ export class IcNumberSprites {
         this.tg = ((rgb >> 8) & 255) / 255;
         this.tb = (rgb & 255) / 255;
         this.tk = paint.tintK;
-        if (paint.goldOf(i)) row = GOLD_ROW;
+        if (paint.goldOf(i)) row = this.goldTop;
       }
       const style = field.style[i]!;
       const k = field.age[i]! / field.life[i]!;
@@ -807,18 +830,20 @@ export class IcNumberSprites {
         const adv = ch === 46 ? 0.42 : ch === 77 ? 1.15 : 1;
         const middle = x + (advance * s * adv) / 2 - advance * 0.2 * (1 - s) + (advance * (A.glyphQuadW - 1.4) * s) / 2;
         const w = advance * A.glyphQuadW * s * cellScale;
+        // A taller row (NumberLook.rowH) grows the quad with it and keeps the glyph's middle where it was.
+        const kitH = px * A.glyphQuadH * s;
         this.qx = middle - w / 2;
-        this.qy = y + px * (1 - s) * 0.9;
+        this.qy = y + px * (1 - s) * 0.9 - kitH * this.rowY.y;
         this.qw = w;
-        this.qh = px * A.glyphQuadH * s;
+        this.qh = kitH * this.rowY.x;
         this.u0 = (g * cell) / W;
         this.v0 = row / H;
         this.u1 = ((g + 1) * cell) / W;
-        this.v1 = (row + A.cellH) / H;
+        this.v1 = (row + this.rowH) / H;
         n = this.quad(n, color);
         x += advance * s * adv;
       }
-      if (style === STYLE.perfect) {
+      if (style === STYLE.perfect && this.labelWidth > 0) {
         const lh = px * A.label;
         const lw = lh * (this.labelWidth / A.refCellW);
         const h = lh * A.labelQuadH * labelRows;
@@ -1170,8 +1195,9 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
  * be loaded before the first number is drawn (the atlas is painted once).
  */
 export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont: string = NUMBER_ATLAS.digitFont): SkillNumbers {
-  // A bold dark outline and a soft shadow: never thin white over bright VFX (round 2).
-  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true, advance: digitFont === NUMBER_ATLAS.digitFont ? 1 : 0.8, outline: 15, shadow: true });
+  // A bold dark outline and a soft shadow: never thin white over bright VFX (round 2), in 96 px rows so a
+  // descending figure's ink, outline and shadow stay inside its own cell (in 64 px rows they bled and were cut).
+  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true, advance: digitFont === NUMBER_ATLAS.digitFont ? 1 : 0.8, outline: 15, shadow: true, rowH: 96, midY: 44 });
 }
 
 // ── Ink smoke ───────────────────────────────────────────────────────────────
