@@ -118,7 +118,8 @@ const SILVER = [0.78, 0.84, 0.9] as const;
 const GOLD = [0.95, 0.72, 0.3] as const;
 /** The number tint and flash colour hosts read (linear jade-cyan, sRGB hex). */
 export const VAN_KIEM_COLOUR = [0.3, 0.86, 0.74] as const;
-export const VAN_KIEM_FLASH = "#bff5e4";
+/** A silver flash with a breath of jade (a green full-screen wash read sickly at 17 %). */
+export const VAN_KIEM_FLASH = "#eafcf4";
 
 // ── Tail cards: one camera-facing strip per sword, jade at the tail, a thin hot core at the head ──
 

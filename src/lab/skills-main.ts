@@ -420,8 +420,8 @@ function startUltimate(tx: number, tz: number): void {
   c.tier = "ultimate";
   bus.emit(c);
   worldEvent("k5", "open");
-  screen.setFlashColor(fx.paletteOf("k5").flash);
-  screen.flash(0.12, 0.06);
+  screen.setFlashColor("#eef8ff");
+  screen.flash(0.08, 0.06);
   screen.punch(0.012, 0.2);
 }
 function fireUltimate(): void {
