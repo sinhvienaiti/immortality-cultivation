@@ -1,11 +1,13 @@
 // Skills lab capture (dev-only page /skills-lab.html?fixed=1): each Kiếm skill is
 // typed at a fixed WPM on a fixed 60 Hz clock, and frames are taken at the
 // five phases (charge, release, travel, impact, aftermath) for the frame
-// sheets of VFX_STANDARD §5.6. Writes PNGs to OUT_DIR/<skill>-NN-<label>.png
-// and a JSON of the frames taken. Run from the game root with Vite dev up:
-//   URL=http://127.0.0.1:3018/skills-lab.html?fixed=1&ui=0 OUT_DIR=tmp/lab/shots \
+// sheets of VFX_STANDARD §5.6. Writes PNGs to
+// OUT_DIR/<skill>-<view>-<weapon>-NN-<label>.png. Run from the game root with Vite dev up:
+//   URL=http://127.0.0.1:3018/skills-lab.html?fixed=1&ui=0 OUT_DIR=tmp/lab/shots WEAPON=clear-wind \
 //   node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-skills.mjs --width=1280 --height=720
-// SKILLS=auto,k1,... picks skills; WPM (45).
+// SKILLS=auto,k1,... picks skills; WPM (45); VIEW=play|close; WEAPON=<sword id> equips
+// that sword first (D55: its blade and element colours drive every skill; default:
+// the lab's ?weapon or clear-wind).
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -36,11 +38,16 @@ export default async function (page) {
     if (await page.eval("!!(window.__lab && window.__lab.ready)")) break;
     await sleep(250);
   }
+  if (process.env.WEAPON) {
+    const ok = await page.eval(`window.__lab.setWeapon(${JSON.stringify(process.env.WEAPON)})`);
+    if (ok !== true) throw new Error(`lab refused weapon "${process.env.WEAPON}" (${JSON.stringify(ok)}): swords only`);
+  }
+  const weapon = await page.eval("window.__lab.weapon()");
   await page.eval(`window.__lab.setWpm(${wpm})`);
   const framesPerLetter = Math.round(3600 / (wpm * 5));
   const taken = [];
   const shot = async (skill, n, label) => {
-    const file = join(out, `${skill}-${view}-${String(n).padStart(2, "0")}-${label}.png`);
+    const file = join(out, `${skill}-${view}-${weapon}-${String(n).padStart(2, "0")}-${label}.png`);
     await page.shot(file);
     taken.push(file);
   };
@@ -85,5 +92,5 @@ export default async function (page) {
       }
     }
   }
-  return { framesPerLetter, taken: taken.length };
+  return { weapon, framesPerLetter, taken: taken.length };
 }

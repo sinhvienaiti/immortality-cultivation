@@ -4,14 +4,18 @@
  * aftermath), after docs/games/tu-tien/skills/SKILL_CATALOG.md K0–K5 and the
  * canon hit ticks (§12.1: Phi Kiếm +18, Ngự Kiếm +6/+36/+66, Nhất Tuyến +12,
  * Lạc Kiếm Trận opens +12 then a beat every 30, Thiên Hà Kiếm Vũ
- * +30/+75/+120). Kiếm colours: cold silver, ivory, a very pale steel blue
- * (canon D54); ink for hits, ink smoke and spirit motes for deaths. View
- * only: hits shown here are the lab's stand-ins for sim events.
+ * +30/+75/+120). Colours (owner D55, 02/11/2026): every blade, trail,
+ * glow card, sigil, flash and spark copies the EQUIPPED sword (`setWeapon`):
+ * its blade geometry, its rail and its element accent (weapons.ts, derived
+ * with the bloom and white-core rules); steel stays cold silver, ink for
+ * hits, ink smoke and spirit motes for deaths. View only: hits shown here are
+ * the lab's stand-ins for sim events.
  */
 import * as THREE from "three";
-import { BladeSet } from "./blades";
+import { BladeSet, loadBladeGeometry } from "./blades";
 import { clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SpritePool } from "./fxkit";
 import type { TargetField } from "./targets";
+import { DEFAULT_WEAPON, weaponById, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
 export type KiemSlot = "auto" | "k1" | "k2" | "guard" | "dash" | "k4" | "k5";
 
@@ -45,13 +49,17 @@ export interface KiemHost {
   play(clip: "attack" | "skill1" | "skill2" | "ult" | "dash" | "idle"): void;
 }
 
-/** HDR colours (linear). Cores 3–6 bloom; halos ≤ 0.9 do not (LESSONS §5). */
-const CORE = [3.4, 3.3, 3.0] as const;
-const HALO = [0.6, 0.7, 0.86] as const;
-const STEEL = [0.78, 0.84, 0.92] as const;
+/**
+ * Dark layers stay neutral whatever the weapon (linear). Light layers come
+ * from the weapon's glow (weapons.ts) and scale all three channels by one
+ * factor, so the accent's hue survives (per-channel factors of the old steel
+ * set halved a warm accent's saturation); each factor keeps the steel set's
+ * peak channel level.
+ */
 const INK = [0.045, 0.05, 0.065] as const;
 const SMOKE = [0.1, 0.11, 0.13] as const;
-const MOTE = [2.6, 2.5, 2.2] as const;
+/** Sigil light per kind relative to the weapon's sigil colour (the steel set's hex/spiral/arcs/line levels). */
+const SIGIL_GAIN = { hex: 1.04, spiral: 1.04, arcs: 1, line: 1.16, arrow: 1.16 } as const;
 
 /** Canon §12.1 hit ticks in seconds (60 Hz). */
 const TICK = 1 / 60;
@@ -119,6 +127,10 @@ export class KiemFx {
   private ribbonCursor = 0;
   private time = 0;
   private readonly poolN: number;
+  /** The equipped sword and its VFX colours (D55). */
+  private weaponDef: WeaponDef;
+  private pal: WeaponGlow;
+  private weaponSeq = 0;
 
   // Charge state per slot (typing progress 0..1, -1 idle).
   private charge: Record<KiemSlot, number> = { auto: -1, k1: -1, k2: -1, guard: -1, dash: -1, k4: -1, k5: -1 };
@@ -154,6 +166,7 @@ export class KiemFx {
     this.star = new SpritePool(96, tex.star, "add", "camera", 14);
     this.flare = new SpritePool(48, tex.flare, "add", "camera", 15);
     this.ribbons = new RibbonPool(40, 18, tex.trace);
+    // Steel-set colours here; applyColours below recolours them from the weapon.
     this.sigHex = new GroundSigil("hex", 7.2, 7.2, "#9fb2cc", "#ffffff");
     this.sigSpiral = new GroundSigil("spiral", 13.5, 13.5, "#a7b6cc", "#ffffff");
     this.sigArcs = new GroundSigil("arcs", 4.8, 4.8, "#a9b8c8", "#ffffff");
@@ -183,6 +196,61 @@ export class KiemFx {
     for (let i = 0; i < 24; i += 1) {
       this.flights.push({ active: false, blade: 0, ribbon: 0, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, fade: 0, sx: 0, sy: 0, sz: 0 });
     }
+    // The signature sword's colours until setWeapon; the blade stays the stand-in jian until a GLB loads.
+    this.weaponDef = weaponById(DEFAULT_WEAPON)!;
+    this.pal = this.weaponDef.glow;
+    this.applyColours(this.weaponDef);
+  }
+
+  // ── Equipped weapon (D55) ────────────────────────────────────────────────
+
+  get weapon(): WeaponId {
+    return this.weaponDef.id;
+  }
+
+  /**
+   * Equips a sword: the blade geometry (its GLB, or the stand-in jian while
+   * the file is missing), the rail and every light layer's colour swap
+   * together once the geometry is ready. Only family "sword" is accepted: the
+   * sabre and spear skill sets are not built yet. Resolves false when refused
+   * or overtaken by a later call. Not per frame: it may allocate.
+   */
+  setWeapon(def: WeaponDef): Promise<boolean> {
+    if (def.family !== "sword") {
+      console.warn(`[kiem] ${def.name} is a ${def.family}: the Kiếm skills take swords only (the ${def.family} skills are not built yet).`);
+      return Promise.resolve(false);
+    }
+    const seq = (this.weaponSeq += 1);
+    return loadBladeGeometry(def.model, def.fit).then((geometry) => {
+      if (seq !== this.weaponSeq) return false;
+      this.blades.setGeometry(geometry);
+      this.weaponDef = def;
+      this.pal = def.glow;
+      this.applyColours(def);
+      return true;
+    });
+  }
+
+  private applyColours(def: WeaponDef): void {
+    const g = def.glow;
+    this.blades.setRail(def.rail);
+    const sigils: [GroundSigil, number][] = [
+      [this.sigHex, SIGIL_GAIN.hex],
+      [this.sigSpiral, SIGIL_GAIN.spiral],
+      [this.sigArcs, SIGIL_GAIN.arcs],
+      [this.sigLine, SIGIL_GAIN.line],
+      [this.sigArrow, SIGIL_GAIN.arrow],
+    ];
+    for (const [sig, gain] of sigils) {
+      sig.uniforms.uColor.value.setRGB(g.sigil[0] * gain, g.sigil[1] * gain, g.sigil[2] * gain);
+      sig.uniforms.uCore.value.setRGB(g.sigilCore[0], g.sigilCore[1], g.sigilCore[2]);
+    }
+  }
+
+  /** A blade flash toward the weapon's tint: k = 1 plain steel, k > 1 brighter (the tint keeps ≤ 30 % white). */
+  private bladeTint(i: number, k: number): void {
+    const t = this.pal.tint;
+    this.blades.tint(i, 1 + (k - 1) * t[0], 1 + (k - 1) * t[1], 1 + (k - 1) * t[2]);
   }
 
   /** Reset every running effect (lab: before a capture). */
@@ -221,9 +289,9 @@ export class KiemFx {
     s.life = 0.18;
     s.size0 = 0.35 + 0.35 * p;
     s.size1 = 0.2;
-    s.r = HALO[0] * 1.2;
-    s.g = HALO[1] * 1.2;
-    s.b = HALO[2] * 1.2;
+    s.r = this.pal.halo[0] * 1.2;
+    s.g = this.pal.halo[1] * 1.2;
+    s.b = this.pal.halo[2] * 1.2;
     s.a = 0.8;
     this.glow.emit();
     if (slot === "k1") {
@@ -279,9 +347,9 @@ export class KiemFx {
     f.life = 0.1;
     f.size0 = size;
     f.size1 = size * 1.3;
-    f.r = CORE[0];
-    f.g = CORE[1];
-    f.b = CORE[2];
+    f.r = this.pal.core[0];
+    f.g = this.pal.core[1];
+    f.b = this.pal.core[2];
     this.flare.emit();
     const g = this.glow.spec.reset();
     g.x = this.v.x;
@@ -290,13 +358,13 @@ export class KiemFx {
     g.life = 0.22;
     g.size0 = size * 2.2;
     g.size1 = size * 2.8;
-    g.r = HALO[0];
-    g.g = HALO[1];
-    g.b = HALO[2];
+    g.r = this.pal.halo[0];
+    g.g = this.pal.halo[1];
+    g.b = this.pal.halo[2];
     g.a = 0.75;
     this.glow.emit();
     if (ringM > 0) this.ring(this.c.x, this.c.z, 0.4, ringM, 0.3, 0.55);
-    this.host.flash(this.v, "#dfe8ff", intensity);
+    this.host.flash(this.v, this.pal.flash, intensity);
   }
 
   private castAuto(): void {
@@ -369,7 +437,7 @@ export class KiemFx {
     this.host.impulse(1, dx, dz);
     // The blade-light runs the whole line in 0.2 s (hit at +12 ticks).
     const r = this.nextRibbon();
-    this.ribbons.start(r, k.ax, 0.9, k.az, 0.22, STEEL[0] * 2.4, STEEL[1] * 2.4, STEEL[2] * 2.6, 1);
+    this.ribbons.start(r, k.ax, 0.9, k.az, 0.22, this.pal.body[0] * 2.6, this.pal.body[1] * 2.6, this.pal.body[2] * 2.6, 1);
     k.ribbon = r;
   }
 
@@ -413,7 +481,7 @@ export class KiemFx {
     this.v.set(g.blockX[best]!, 1.0, g.blockZ[best]!);
     this.impact(this.v, 1.1, Math.cos(ang), Math.sin(ang), 1.0);
     this.slashAt(this.v, ang + Math.PI / 2, 1.4);
-    this.host.flash(this.v, "#e8eeff", 6);
+    this.host.flash(this.v, this.pal.flash, 6);
     this.host.hitStop(30);
     return true;
   }
@@ -441,7 +509,7 @@ export class KiemFx {
     this.releaseFlash(0.5, 2.5, 0);
     this.dust(this.c.x, this.c.z, 4, 0.6);
     const r = this.nextRibbon();
-    this.ribbons.start(r, this.c.x, 1.0, this.c.z, 0.35, STEEL[0] * 1.6, STEEL[1] * 1.6, STEEL[2] * 1.8, 1);
+    this.ribbons.start(r, this.c.x, 1.0, this.c.z, 0.35, this.pal.body[0] * 1.8, this.pal.body[1] * 1.8, this.pal.body[2] * 1.8, 1);
     d.ribbon = r;
   }
 
@@ -490,9 +558,9 @@ export class KiemFx {
       s.size0 = s.size1 = 0.12;
       s.stretch = 0.06;
       s.aspect = 1;
-      s.r = STEEL[0] * 2.2;
-      s.g = STEEL[1] * 2.2;
-      s.b = STEEL[2] * 2.4;
+      s.r = this.pal.body[0] * 2.4;
+      s.g = this.pal.body[1] * 2.4;
+      s.b = this.pal.body[2] * 2.4;
       this.trace.emit();
     }
   }
@@ -528,8 +596,8 @@ export class KiemFx {
     f.sx = fx;
     f.sy = fy;
     f.sz = fz;
-    this.ribbons.start(f.ribbon, fx, fy, fz, width, STEEL[0] * 2.2, STEEL[1] * 2.2, STEEL[2] * 2.5, 1);
-    this.blades.tint(blade, 1.4, 1.45, 1.6);
+    this.ribbons.start(f.ribbon, fx, fy, fz, width, this.pal.body[0] * 2.5, this.pal.body[1] * 2.5, this.pal.body[2] * 2.5, 1);
+    this.bladeTint(blade, 1.6);
   }
 
   private impact(at: THREE.Vector3, scale: number, dx: number, dz: number, power: number): void {
@@ -541,9 +609,9 @@ export class KiemFx {
     st.size0 = 1.5 * scale;
     st.size1 = 1.9 * scale;
     st.rot = this.rand.range(0, Math.PI);
-    st.r = CORE[0];
-    st.g = CORE[1];
-    st.b = CORE[2];
+    st.r = this.pal.core[0];
+    st.g = this.pal.core[1];
+    st.b = this.pal.core[2];
     this.star.emit();
     const g = this.glow.spec.reset();
     g.x = at.x;
@@ -552,9 +620,9 @@ export class KiemFx {
     g.life = 0.2;
     g.size0 = 2.2 * scale;
     g.size1 = 2.8 * scale;
-    g.r = HALO[0];
-    g.g = HALO[1];
-    g.b = HALO[2];
+    g.r = this.pal.halo[0];
+    g.g = this.pal.halo[1];
+    g.b = this.pal.halo[2];
     g.a = 0.55;
     this.glow.emit();
     const n = Math.round(4 + 5 * power);
@@ -574,9 +642,9 @@ export class KiemFx {
       s.size0 = 0.09;
       s.size1 = 0.05;
       s.stretch = 0.045;
-      s.r = CORE[0] * 0.8;
-      s.g = CORE[1] * 0.8;
-      s.b = CORE[2] * 0.75;
+      s.r = this.pal.core[0] * 0.8;
+      s.g = this.pal.core[1] * 0.8;
+      s.b = this.pal.core[2] * 0.8;
       this.spark.emit();
     }
     // Ink: a splash flung along the blow and a stain on the ground.
@@ -622,9 +690,9 @@ export class KiemFx {
     s.life = 0.14;
     s.size0 = size;
     s.size1 = size * 1.25;
-    s.r = CORE[0] * 0.85;
-    s.g = CORE[1] * 0.85;
-    s.b = CORE[2] * 0.9;
+    s.r = this.pal.core[0] * 0.85;
+    s.g = this.pal.core[1] * 0.85;
+    s.b = this.pal.core[2] * 0.85;
     this.slash.emit();
   }
 
@@ -639,7 +707,7 @@ export class KiemFx {
     dz /= len;
     this.v.set(T.x(target), T.midY(target), T.z(target));
     this.impact(this.v, scale, dx, dz, power);
-    if (T.hit(target, dx, dz, power, 0xdfe8ff)) this.death(this.v, dx, dz, T.radius(target));
+    if (T.hit(target, dx, dz, power, this.pal.flashHex)) this.death(this.v, dx, dz, T.radius(target));
   }
 
   private death(at: THREE.Vector3, dx: number, dz: number, radius: number): void {
@@ -680,9 +748,9 @@ export class KiemFx {
       s.life = this.rand.range(0.6, 1.1);
       s.size0 = 0.07;
       s.size1 = 0.03;
-      s.r = MOTE[0];
-      s.g = MOTE[1];
-      s.b = MOTE[2];
+      s.r = this.pal.mote[0];
+      s.g = this.pal.mote[1];
+      s.b = this.pal.mote[2];
       this.motes.emit();
     }
   }
@@ -695,9 +763,9 @@ export class KiemFx {
     s.life = life;
     s.size0 = r0 * 2;
     s.size1 = r1 * 2;
-    s.r = HALO[0] * 1.3;
-    s.g = HALO[1] * 1.3;
-    s.b = HALO[2] * 1.3;
+    s.r = this.pal.halo[0] * 1.3;
+    s.g = this.pal.halo[1] * 1.3;
+    s.b = this.pal.halo[2] * 1.3;
     s.a = alpha;
     this.groundRing.emit();
   }
@@ -745,9 +813,10 @@ export class KiemFx {
       s.stretch = B.len[i]! * 0.9;
       s.life = 0.02;
       s.size0 = s.size1 = hero ? 0.3 : 0.2;
-      s.r = HALO[0] * (hero ? 1.25 : 1.0);
-      s.g = HALO[1] * (hero ? 1.25 : 1.0);
-      s.b = HALO[2] * (hero ? 1.3 : 1.0);
+      // rgb × a stays ≤ 0.9 (0.86 × 1.2 × 0.85 = 0.88): a halo, it must not bloom.
+      s.r = this.pal.halo[0] * (hero ? 1.2 : 1.0);
+      s.g = this.pal.halo[1] * (hero ? 1.2 : 1.0);
+      s.b = this.pal.halo[2] * (hero ? 1.2 : 1.0);
       s.a = hero ? 0.85 : 0.5;
       this.bladeGlow.emit();
     }
@@ -806,7 +875,7 @@ export class KiemFx {
       this.sigLine.uniforms.uFade.value = 1;
       this.host.hand(this.v);
       this.blades.set(HERO.k2, this.v.x, this.v.y, this.v.z, dx, 0.05, dz, 1.5);
-      this.blades.tint(HERO.k2, 1 + p2 * 0.8, 1 + p2 * 0.85, 1 + p2);
+      this.bladeTint(HERO.k2, 1 + p2);
     } else if (!this.k2.active) {
       this.blades.hide(HERO.k2);
     }
@@ -929,9 +998,9 @@ export class KiemFx {
         s.life = 0.05;
         s.size0 = s.size1 = 0.16;
         s.stretch = 0.025;
-        s.r = HALO[0];
-        s.g = HALO[1];
-        s.b = HALO[2];
+        s.r = this.pal.halo[0];
+        s.g = this.pal.halo[1];
+        s.b = this.pal.halo[2];
         s.a = 0.8;
         this.trace.emit();
       }
@@ -942,7 +1011,7 @@ export class KiemFx {
         this.strike(f.target, f.fx, f.fz, f.power, 1);
         if (f.pierce >= 0 && T.alive(f.pierce)) this.strike(f.pierce, f.fx, f.fz, f.power * 0.6, 0.8);
         f.fade = 0.22;
-        this.blades.tint(f.blade, 2.4, 2.4, 2.6);
+        this.bladeTint(f.blade, 2.6);
       }
     }
   }
@@ -962,9 +1031,9 @@ export class KiemFx {
         s.life = 0.08;
         s.size0 = 0.4;
         s.size1 = 0.55;
-        s.r = CORE[0];
-        s.g = CORE[1];
-        s.b = CORE[2];
+        s.r = this.pal.core[0];
+        s.g = this.pal.core[1];
+        s.b = this.pal.core[2];
         this.flare.emit();
         this.k1Launch(k.launched);
       }
@@ -984,7 +1053,7 @@ export class KiemFx {
     if (k.t < T_K2_HIT + 0.02) {
       this.ribbons.push(ribbon, hx, 0.9, hz);
       this.blades.set(HERO.k2, hx, 0.9, hz, k.dx, 0, k.dz, 1.7);
-      this.blades.tint(HERO.k2, 2.2, 2.2, 2.4);
+      this.bladeTint(HERO.k2, 2.4);
     }
     // Light on the line: peaks at release, then the line cools into an ink slit.
     const glow = k.t < T_K2_HIT ? 1.6 : 1.6 * (1 - clamp01((k.t - T_K2_HIT) / 0.5));
@@ -1034,7 +1103,7 @@ export class KiemFx {
         if (bt < 0.12) {
           const a = Math.atan2(g.blockZ[j]! - this.c.z, g.blockX[j]! - this.c.x);
           this.blades.set(HERO.guard + j, g.blockX[j]!, 1.0, g.blockZ[j]!, -Math.sin(a), 0.1, Math.cos(a), 1.4);
-          this.blades.tint(HERO.guard + j, 3, 3, 3.2);
+          this.bladeTint(HERO.guard + j, 3.2);
         } else if (this.blades.isVisible(HERO.guard + j)) {
           this.v.set(g.blockX[j]!, 1.0, g.blockZ[j]!);
           this.burstMotes(this.v, 10, 1.2);
@@ -1048,7 +1117,7 @@ export class KiemFx {
       const y = 1.0 + (1 - arrive) * 4 + Math.sin(this.time * 2 + j) * 0.05;
       // Tip along the orbit's tangent, flat.
       this.blades.set(HERO.guard + j, x, y, z, -Math.sin(a), 0.0, Math.cos(a), 1.35);
-      this.blades.tint(HERO.guard + j, 1.15, 1.2, 1.3);
+      this.bladeTint(HERO.guard + j, 1.3);
     }
     this.sigArcs.place(this.c.x, this.c.z, 0);
     this.sigArcs.uniforms.uCount.value = g.charges;
@@ -1094,9 +1163,9 @@ export class KiemFx {
         s.size0 = 2.0;
         s.size1 = 2.1;
         s.aspect = 0.32;
-        s.r = HALO[0];
-        s.g = HALO[1];
-        s.b = HALO[2];
+        s.r = this.pal.halo[0];
+        s.g = this.pal.halo[1];
+        s.b = this.pal.halo[2];
         s.a = 0.55;
         this.glow.emit();
         d.ghosts += 1;
@@ -1137,7 +1206,7 @@ export class KiemFx {
         continue;
       }
       this.blades.set(HERO.k4 + j, this.w.x, y + (1 - out) * 3, this.w.z, -ix, -1, -iz, 1.7 * out);
-      this.blades.tint(HERO.k4 + j, 1.25 + 0.4 * pulse(clamp01((k.t - T_K4_OPEN) / 0.3)), 1.3, 1.45);
+      this.bladeTint(HERO.k4 + j, 1.45 + 0.4 * pulse(clamp01((k.t - T_K4_OPEN) / 0.3)));
     }
     if (!k.landed && k.t >= T_K4_OPEN) {
       k.landed = true;
@@ -1149,7 +1218,7 @@ export class KiemFx {
       }
       this.ring(k.x, k.z, 1, 3.6, 0.35, 0.6);
       this.v.set(k.x, 0.5, k.z);
-      this.host.flash(this.v, "#dfe8ff", 4);
+      this.host.flash(this.v, this.pal.flash, 4);
       this.host.impulse(1, 0, -1);
     }
     // A beat every 30 ticks: slivers of sword-light from the corners through the centre.
@@ -1171,9 +1240,9 @@ export class KiemFx {
         sp.life = life;
         sp.size0 = sp.size1 = 0.2;
         sp.stretch = 0.05;
-        sp.r = STEEL[0] * 2.4;
-        sp.g = STEEL[1] * 2.4;
-        sp.b = STEEL[2] * 2.6;
+        sp.r = this.pal.body[0] * 2.6;
+        sp.g = this.pal.body[1] * 2.6;
+        sp.b = this.pal.body[2] * 2.6;
         this.trace.emit();
       }
       const n = T.inCircle(k.x, k.z, 3.2, this.hits);
@@ -1235,7 +1304,7 @@ export class KiemFx {
         continue;
       }
       this.blades.set(blade, gx, y, gz, -Math.sin(th) * (1 - e) * 0.5, -1, Math.cos(th) * (1 - e) * 0.5, 1.0 * out);
-      this.blades.tint(blade, 1.2 + 1.4 * pulse(clamp01((k.t - hitT) / 0.25)), 1.25, 1.4);
+      this.bladeTint(blade, 1.4 + 1.4 * pulse(clamp01((k.t - hitT) / 0.25)));
     }
     // Waves.
     while (k.wave < 3 && k.t >= T_K5_HITS[k.wave]!) {
@@ -1257,7 +1326,7 @@ export class KiemFx {
       }
       this.ring(k.x, k.z, 0.8, w === 2 ? 7 : 5, w === 2 ? 0.5 : 0.35, w === 2 ? 0.8 : 0.5);
       this.v.set(k.x, 1.2, k.z);
-      this.host.flash(this.v, "#e6eeff", w === 2 ? 12 : 6);
+      this.host.flash(this.v, this.pal.flash, w === 2 ? 12 : 6);
       this.host.impulse(w === 2 ? 4 : 1.5, 0, -1);
       if (w === 2) {
         this.host.hitStop(70);
@@ -1268,9 +1337,9 @@ export class KiemFx {
         f.life = 0.14;
         f.size0 = 3.2;
         f.size1 = 4.2;
-        f.r = CORE[0];
-        f.g = CORE[1];
-        f.b = CORE[2];
+        f.r = this.pal.core[0];
+        f.g = this.pal.core[1];
+        f.b = this.pal.core[2];
         this.flare.emit();
       }
     }

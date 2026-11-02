@@ -8,13 +8,16 @@
  * at the guard, R reset. Each skill is "typed" at the chosen WPM: the charge
  * follows the letters and the release comes on the last one.
  * Flags: ?q= tier, ?wpm=45, ?herd=still|march, ?fixed=1 (no rAF: the capture
- * scenario steps frames with __lab.step), ?ui=0 hides the panel.
+ * scenario steps frames with __lab.step), ?ui=0 hides the panel,
+ * ?weapon=<id> the equipped sword (D55, default clear-wind; weapons.ts): its
+ * blade and element colours drive every skill. W cycles the four swords.
  */
 import * as THREE from "three";
 import type { Quality } from "../content/types";
 import { createRenderer, placeCamera } from "../view/renderer";
 import { KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
 import { SpritePool } from "../view/skills/fxkit";
+import { DEFAULT_WEAPON, weaponById, weaponsOf, type WeaponId } from "../view/skills/weapons";
 import { LabCaster, type CasterClip } from "./caster";
 import { LabHerd, type HerdMode } from "./herd";
 import { applyLook, buildField, LAB_ASSETS } from "./look";
@@ -97,6 +100,24 @@ const hostApi: KiemHost = {
 };
 const fx = new KiemFx(hostApi, { ...textures }, quality);
 void ribbonNoise;
+
+// The equipped sword (D55). Only swords: the sabre and spear skills are not built yet.
+const SWORDS = weaponsOf("sword");
+const weaponListeners: ((id: WeaponId) => void)[] = [];
+async function setWeapon(id: string): Promise<boolean> {
+  const def = weaponById(id);
+  if (def === undefined) {
+    console.warn(`[lab] unknown weapon "${id}"; swords: ${SWORDS.map((w) => w.id).join(", ")}`);
+    return false;
+  }
+  const ok = await fx.setWeapon(def);
+  if (ok) for (const f of weaponListeners) f(def.id);
+  return ok;
+}
+function cycleWeapon(): void {
+  const i = SWORDS.findIndex((w) => w.id === fx.weapon);
+  void setWeapon(SWORDS[(i + 1) % SWORDS.length]!.id);
+}
 
 // An enemy blow for the guard demo: a red bolt (enemy colour, canon §21.1) from a beast to the caster.
 const enemyBolt = new SpritePool(8, textures.glow, "add", "camera", 16);
@@ -189,10 +210,13 @@ function reset(): void {
 
 const KEYS: Record<string, KiemSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5" };
 window.addEventListener("keydown", (e) => {
+  // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   const slot = KEYS[e.key];
   if (slot) type(slot);
   else if (e.key === "b" || e.key === "B") enemyShot();
   else if (e.key === "r" || e.key === "R") reset();
+  else if (e.key === "w" || e.key === "W") cycleWeapon();
 });
 
 // Panel.
@@ -209,6 +233,7 @@ if (params.get("ui") !== "0") {
     ["6", "Thiên Hà Kiếm Vũ · Milky-Way Sword Rain"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
+    ["W", "Next sword"],
   ];
   for (const [key, name] of names) {
     const b = document.createElement("button");
@@ -226,6 +251,23 @@ if (params.get("ui") !== "0") {
   input.onchange = () => (wpm = Math.max(10, Number(input.value) || 45));
   w.append(input);
   panel.append(w);
+  // Weapon selector: the four wave-1 swords (WEAPON_DESIGN §6); shapes are the stand-in until their GLBs exist.
+  const wl = document.createElement("label");
+  wl.textContent = "Sword ";
+  const select = document.createElement("select");
+  select.style.cssText = "padding:4px 6px;background:rgba(14,18,26,.9);color:#e6e9ef;border:1px solid #3a4558;border-radius:6px";
+  for (const def of SWORDS) {
+    const o = document.createElement("option");
+    o.value = def.id;
+    o.textContent = `${def.name} · ${def.element}`;
+    o.title = def.mark;
+    select.append(o);
+  }
+  select.value = fx.weapon;
+  select.onchange = () => void setWeapon(select.value);
+  weaponListeners.push((id) => (select.value = id));
+  wl.append(select);
+  panel.append(wl);
   document.body.append(panel);
 }
 
@@ -262,6 +304,10 @@ declare global {
       setHerd(mode: HerdMode): void;
       setWpm(v: number): void;
       typing(): boolean;
+      /** Equips a sword by id (D55); resolves false for an unknown id or a sabre or spear. */
+      setWeapon(id: string): Promise<boolean>;
+      /** The equipped weapon's id. */
+      weapon(): string;
       /** "play" (the game's fixed camera) or "close" on (x, z) at 55° from `distanceM`. */
       camera(mode: "play" | "close", x?: number, z?: number, distanceM?: number): void;
     };
@@ -269,7 +315,9 @@ declare global {
 }
 
 void (async () => {
-  await Promise.all([herd.load(), caster.load(), look.ready]);
+  const wanted = params.get("weapon") ?? DEFAULT_WEAPON;
+  const equipped = setWeapon(wanted).then((ok) => (ok ? true : setWeapon(DEFAULT_WEAPON)));
+  await Promise.all([herd.load(), caster.load(), look.ready, equipped]);
   window.__lab = {
     ready: true,
     type,
@@ -282,6 +330,8 @@ void (async () => {
     setHerd: (mode) => herd.setMode(mode),
     setWpm: (v) => (wpm = v),
     typing: () => typing !== null,
+    setWeapon,
+    weapon: () => fx.weapon,
     camera(mode, x = 0, z = -6, distanceM = 15) {
       if (mode === "play") view.resize();
       else placeCamera(view.camera, 55, distanceM, x, z);
