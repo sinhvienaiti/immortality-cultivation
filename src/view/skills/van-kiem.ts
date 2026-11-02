@@ -979,8 +979,9 @@ export class VanKiemFx {
     const t = this.t;
     const on = smooth01((t - T_SEEDS) / 0.3) * (1 - smooth01((t - T_GATHER) / 0.25));
     if (on <= 0.01) return;
-    for (let k = 0; k < 12; k += 1) {
-      const u = (k + 0.5) / 12;
+    // Nine cards along it (fill rate: each is ~0.1 Mpx of additive light at the play camera).
+    for (let k = 0; k < 9; k += 1) {
+      const u = (k + 0.5) / 9;
       this.riverAt(u, 0, 0, this.v);
       const s = this.river.spec.reset();
       s.x = this.v.x;
@@ -1000,7 +1001,7 @@ export class VanKiemFx {
       p.y = 0.04;
       p.z = this.v.z;
       p.life = 0;
-      p.size0 = p.size1 = 6.4;
+      p.size0 = p.size1 = 7.2;
       p.aspect = 1.9;
       p.rot = Math.atan2(12, 39) + Math.PI / 2;
       const b = this.brightAt(u);
@@ -1010,8 +1011,8 @@ export class VanKiemFx {
       p.a = on;
       this.pools.emit();
     }
-    // Glitter: ~420 glints a second along the river, drifting with the stream and falling a little.
-    this.glintAcc += 420 * on * dt;
+    // Glitter: ~320 glints a second along the river, drifting with the stream and falling a little.
+    this.glintAcc += 320 * on * dt;
     while (this.glintAcc >= 1) {
       this.glintAcc -= 1;
       const u = this.rand.next();

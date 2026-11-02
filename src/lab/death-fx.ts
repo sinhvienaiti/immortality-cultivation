@@ -6,7 +6,7 @@
  * blow and falling (ink, never blood: canon §10.9), and for elites and the
  * king six luminous spirit shards. Sized to read at the play camera (~37 px
  * a metre at 1080p). Round 2: the body shatters into spirit sparks in the
- * killer's saturated colour (16 on a small beast, 28 on an elite or the
+ * killer's saturated colour (12 on a small beast, 26 on an elite or the
  * king) while the herd slices it away (herd.ts), every death throws a few
  * shards, and a ground scorch with a brief lit pool stays under it.
  * Eight draw calls, preallocated pools, no allocation per frame. The bus's
@@ -94,7 +94,7 @@ export class DeathFx {
     r.a = 0.6;
     this.ring.emit();
     // The body shatters into spirit sparks: from all over it, outward, rising, in the killer's colour.
-    const nSparks = Math.max(6, Math.round((big ? 28 : 16) * this.dens));
+    const nSparks = Math.max(6, Math.round((big ? 26 : 12) * this.dens));
     for (let i = 0; i < nSparks; i += 1) {
       const a = this.rand.range(0, Math.PI * 2);
       const r = this.rand.range(0.1, 0.45) * k;
