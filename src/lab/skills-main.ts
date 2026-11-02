@@ -14,11 +14,19 @@
  * ?probe=0 turns off the motion probe (motion-probe.ts, read by
  * __lab.metrics(); MOTION_PLAN step 1). __lab.walkTo / walkPath / faceTo move
  * and turn the caster for the movement sequence (lab-motion.mjs).
+ * The caster holds the equipped weapon (hand-sword.ts, its GLB with its own
+ * maps and its tassel; ?hand=0 hides it, ?grip=tilt,roll,yaw,x,y,z tunes the
+ * fist; the wrist keeps it out of Lam's body, body-proxy.ts, ?clear=0 holds it
+ * rigid; __lab.handHits checks it against the skinned mesh, __lab.bright reads
+ * the bloom pass's bright buffer). ?k5n=<n> sets Thiên Hà's swarm size (≤ K5_MAX) and __lab.perf /
+ * __lab.swarm measure its frame cost with the full mesh, the LOD or the
+ * stand-in (lab-k5-perf.mjs).
  */
 import * as THREE from "three";
 import type { Quality } from "../content/types";
 import { createRenderer, placeCamera } from "../view/renderer";
-import { KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
+import { K5_MAX, KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
+import { loadBladeGeometry, loadWeaponModel, standInBlade } from "../view/skills/blades";
 import { SpritePool } from "../view/skills/fxkit";
 import { DEFAULT_WEAPON, weaponById, weaponsOf, type WeaponId } from "../view/skills/weapons";
 import { CLIP_RELEASE_S, LabCaster, type CasterClip } from "./caster";
@@ -27,6 +35,8 @@ import { applyLook, buildField, LAB_ASSETS } from "./look";
 import { collectLayerNames, MotionProbe } from "./motion-probe";
 import { CameraKick, CameraShake, FlashLights, HitStop, smooth01 } from "./feel";
 import { CasterPresence } from "./presence";
+import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
+import { BodyProxy } from "./body-proxy";
 
 const params = new URLSearchParams(location.search);
 const quality = (["low", "medium", "high", "ultra"].includes(params.get("q") ?? "") ? params.get("q") : "high") as Quality;
@@ -125,7 +135,24 @@ const hostApi: KiemHost = {
     caster.play(clip);
   },
 };
-const fx = new KiemFx(hostApi, { ...textures }, quality);
+const k5n = Number(params.get("k5n") ?? "");
+const fx = new KiemFx(hostApi, { ...textures }, quality, Number.isFinite(k5n) && k5n > 0 ? { k5Blades: Math.min(K5_MAX, k5n) } : {});
+// ?trim=0: every blade slot drawn, hidden ones too (how BladeSet drew before 02/11; measurement only).
+fx.blades.drawAll = params.get("trim") === "0";
+/** The weapon in the caster's hand (after load: it hangs off Lam's hand bone) and the body it keeps out of. */
+let handSword: HandSword | null = null;
+let bodyProxy: BodyProxy | null = null;
+/** ?grip=tilt,roll,yaw,x,y,z (degrees, metres); an empty or missing field keeps DEFAULT_GRIP's. */
+function gripFromParams(): GripPose {
+  const parts = (params.get("grip") ?? "").split(",");
+  const d = DEFAULT_GRIP;
+  const pick = (i: number, f: number): number => {
+    const t = parts[i]?.trim() ?? "";
+    const v = Number(t);
+    return t !== "" && Number.isFinite(v) ? v : f;
+  };
+  return { tiltDeg: pick(0, d.tiltDeg), rollDeg: pick(1, d.rollDeg), yawDeg: pick(2, d.yawDeg), x: pick(3, d.x), y: pick(4, d.y), z: pick(5, d.z) };
+}
 void ribbonNoise;
 // The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
 const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
@@ -301,6 +328,7 @@ function reset(): void {
   lights.reset();
   probe.reset();
   caster.resetChecks();
+  handSword?.reset();
 }
 
 const KEYS: Record<string, KiemSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5" };
@@ -378,6 +406,8 @@ function frame(dt: number): void {
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   fx.update(world, dt);
+  // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
+  handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);
   enemyBolt.update(world);
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
@@ -396,9 +426,11 @@ function frame(dt: number): void {
 
 // A second view of the same frame for captures: the caster close up at 55° (no time passes).
 const savedCamPos = new THREE.Vector3();
+/** The orbit view's angles (view("orbit")): yaw from the south, pitch above level, degrees; its centre: the right hand or the held sword's middle. */
+const orbit = { yawDeg: 30, pitchDeg: 25, onSword: false };
 const savedCamQuat = new THREE.Quaternion();
 let followShown = false;
-function showView(mode: "follow" | "play", distanceM: number): void {
+function showView(mode: "follow" | "play" | "orbit", distanceM: number): void {
   if (mode === "follow") {
     if (!followShown) {
       savedCamPos.copy(view.camera.position);
@@ -406,6 +438,27 @@ function showView(mode: "follow" | "play", distanceM: number): void {
     }
     followShown = true;
     placeCamera(view.camera, 55, distanceM, caster.x, caster.z, 0.9);
+    view.render(0);
+  } else if (mode === "orbit") {
+    // Inspection: the caster's right hand from an orbit (yaw round it from the south, pitch above the level).
+    if (!followShown) {
+      savedCamPos.copy(view.camera.position);
+      savedCamQuat.copy(view.camera.quaternion);
+    }
+    followShown = true;
+    caster.hand(screenV);
+    let dropY = 0.1;
+    // The judges' turntable: centred on the sword (tip to pommel end) instead of the fist.
+    const segs = orbit.onSword && handSword !== null ? handSword.probeSegments() : [];
+    if (segs.length > 0) {
+      screenV.addVectors(segs[0]!.b, segs[4]!.b).multiplyScalar(0.5);
+      dropY = 0;
+    }
+    const yaw = (orbit.yawDeg * Math.PI) / 180;
+    const pitch = (orbit.pitchDeg * Math.PI) / 180;
+    view.camera.position.set(screenV.x + Math.sin(yaw) * Math.cos(pitch) * distanceM, screenV.y + Math.sin(pitch) * distanceM, screenV.z + Math.cos(yaw) * Math.cos(pitch) * distanceM);
+    view.camera.lookAt(screenV.x, screenV.y - dropY, screenV.z);
+    view.camera.updateMatrixWorld(true);
     view.render(0);
   } else if (followShown) {
     followShown = false;
@@ -439,8 +492,13 @@ declare global {
       metrics(): Record<string, unknown>;
       /** The Animator's state and its clip analysis (strike timings, gaits; MOTION_PLAN step 2). */
       anim(): Record<string, unknown>;
-      /** Redraws the current frame from a close camera on the caster ("follow", 55°, `distanceM`) or puts the play camera back ("play"). */
-      view(mode: "follow" | "play", distanceM?: number): void;
+      /**
+       * Redraws the current frame from a close camera on the caster ("follow", 55°, `distanceM`), from an orbit round
+       * the right hand ("orbit": setOrbit's angles, for the hand prop) or puts the play camera back ("play").
+       */
+      view(mode: "follow" | "play" | "orbit", distanceM?: number): void;
+      /** The orbit view's yaw (from the south) and pitch (above level), degrees; `onSword` centres it on the held sword. */
+      setOrbit(yawDeg: number, pitchDeg: number, onSword?: boolean): void;
       caster(): { x: number; z: number; fx: number; fz: number };
       reset(): void;
       setHerd(mode: HerdMode): void;
@@ -454,6 +512,35 @@ declare global {
       weapon(): string;
       /** "play" (the game's fixed camera) or "close" on (x, z) at 55° from `distanceM`. */
       camera(mode: "play" | "close", x?: number, z?: number, distanceM?: number): void;
+      /** The hand prop's state (loaded, dissolve, jade and core levels, length, triangles) and its grip. */
+      hand(): Record<string, unknown>;
+      /** Tunes the grip (degrees, metres in the hand's frame); missing fields keep theirs. */
+      setGrip(g: Partial<GripPose>): void;
+      /** Shows or hides the hand prop. */
+      showHand(on: boolean): void;
+      /** Lab debugging: shows or hides a part ("swarm", "blades", every other "fx" layer, "actors") and redraws the frame. */
+      debugShow(part: "swarm" | "blades" | "fx" | "actors", on: boolean): void;
+      /** Forces the hand prop's jade and ridge-core levels (−1: live), for the bloom check. */
+      forceHandGlow(jade: number, core: number): void;
+      /**
+       * The bloom pass's bright buffer as last drawn (threshold 1): pixels over it (luminance > 0.002), their summed
+       * luminance, the brightest and the non-finite ones (half-float Inf or NaN), within the screen box [x0, y0, x1,
+       * y1] (shares of the frame, y down).
+       */
+      bright(x0?: number, y0?: number, x1?: number, y1?: number): { pixels: number; share: number; sum: number; max: number; size: number[]; nonFinite: number; yellow: number; yellowTop: number[][] };
+      /**
+       * The hand prop against Lam's skinned mesh this frame (a probe, not per frame): every place a sword segment
+       * (blade middle and edges, across the guard, the pommel) crosses the body, with the bone that owns it, and the
+       * tip's and pommel's height above the paving.
+       */
+      handHits(): { hits: { part: string; t: number; bone: string }[]; tipY: number; endY: number; axis?: number[] } | null;
+      /**
+       * Steps `frames` frames of `dt` and times each (CPU of the frame, then a 1-pixel read that waits for the GPU):
+       * per-frame ms (cpu, total), draw calls, triangles, blades drawn (hero, swarm) and the GPU string.
+       */
+      perf(frames: number, dt?: number): { cpu: number[]; total: number[]; drawCalls: number; triangles: number; hero: number; swarm: number; gpu: string; k5n: number };
+      /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
+      swarm(mode: "full" | "lod" | "standin"): Promise<number>;
     };
   }
 }
@@ -476,6 +563,21 @@ void (async () => {
       layerNames: names,
       blades: fx.blades,
       flashLayers: ["flare", "star", "glow", "spark", "motes", "shock", "groundShock", "groundRing", "beams", "slash", "backGlow", "backStar", "hitSparks", "hitRing"],
+    });
+  }
+  // The weapon in the right hand (after the probe and presence attach: they never see its mesh).
+  const handBone = caster.model?.getObjectByName("hand_r") ?? null;
+  if (handBone !== null) {
+    handSword = new HandSword(handBone, view.layers.actors, gripFromParams());
+    handSword.enabled = params.get("hand") !== "0";
+    // The body the sword keeps out of: every part but the holding arm and the tail (?clear=0: rigid in the fist).
+    bodyProxy = new BodyProxy(caster.model!, ["root", "lowerarm_r", "hand_r", "tail_01", "tail_02", "tail_03", "tail_04", "tail_05"]);
+    handSword.setBody(bodyProxy, caster.model!);
+    handSword.clearance = params.get("clear") !== "0";
+    await handSword.setWeapon(fx.weaponInfo);
+    weaponListeners.push((id) => {
+      const def = weaponById(id);
+      if (def !== undefined) void handSword?.setWeapon(def);
     });
   }
   caster.onState = (kind, detail) => {
@@ -510,6 +612,11 @@ void (async () => {
     metrics: () => ({ ...probe.metrics(), arms: caster.armReport() }),
     anim: () => caster.debug(),
     view: (mode, distanceM = 6) => showView(mode, distanceM),
+    setOrbit(yawDeg, pitchDeg, onSword = false) {
+      orbit.yawDeg = yawDeg;
+      orbit.pitchDeg = pitchDeg;
+      orbit.onSword = onSword;
+    },
     caster: () => ({ x: caster.x, z: caster.z, fx: caster.fx, fz: caster.fz }),
     reset,
     setHerd: (mode) => herd.setMode(mode),
@@ -523,6 +630,140 @@ void (async () => {
       else placeCamera(view.camera, 55, distanceM, x, z);
       camBase.copy(view.camera.position);
       frame(1 / 60);
+    },
+    hand: () => ({
+      ...(handSword?.info ?? { loaded: false }),
+      grip: handSword?.gripPose ?? null,
+      body: bodyProxy === null ? null : bodyProxy.names.map((n, k) => n + " " + bodyProxy!.radius[k]!.toFixed(3)),
+    }),
+    setGrip(g) {
+      if (handSword !== null) handSword.setGrip({ ...handSword.gripPose, ...g });
+    },
+    showHand(on) {
+      if (handSword !== null) handSword.enabled = on;
+    },
+    debugShow(part, on) {
+      // Lab debugging: hide a part and redraw this frame (no time passes).
+      if (part === "swarm") {
+        if (fx.blades.swarm !== null) fx.blades.swarm.visible = on;
+      } else if (part === "blades") fx.blades.mesh.visible = on;
+      else if (part === "fx") {
+        for (const c of view.layers.fx.children) if (c !== fx.blades.mesh) c.visible = on;
+      } else view.layers.actors.visible = on;
+      view.render(0);
+    },
+    forceHandGlow(jade, core) {
+      if (handSword !== null) {
+        handSword.force.jade = jade;
+        handSword.force.core = core;
+      }
+    },
+    bright(x0 = 0, y0 = 0, x1 = 1, y1 = 1) {
+      const rt = view.stage.bloom.renderTargetBright;
+      const w = rt.width;
+      const h = rt.height;
+      const buf = new Uint16Array(w * h * 4);
+      view.stage.renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+      let pixels = 0;
+      let sum = 0;
+      let max = 0;
+      let all = 0;
+      let nonFinite = 0;
+      const yellow: number[][] = [];
+      // Render-target rows run bottom-up.
+      for (let y = Math.floor(y0 * h); y < Math.floor(y1 * h); y += 1) {
+        const row = h - 1 - y;
+        for (let x = Math.floor(x0 * w); x < Math.floor(x1 * w); x += 1) {
+          const o = (row * w + x) * 4;
+          if ((buf[o]! & 0x7c00) === 0x7c00 || (buf[o + 1]! & 0x7c00) === 0x7c00 || (buf[o + 2]! & 0x7c00) === 0x7c00) nonFinite += 1;
+          const l = 0.2126 * THREE.DataUtils.fromHalfFloat(buf[o]!) + 0.7152 * THREE.DataUtils.fromHalfFloat(buf[o + 1]!) + 0.0722 * THREE.DataUtils.fromHalfFloat(buf[o + 2]!);
+          all += 1;
+          const rr = THREE.DataUtils.fromHalfFloat(buf[o]!);
+          const gg = THREE.DataUtils.fromHalfFloat(buf[o + 1]!);
+          const bb = THREE.DataUtils.fromHalfFloat(buf[o + 2]!);
+          // The most yellow bright pixels (red and green over blue): a hue no Kiếm palette has.
+          if (l > 0.002 && (rr + gg) / 2 - bb > 0.3 * l) yellow.push([x, y, +rr.toFixed(2), +gg.toFixed(2), +bb.toFixed(2)]);
+          if (l > 0.002) {
+            pixels += 1;
+            sum += l;
+            if (l > max) max = l;
+          }
+        }
+      }
+      yellow.sort((a, b) => b[2]! + b[3]! - b[4]! * 2 - (a[2]! + a[3]! - a[4]! * 2));
+      return { pixels, share: pixels / Math.max(1, all), sum, max, size: [w, h], nonFinite, yellow: yellow.length, yellowTop: yellow.slice(0, 8) };
+    },
+    handHits() {
+      const model = caster.model;
+      if (handSword === null || model === null) return null;
+      const segs = handSword.probeSegments();
+      if (segs.length === 0) return { hits: [], tipY: -1, endY: -1 };
+      const skinned: THREE.SkinnedMesh[] = [];
+      model.traverse((o) => {
+        if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned.push(o as THREE.SkinnedMesh);
+      });
+      model.updateMatrixWorld(true);
+      for (const s of skinned) {
+        s.skeleton.update();
+        s.computeBoundingSphere();
+      }
+      const ray = new THREE.Raycaster();
+      const dir = new THREE.Vector3();
+      const hits: { part: string; t: number; bone: string }[] = [];
+      for (const seg of segs) {
+        const len = seg.a.distanceTo(seg.b);
+        // Both ways: a segment that starts inside the body only meets back faces going out.
+        for (const [from, to] of [[seg.a, seg.b], [seg.b, seg.a]] as const) {
+          dir.subVectors(to, from).normalize();
+          ray.set(from, dir);
+          ray.far = len;
+          for (const h of ray.intersectObjects(skinned, false)) {
+            const mesh = h.object as THREE.SkinnedMesh;
+            const si = mesh.geometry.getAttribute("skinIndex");
+            const sw = mesh.geometry.getAttribute("skinWeight");
+            let bone = "?";
+            if (h.face && si && sw) {
+              let best = -1;
+              for (let k = 0; k < 4; k += 1) if (best < 0 || sw.getComponent(h.face.a, k) > sw.getComponent(h.face.a, best)) best = k;
+              bone = mesh.skeleton.bones[si.getComponent(h.face.a, best)]?.name ?? "?";
+            }
+            const t = from === seg.a ? h.distance / len : 1 - h.distance / len;
+            hits.push({ part: seg.part, t: Math.round(t * 100) / 100, bone });
+          }
+        }
+      }
+      const axis = dir.subVectors(segs[0]!.b, segs[0]!.a).normalize();
+      return { hits, tipY: segs[0]!.b.y, endY: segs[4]!.b.y, axis: [axis.x, axis.y, axis.z] };
+    },
+    perf(frames, dt = 1 / 60) {
+      const renderer = view.stage.renderer;
+      const gl = renderer.getContext();
+      const px = new Uint8Array(4);
+      const cpu: number[] = [];
+      const total: number[] = [];
+      for (let i = 0; i < frames; i += 1) {
+        const t0 = performance.now();
+        frame(dt);
+        const t1 = performance.now();
+        renderer.setRenderTarget(null);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        cpu.push(t1 - t0);
+        total.push(performance.now() - t0);
+      }
+      const info = view.info();
+      const drawn = { hero: 0, swarm: 0 };
+      fx.blades.drawn(drawn);
+      return { cpu, total, drawCalls: info.drawCalls, triangles: info.triangles, hero: drawn.hero, swarm: drawn.swarm, gpu: info.gpu, k5n: Number.isFinite(k5n) && k5n > 0 ? Math.min(K5_MAX, k5n) : -1 };
+    },
+    async swarm(mode) {
+      const def = fx.weaponInfo;
+      const hero = await loadBladeGeometry(def.model, def.fit);
+      // No LOD file (not built yet): −1, the swarm keeps what it draws.
+      if (mode === "lod" && (def.swarm === undefined || (await loadWeaponModel(def.swarm)) === null)) return -1;
+      const g = mode === "standin" ? standInBlade() : mode === "lod" ? await loadBladeGeometry(def.swarm, def.fit) : hero;
+      fx.blades.setGeometry(hero, g);
+      const index = g.getIndex();
+      return (index !== null ? index.count : g.getAttribute("position").count) / 3;
     },
   };
   if (params.get("herd") === "march") herd.setMode("march");

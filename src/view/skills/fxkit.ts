@@ -1201,6 +1201,8 @@ uniform float uShape;    // seal glyph (SEAL_SHAPE)
 uniform float uGlyph;    // 0..1 the glyph's share (it crossfades when the skill changes)
 uniform float uHeat;     // 0..n afterglow along a cut (embers and a glowing seam), cooling to 0
 uniform float uAsh;      // 0..1 pale ash left where the light burned (normal blend, not dark ink)
+uniform float uMotif;    // the equipped weapon's motif (WeaponMotif): 0 none, 1 Clear Wind's hollow jade ring and ruyi curls
+uniform vec3 uJade;      // the motif's light (≤ 0.86 a channel: it never blooms; the skill's own lines keep the HDR)
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -1243,6 +1245,26 @@ float runes(float ang, float r, float r0, float w, float n, float spin) {
   return dash * tall;
 }
 const float PI = 3.14159265;
+
+// Clear Wind's hollow jade ring (a bi disc seen from above): an outer and an inner edge with a faint body between.
+float biRing(vec2 q, float R, float w) {
+  float d = length(q);
+  float body = smoothstep(0.58 * R, 0.66 * R, d) * (1.0 - smoothstep(0.92 * R, R, d));
+  return band(d - R, w) + band(d - 0.62 * R, w * 0.8) * 0.85 + body * 0.22;
+}
+// A ruyi cloud curl: a log-spiral stroke (r = 0.12·e^(0.27·φ), φ up to 1.75π) of size s, curling counter-clockwise.
+float cloudCurl(vec2 q, float s, float w) {
+  q /= s;
+  float r = length(q);
+  float th = atan(q.y, q.x);
+  if (th < 0.0) th += 2.0 * PI;
+  float best = 9.0;
+  for (int n = 0; n < 2; n++) {
+    float ph = th + float(n) * 2.0 * PI;
+    if (ph < 1.75 * PI) best = min(best, abs(r - 0.12 * exp(0.27 * ph)));
+  }
+  return band(best, w / s) * smoothstep(0.06, 0.13, r);
+}
 
 #ifdef SEAL
 // The seal's skill glyph (SEAL_SHAPE): thin strokes in the seal's light, +x along the facing.
@@ -1312,6 +1334,8 @@ void main() {
   float heatC = 0.0;
   float n = fbm(p * 6.0 + uTime * 0.15);
   float revealArc = revealSoft(fract((ang + PI) / (2.0 * PI)), uReveal, 0.05);
+  // The weapon's motif in jade (uMotif): a hollow ring where the pattern has a node, ruyi curls beside it.
+  float mot = 0.0;
 
 #if defined(HEX)
   // Six-sword array: a hexagon outline with six sockets at its corners, an inner hex, spokes to the centre,
@@ -1328,7 +1352,9 @@ void main() {
     vec2 c = vec2(cos(th), sin(th)) * 0.99;
     float on = smoothstep(float(i) / 6.0, float(i) / 6.0 + 0.08, uReveal - 0.02);
     corner += on * (1.0 - smoothstep(0.04, 0.13, length(p - c)));
+    if (uMotif > 0.5) mot += on * biRing(p - c, 0.085, 0.012);
   }
+  if (uMotif > 0.5) mot += biRing(p, 0.13, 0.01) * uReveal;
   float heart = runes(ang, r, 0.3, 0.035, 24.0, uTime * 0.25) * uReveal;
   float heartRing = band(r - 0.22, 0.014) * uReveal;
   light = (outer * revealArc * 1.2 + inner * 0.8 * uReveal + spokes * 0.7 * uReveal + heart * 0.9 + heartRing) * (0.8 + 0.2 * n);
@@ -1355,6 +1381,15 @@ void main() {
   float rim = band(r - 0.955, 0.01) * revealArc;
   float rune = runes(ang, r, 0.915, 0.022, 60.0, -uTime * 0.12) * revealArc;
   light = arms * (0.6 + 0.4 * n) + rim * 0.9 + rune * 0.8;
+  if (uMotif > 0.5) {
+    // The jade ring round the dark heart, and a cloud curl between each pair of arms, turning with them.
+    mot += biRing(p, 0.17, 0.008) * smoothstep(0.0, 0.2, uReveal);
+    for (int i = 0; i < 3; i++) {
+      float a = rot + float(i) * 2.0 * PI / 3.0 + PI / 3.0;
+      vec2 c = vec2(cos(a), sin(a)) * 0.34;
+      mot += cloudCurl(rot2(p - c, -a), 0.17, 0.008) * smoothstep(float(i) / 3.0, float(i) / 3.0 + 0.15, uReveal);
+    }
+  }
   // A crisp line along each arm and star-dust knots, not a fuzzy band.
   core = spine * 0.9 + arms * smoothstep(0.62, 0.92, n) * 0.6 + rim * 0.6;
   ink = (1.0 - smoothstep(0.0, 0.22, r)) * 0.75 + smoothstep(1.0, 0.7, r) * 0.25 + shade * 0.3;
@@ -1368,6 +1403,13 @@ void main() {
   float drawn = smoothstep(0.0, 0.05, uReveal * 1.05 - (idx / 3.0 + seg / 3.0) + 0.0);
   float rune = runes(ang, r, 0.7, 0.03, 30.0, uTime * 0.5) * drawn * (0.4 + 0.6 * lit);
   light = (ring * gap * (0.25 + 0.75 * lit) + rune * 0.8) * drawn;
+  if (uMotif > 0.5) {
+    // A jade ring in each of the three gaps, lit as the arc before it is drawn.
+    for (int i = 0; i < 3; i++) {
+      float a = -PI + float(i) * 2.0 * PI / 3.0;
+      mot += biRing(p - vec2(cos(a), sin(a)) * 0.86, 0.07, 0.01) * smoothstep(float(i) / 3.0, float(i) / 3.0 + 0.05, uReveal);
+    }
+  }
   core = band(r - 0.86, 0.025) * gap * lit * 0.9 * drawn;
   ink = smoothstep(1.0, 0.8, r) * 0.15 + band(r - 0.86, 0.16) * 0.3 * drawn;
 #elif defined(LINE)
@@ -1385,6 +1427,12 @@ void main() {
   heatL = seam * uHeat * (0.5 + 0.5 * n);
   heatC = seam * speck * uHeat * 0.9;
   ashL = (1.0 - smoothstep(0.04, 0.8, w + (n - 0.5) * 0.3)) * reveal * ends * (0.45 + 0.55 * fbm(p * vec2(26.0, 3.0)));
+  if (uMotif > 0.5) {
+    // In metres (the plane is 14 × 1.8 m): a jade ring where the cut ends, two cloud curls at the caster's end.
+    vec2 m = vec2(p.x * 7.0, p.y * 0.9);
+    mot += biRing(m - vec2(6.4, 0.0), 0.42, 0.05) * revealSoft(0.94, uReveal, 0.04);
+    mot += (cloudCurl(m - vec2(-6.1, 0.42), 0.55, 0.05) + cloudCurl(vec2(m.x + 6.1, -(m.y + 0.42)), 0.55, 0.05)) * smoothstep(0.0, 0.1, uReveal);
+  }
 #elif defined(ARROW)
   float along = (p.x + 1.0) * 0.5;
   float w = abs(p.y);
@@ -1392,6 +1440,8 @@ void main() {
   light = (1.0 - smoothstep(0.0, 0.4, w)) * reveal * 0.8;
   core = (1.0 - smoothstep(0.0, 0.1, w)) * reveal;
   ink = (1.0 - smoothstep(0.0, 0.8, w + n * 0.3)) * reveal * 0.6;
+  // In metres (5 × 0.9 m): a jade ring where the step leaves.
+  if (uMotif > 0.5) mot += biRing(vec2((p.x + 0.86) * 2.5, p.y * 0.45), 0.3, 0.035) * smoothstep(0.0, 0.1, uReveal);
 #elif defined(SEAL)
   // The caster's seal: two rings drawn round with the word, a band of runes, a hexagram of two
   // counter-turning triangles, a soft heart; a dark disc under it so it glows on pale stone.
@@ -1406,6 +1456,13 @@ void main() {
   light = (ringO + ringO2 * 0.7 + ringI * 0.8 + rune * 0.9) * revealArc + gl * 0.8 * uReveal + heart * 0.35 * uReveal;
   core = ringO * revealArc * 0.6 + gl * 0.5 * uReveal;
   ink = (1.0 - smoothstep(0.85, 1.0, r)) * 0.4 + (uShape > 5.5 ? (1.0 - smoothstep(0.0, 0.16, r)) * 0.5 * uGlyph : 0.0);
+  if (uMotif > 0.5) {
+    // Four jade rings ride the outer ring between the skill's glyph and the runes (the glyph stays the skill's).
+    for (int i = 0; i < 4; i++) {
+      float a = uTime * 0.12 + PI / 4.0 + float(i) * PI / 2.0;
+      mot += biRing(p - vec2(cos(a), sin(a)) * 0.87, 0.07, 0.01) * revealSoft(fract((a + PI) / (2.0 * PI)), uReveal, 0.05);
+    }
+  }
 #elif defined(CRACK)
   // Ground fissures under a heavy strike (L6): jagged rays from the heart and a web of cell walls warped by
   // noise, reaching out to uReveal of the radius; hot seams (uGlow) that cool, a dark bed (uInk) and pale dust (uAsh).
@@ -1460,7 +1517,10 @@ void main() {
 #endif
   float la = clamp(light * uGlow + heatL, 0.0, 6.0) * edge;
   float ca = clamp(core * uGlow * 2.0 + heatC * 2.0, 0.0, 6.0) * edge;
-  vec3 rgb = uColor * min(la, 1.4) + uCore * ca;
+  // The motif adds soft jade (≤ uJade, no bloom) over a thin ink so it reads on pale stone.
+  float ma = clamp(mot * min(uGlow, 1.0), 0.0, 1.0) * edge * uMotif;
+  vec3 rgb = uColor * min(la, 1.4) + uCore * ca + uJade * ma;
+  ink += mot * 0.3 * uMotif;
   float inkA = clamp(ink * uInk, 0.0, 1.0) * edge;
   float ashA = clamp(ashL * uAsh, 0.0, 0.8) * edge;
   // Premultiplied over: light adds, ink darkens, ash (pale grey) lies over the ink.
@@ -1486,6 +1546,8 @@ export class GroundSigil {
     uGlyph: { value: number };
     uHeat: { value: number };
     uAsh: { value: number };
+    uMotif: { value: number };
+    uJade: { value: THREE.Color };
   };
   /**
    * Spiral rotation speed (rad/s), integrated into uPhase by `tick`: a speed
@@ -1512,6 +1574,8 @@ export class GroundSigil {
       uGlyph: { value: 1 },
       uHeat: { value: 0 },
       uAsh: { value: 0 },
+      uMotif: { value: 0 },
+      uJade: { value: new THREE.Color(0, 0, 0) },
     };
     const defines: Record<string, string> = {};
     defines[kind.toUpperCase()] = "";

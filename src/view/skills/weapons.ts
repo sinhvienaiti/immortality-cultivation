@@ -13,9 +13,13 @@
  * - white-core rule (VFX_STANDARD §3.5.3): a core mixes in at most 30 % white,
  *   the rest keeps the accent; the white centre comes only from HDR
  *   saturation in its thin middle.
- * Shapes are NOT final (the owner is still reviewing the concept sheets): no
- * GLB exists yet, so every weapon uses the stand-in jian (blades.ts) until
- * its file lands at `model`. View only; nothing here touches the sim.
+ * Shapes are NOT final for most weapons: a weapon without a GLB uses the
+ * stand-in jian (blades.ts) until its file lands at `model`. Clear Wind has
+ * its Tripo model (owner test, 02/11/2026): the caster holds it (`hold`, the
+ * lab's hand prop with its tassel), the swarm draws its LOD (`swarm`), and
+ * its own motifs (`motif`: a hollow jade ring, ruyi cloud curls, silk-ribbon
+ * trails in the tassel's colours, pale jade and silver light) mark its skills
+ * (WEAPON_DESIGN §5–6). View only; nothing here touches the sim.
  */
 import * as THREE from "three";
 import type { BladeFit } from "./blades";
@@ -65,6 +69,41 @@ export interface WeaponGlow {
   readonly flashHex: number;
 }
 
+/**
+ * A weapon's own marks in its skills (WEAPON_DESIGN §6: "every sword-light
+ * carries the O ring"), drawn on top of the per-skill identities (shapes and
+ * colours stay the skill's). Colours are linear, light ≤ 0.86 (no bloom).
+ */
+export interface WeaponMotif {
+  /** A hollow jade ring (bi disc) in the sigils and impacts. */
+  readonly ring: boolean;
+  /** Ruyi cloud curls round the ring and in the aftermath. */
+  readonly cloud: boolean;
+  /** Silk-ribbon trails in the tassel's colours behind the flying copies. */
+  readonly silk: boolean;
+  /** The motif light: pale jade (unit colour × 0.86). */
+  readonly jade: Rgb;
+  /** Silver light paired with it (unit colour × 0.86). */
+  readonly silver: Rgb;
+  /** Silk ribbon: its light (≤ 0.9) and its deep edge (indigo). */
+  readonly silkLight: Rgb;
+  readonly silkDeep: Rgb;
+}
+
+/** How the caster holds the weapon (the lab's hand prop) and its tassel. Positions are shares of the model's long axis from the pommel end (0) to the tip (1). */
+export interface WeaponHold {
+  /** Overall length in the hand (m). */
+  readonly lengthM: number;
+  /** Middle of the grip. */
+  readonly gripAt: number;
+  /** Where the tassel hangs (the pommel's end). */
+  readonly pommelAt: number;
+  /** The tassel: cord, bead and silk colours (sRGB hex), its length (m); none when absent. */
+  readonly tassel?: { readonly cord: string; readonly bead: string; readonly silkTop: string; readonly silkEnd: string; readonly lengthM: number };
+  /** Where the blade starts (above the guard) and how the jade on it glows (soft ≤ 0.9; the ridge core is HDR 3–6). */
+  readonly bladeFrom: number;
+}
+
 export interface WeaponDef {
   readonly id: WeaponId;
   /** English name, what the player reads (repo AGENTS.md, 28/10). */
@@ -77,7 +116,7 @@ export interface WeaponDef {
   readonly mark: string;
   /** Element accent, SKILL_CATALOG §1 (sRGB hex). */
   readonly accent: string;
-  /** A second catalog tint (Wood's dark jade), for inlays later; the VFX use `accent`. */
+  /** A second tint: Wood's dark jade (catalog), Clear Wind's pale jade (its ring and beads; its motifs use it). The skills' own colours come from `accent`. */
   readonly accent2?: string;
   /** Fire only (D54): core → body → rim. */
   readonly ramp?: readonly [core: string, body: string, rim: string];
@@ -88,6 +127,12 @@ export interface WeaponDef {
   readonly model: string;
   /** How the GLB maps onto the jian convention when the automatic fit guesses wrong. */
   readonly fit?: BladeFit;
+  /** A reduced copy of the GLB for Thiên Hà's swarm (an LOD; the hero copies keep `model`). */
+  readonly swarm?: string;
+  /** The weapon's own motifs in its skills (Clear Wind). */
+  readonly motif?: WeaponMotif;
+  /** The hand prop and tassel (Clear Wind). */
+  readonly hold?: WeaponHold;
 }
 
 /** Family tints of SKILL_CATALOG §1 (the school's own colour, for UI and ink accents). */
@@ -210,25 +255,73 @@ interface Entry {
   readonly family: WeaponFamily;
   readonly element: WeaponElement;
   readonly mark: string;
+  readonly accent2?: string;
+  readonly swarm?: boolean;
+  readonly motif?: WeaponMotif;
+  readonly hold?: WeaponHold;
 }
 
 function weapon(e: Entry): WeaponDef {
   const fire = e.element === "fire";
   const accent = ELEMENT_ACCENT[e.element];
+  const { swarm, ...rest } = e;
   return {
-    ...e,
+    ...rest,
     accent,
     ...(e.element === "wood" ? { accent2: WOOD_JADE } : {}),
     ...(fire ? { ramp: FIRE_RAMP } : {}),
     rail: railOf(accent),
     glow: fire ? glowOfRamp(FIRE_RAMP) : glowOf(accent, GLOW_CHROMA, rimOf(e.element === "metal" ? FAMILY_ACCENT[e.family] : accent, RIM_GAMMA[e.element])),
     model: MODEL_DIR + e.id + ".glb",
+    ...(swarm === true ? { swarm: MODEL_DIR + e.id + "-swarm.glb" } : {}),
   };
 }
 
+/** A unit-max linear colour of an sRGB hex × `k`. Load time only. */
+function lightOf(hex: string, k: number): Rgb {
+  const u = unitLinear(hex);
+  return [u[0] * k, u[1] * k, u[2] * k];
+}
+
+/**
+ * Clear Wind's jade and silk (sampled from its Tripo colour map and the
+ * approved showcase x5-clearwind-heirloom: the blade's jade core, mint beads,
+ * an indigo grip and a pale-blue silk tassel). The jade is pale and grey-green
+ * (hue ~145°), away from the typing colour (#7FF5E0, hue ~170°, saturated).
+ */
+const CLEAR_WIND_JADE = "#C4E2CF";
+const CLEAR_WIND_SILVER = "#DCE4EE";
+const CLEAR_WIND_MOTIF: WeaponMotif = {
+  ring: true,
+  cloud: true,
+  silk: true,
+  jade: lightOf(CLEAR_WIND_JADE, 0.86),
+  silver: lightOf(CLEAR_WIND_SILVER, 0.86),
+  silkLight: lightOf("#A9C4EA", 0.7),
+  silkDeep: lightOf("#2E3A78", 0.55),
+};
+const CLEAR_WIND_HOLD: WeaponHold = {
+  lengthM: 1.02,
+  gripAt: 0.153,
+  pommelAt: 0.004,
+  bladeFrom: 0.38,
+  tassel: { cord: "#27305e", bead: "#b6d6c2", silkTop: "#3a4888", silkEnd: "#b8cff0", lengthM: 0.27 },
+};
+
 /** WEAPON_DESIGN §6, in its order: four swords, three sabres, three spears. */
 export const WEAPONS: readonly WeaponDef[] = [
-  weapon({ id: "clear-wind", name: "Clear Wind", hanViet: "Thanh Phong", family: "sword", element: "metal", mark: "straight blade through a hollow jade ring; two grooves meet at the tip" }),
+  weapon({
+    id: "clear-wind",
+    name: "Clear Wind",
+    hanViet: "Thanh Phong",
+    family: "sword",
+    element: "metal",
+    mark: "straight blade through a hollow jade ring; two grooves meet at the tip",
+    accent2: CLEAR_WIND_JADE,
+    swarm: true,
+    motif: CLEAR_WIND_MOTIF,
+    hold: CLEAR_WIND_HOLD,
+  }),
   weapon({ id: "winter-vein", name: "Winter Vein", hanViet: "Hàn Mạch", family: "sword", element: "ice", mark: "two low hexagonal shoulders like split ice; the groove cracks in three near the tip" }),
   weapon({ id: "thunder-seal", name: "Thunder Seal", hanViet: "Lôi Ấn", family: "sword", element: "thunder", mark: "stepped square-spiral thunder-meander guard (design under review)" }),
   weapon({ id: "verdant-branch", name: "Verdant Branch", hanViet: "Bích Chi", family: "sword", element: "wood", mark: "leaf-shaped blade, offset Y guard" }),

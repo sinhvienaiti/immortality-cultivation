@@ -9,9 +9,14 @@
  * The glow, trails and light around a blade are VFX layers in kiem.ts. Steel
  * takes the scene's HDRI reflections and a faint rail emissive; a per-blade
  * tint flashes on blocks and hits. Tip along +Y in the blade's frame.
+ * Blades from `split` on (Thiên Hà's swarm) draw from a second instanced mesh
+ * that may hold a reduced copy of the weapon (an LOD, MODEL_QUALITY §3 step
+ * 2; Clear Wind 02/11: clear-wind-swarm.glb), and each mesh draws only up to
+ * its highest visible blade, so hidden slots cost no vertices.
  * Nothing allocates per frame.
  */
 import * as THREE from "three";
+import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries, mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { loadModel } from "../../kit/three/model-loader";
 
@@ -222,30 +227,77 @@ export function bladeFromObject(root: THREE.Object3D, fit: BladeFit = {}): THREE
   return indexed;
 }
 
-const loaded = new Map<string, Promise<THREE.BufferGeometry>>();
+/**
+ * The guard's band on a blade geometry in the jian convention (unit length,
+ * tip +Y): the run of heights round y = 0 where the cross-section is over
+ * twice the blade's own width (Clear Wind: its ring). [−0.02, 0.02] when there
+ * is none. Load time only.
+ */
+export function guardBand(geometry: THREE.BufferGeometry): [number, number] {
+  const pos = geometry.getAttribute("position");
+  const S = 80;
+  const lo = -0.6;
+  const hi = 0.4;
+  const w = new Float32Array(S);
+  for (let i = 0; i < pos.count; i += 1) {
+    const y = pos.getY(i);
+    if (y < lo || y >= hi) continue;
+    const s = Math.floor(((y - lo) / (hi - lo)) * S);
+    const x = Math.abs(pos.getX(i));
+    if (x > w[s]!) w[s] = x;
+  }
+  const at = (y: number): number => Math.min(S - 1, Math.max(0, Math.floor(((y - lo) / (hi - lo)) * S)));
+  const blade = Math.max(1e-4, w[at(0.3)]!);
+  const k = at(0);
+  if (!(w[k]! > 2 * blade)) return [-0.02, 0.02];
+  let a = k;
+  let b = k;
+  while (a > 0 && w[a - 1]! > 2 * blade) a -= 1;
+  while (b < S - 1 && w[b + 1]! > 2 * blade) b += 1;
+  return [lo + (a / S) * (hi - lo), lo + ((b + 1) / S) * (hi - lo)];
+}
+
+const models = new Map<string, Promise<GLTF | null>>();
 
 /**
- * The blade geometry for a weapon GLB, cached per URL; the stand-in jian when
- * the file is missing, unreadable or empty (until the owner approves a design
- * no weapon file exists, so every weapon shows the stand-in). The dev server
- * answers a missing file with its HTML page, so the type is checked first.
+ * A weapon GLB, loaded once per URL however many users share it (the blade
+ * geometry and the lab's hand prop); null when the file is missing or
+ * unreadable. The dev server answers a missing file with its HTML page, so
+ * the type is checked first. Users must not change the returned scene (clone
+ * what they reparent or patch).
  */
-export function loadBladeGeometry(url: string | undefined, fit?: BladeFit): Promise<THREE.BufferGeometry> {
-  if (url === undefined || url === "") return Promise.resolve(standInBlade());
-  let p = loaded.get(url);
+export function loadWeaponModel(url: string | undefined): Promise<GLTF | null> {
+  if (url === undefined || url === "") return Promise.resolve(null);
+  let p = models.get(url);
   if (p === undefined) {
     p = (async () => {
       try {
         const head = await fetch(url, { method: "HEAD" });
         const type = head.headers.get("content-type") ?? "";
-        if (!head.ok || type.includes("text/html")) return standInBlade();
-        const gltf = await loadModel(url);
-        return bladeFromObject(gltf.scene, fit) ?? standInBlade();
+        if (!head.ok || type.includes("text/html")) return null;
+        return await loadModel(url);
       } catch (error) {
-        console.warn("[blades] weapon model unreadable, stand-in blade kept:", url, error);
-        return standInBlade();
+        console.warn("[blades] weapon model unreadable:", url, error);
+        return null;
       }
     })();
+    models.set(url, p);
+  }
+  return p;
+}
+
+const loaded = new Map<string, Promise<THREE.BufferGeometry>>();
+
+/**
+ * The blade geometry for a weapon GLB, cached per URL; the stand-in jian when
+ * the file is missing, unreadable or empty (until the owner approves a design
+ * no weapon file exists, so every weapon shows the stand-in).
+ */
+export function loadBladeGeometry(url: string | undefined, fit?: BladeFit): Promise<THREE.BufferGeometry> {
+  if (url === undefined || url === "") return Promise.resolve(standInBlade());
+  let p = loaded.get(url);
+  if (p === undefined) {
+    p = loadWeaponModel(url).then((gltf) => (gltf === null ? standInBlade() : (bladeFromObject(gltf.scene, fit) ?? standInBlade())));
     loaded.set(url, p);
   }
   return p;
@@ -253,8 +305,27 @@ export function loadBladeGeometry(url: string | undefined, fit?: BladeFit): Prom
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-export class BladeSet {
+/** One instanced mesh of a BladeSet and the highest visible blade it draws up to. */
+interface BladeMesh {
   readonly mesh: THREE.InstancedMesh;
+  /** First blade index it holds. */
+  readonly from: number;
+  /** Blades drawn: 1 + the highest visible local index (0: none). */
+  hi: number;
+  /** A blade at the top was hidden: `hi` is found again at sync. */
+  recount: boolean;
+  dirty: boolean;
+  /** The upload ranges, reused (three's addUpdateRange allocates an object a call). */
+  readonly matrixRange: { start: number; count: number };
+  readonly colourRange: { start: number; count: number };
+}
+
+export class BladeSet {
+  /** The hero blades [0, split) (the swarm's mesh is its child, so one object goes in the scene). */
+  readonly mesh: THREE.InstancedMesh;
+  /** The swarm blades [split, capacity), or null when split = capacity. */
+  readonly swarm: THREE.InstancedMesh | null;
+  private readonly parts: BladeMesh[] = [];
   private readonly visible: Uint8Array;
   /** Last pose per blade (centre of the blade, unit tip direction, length in m) for glow cards. */
   readonly cx: Float32Array;
@@ -272,12 +343,20 @@ export class BladeSet {
   private readonly roll = new THREE.Quaternion();
   private readonly colour = new THREE.Color();
   private readonly zero = new THREE.Matrix4().makeScale(0, 0, 0);
-  private dirty = false;
   private readonly lengthM: number;
   private readonly material: THREE.MeshStandardMaterial;
+  /** Draw every slot, hidden ones too (the old way; a lab measurement of the trim). */
+  drawAll = false;
 
-  /** `lengthM`: guard to tip in metres at scale 1 (the geometry is unit length; the instance matrix scales it). */
-  constructor(readonly capacity: number, lengthM = 1.1) {
+  /**
+   * `lengthM`: guard to tip in metres at scale 1 (the geometry is unit length; the instance matrix scales it).
+   * `split`: the first swarm blade (they may take their own geometry, `setGeometry`).
+   */
+  constructor(
+    readonly capacity: number,
+    lengthM = 1.1,
+    readonly split = capacity,
+  ) {
     this.material = new THREE.MeshStandardMaterial({
       color: "#dfe5ec",
       metalness: 1,
@@ -286,12 +365,29 @@ export class BladeSet {
       emissiveIntensity: 0.55,
       envMapIntensity: 1.4,
     });
-    this.mesh = new THREE.InstancedMesh(standInBlade(), this.material, capacity);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
-    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.frustumCulled = false;
-    this.mesh.castShadow = true;
+    const make = (from: number, n: number): BladeMesh => {
+      const mesh = new THREE.InstancedMesh(standInBlade(), this.material, n);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.castShadow = true;
+      for (let i = 0; i < n; i += 1) mesh.setMatrixAt(i, this.zero);
+      mesh.count = 0;
+      return { mesh, from, hi: 0, recount: false, dirty: false, matrixRange: { start: 0, count: 0 }, colourRange: { start: 0, count: 0 } };
+    };
+    const hero = make(0, Math.min(split, capacity));
+    this.parts.push(hero);
+    this.mesh = hero.mesh;
+    if (split < capacity) {
+      const swarm = make(split, capacity - split);
+      swarm.mesh.name = "bladesSwarm";
+      this.parts.push(swarm);
+      this.mesh.add(swarm.mesh);
+      this.swarm = swarm.mesh;
+    } else {
+      this.swarm = null;
+    }
     this.visible = new Uint8Array(capacity);
     this.cx = new Float32Array(capacity);
     this.cy = new Float32Array(capacity);
@@ -301,8 +397,10 @@ export class BladeSet {
     this.tz = new Float32Array(capacity);
     this.len = new Float32Array(capacity);
     this.lengthM = lengthM;
-    for (let i = 0; i < capacity; i += 1) this.mesh.setMatrixAt(i, this.zero);
-    this.mesh.count = capacity;
+  }
+
+  private part(i: number): BladeMesh {
+    return i < this.split ? this.parts[0]! : this.parts[1]!;
   }
 
   /** Blade `i` at (x, y, z), tip along (dx, dy, dz), `scale` × its length, spun `rollRad` round its axis. */
@@ -319,7 +417,11 @@ export class BladeSet {
     const k = scale * this.lengthM;
     this.scl.set(k, k, k);
     this.matrix.compose(this.pos, this.quat, this.scl);
-    this.mesh.setMatrixAt(i, this.matrix);
+    const p = this.part(i);
+    const j = i - p.from;
+    p.mesh.setMatrixAt(j, this.matrix);
+    if (j + 1 > p.hi) p.hi = j + 1;
+    p.dirty = true;
     this.visible[i] = 1;
     const L = this.lengthM * scale;
     this.cx[i] = x + this.dir.x * L * 0.45;
@@ -329,14 +431,16 @@ export class BladeSet {
     this.ty[i] = this.dir.y;
     this.tz[i] = this.dir.z;
     this.len[i] = L;
-    this.dirty = true;
   }
 
   hide(i: number): void {
     if (this.visible[i] === 0) return;
     this.visible[i] = 0;
-    this.mesh.setMatrixAt(i, this.zero);
-    this.dirty = true;
+    const p = this.part(i);
+    const j = i - p.from;
+    p.mesh.setMatrixAt(j, this.zero);
+    if (j + 1 >= p.hi) p.recount = true;
+    p.dirty = true;
   }
 
   hideAll(): void {
@@ -346,18 +450,20 @@ export class BladeSet {
   /** Tint multiplier (1 = steel; > 1 brightens toward white for a flash). */
   tint(i: number, r: number, g: number, b: number): void {
     this.colour.setRGB(r, g, b);
-    this.mesh.setColorAt(i, this.colour);
-    this.dirty = true;
+    const p = this.part(i);
+    p.mesh.setColorAt(i - p.from, this.colour);
+    p.dirty = true;
   }
 
   /**
-   * The equipped weapon's blade (unit length, jian convention). Same mesh,
-   * same draw call, poses and tints kept; geometries are shared and cached by
-   * the loader, so the old one is not disposed here.
+   * The equipped weapon's blade (unit length, jian convention), and the
+   * swarm's (an LOD of it; default the same). Same meshes, same draw calls,
+   * poses and tints kept; geometries are shared and cached by the loader, so
+   * the old ones are not disposed here.
    */
-  setGeometry(geometry: THREE.BufferGeometry): void {
-    if (this.mesh.geometry === geometry) return;
-    this.mesh.geometry = geometry;
+  setGeometry(geometry: THREE.BufferGeometry, swarm: THREE.BufferGeometry = geometry): void {
+    if (this.mesh.geometry !== geometry) this.mesh.geometry = geometry;
+    if (this.swarm !== null && this.swarm.geometry !== swarm) this.swarm.geometry = swarm;
   }
 
   /** The glow rail's colour (sRGB hex); with the stand-in the whole blade carries it. */
@@ -370,10 +476,40 @@ export class BladeSet {
     return this.visible[i] === 1;
   }
 
+  /** Blades drawn by each mesh this frame (hero, swarm), hidden slots under the highest visible one included. */
+  drawn(out: { hero: number; swarm: number }): void {
+    out.hero = this.parts[0]!.mesh.count;
+    out.swarm = this.parts.length > 1 ? this.parts[1]!.mesh.count : 0;
+  }
+
   sync(): void {
-    if (!this.dirty) return;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
-    this.dirty = false;
+    for (let k = 0; k < this.parts.length; k += 1) {
+      const p = this.parts[k]!;
+      if (this.drawAll) p.mesh.count = p.mesh.instanceMatrix.count;
+      if (!p.dirty) continue;
+      if (p.recount) {
+        let hi = p.hi;
+        while (hi > 0 && this.visible[p.from + hi - 1] === 0) hi -= 1;
+        p.hi = hi;
+        p.recount = false;
+      }
+      // Only the prefix up to the highest visible blade is sent and drawn (a hidden slot of a 15k-triangle
+      // weapon still cost its vertices when every slot was drawn).
+      const m = p.mesh;
+      const n = this.drawAll ? m.instanceMatrix.count : p.hi;
+      m.count = n;
+      // One range from 0, the same object every frame (no allocation; the renderer clears the list after upload).
+      p.matrixRange.count = Math.max(1, n) * 16;
+      m.instanceMatrix.updateRanges.length = 0;
+      m.instanceMatrix.updateRanges.push(p.matrixRange);
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) {
+        p.colourRange.count = Math.max(1, n) * 3;
+        m.instanceColor.updateRanges.length = 0;
+        m.instanceColor.updateRanges.push(p.colourRange);
+        m.instanceColor.needsUpdate = true;
+      }
+      p.dirty = false;
+    }
   }
 }
