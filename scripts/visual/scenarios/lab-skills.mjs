@@ -18,7 +18,8 @@ const PLAN = {
   auto: { word: 0, after: [[0, "release"], [8, "travel"], [18, "impact"], [20, "impact+2"], [45, "aftermath"]] },
   k1: { word: 5, charge: [0.5, 0.9], after: [[0, "release"], [3, "travel"], [6, "impact1"], [8, "impact1+2"], [33, "launch2"], [36, "impact2"], [66, "impact3"], [95, "aftermath"]] },
   k2: { word: 6, charge: [0.5, 0.9], after: [[0, "release"], [6, "travel"], [12, "impact"], [14, "impact+2"], [30, "aftermath"], [70, "ink"]] },
-  guard: { word: 5, charge: [0.5, 0.9], after: [[0, "release"], [9, "landed"], [60, "orbit"]], shot: 70, afterShot: [[0, "bolt"], [10, "bolt+10"], [20, "parry"], [24, "parry+4"], [50, "after"]] },
+  // afterShot "parry" frames are counted from the frame the bolt reaches the guard (the parry), found by stepping.
+  guard: { word: 5, charge: [0.5, 0.9], after: [[0, "release"], [9, "landed"], [60, "orbit"]], shot: 70, afterShot: [[0, "bolt"], [10, "bolt+10"]], parry: [[0, "parry"], [4, "parry+4"], [30, "after"]] },
   dash: { word: 4, charge: [0.5, 0.9], after: [[0, "release"], [5, "travel"], [12, "arrive"], [30, "aftermath"]] },
   k4: { word: 6, charge: [0.5, 0.9], after: [[0, "release"], [8, "fall"], [12, "open"], [14, "open+2"], [42, "beat2"], [44, "beat2+2"], [150, "mid"], [300, "close"], [330, "aftermath"]] },
   k5: { word: 8, charge: [0.4, 0.8, 0.95], after: [[0, "release"], [10, "belts"], [30, "wave1"], [32, "wave1+2"], [75, "wave2"], [118, "dive3"], [120, "wave3"], [122, "wave3+2"], [150, "aftermath"], [190, "ink"]] },
@@ -72,10 +73,13 @@ export default async function (page) {
       elapsed += Math.max(0, f);
       await shot(skill, n++, `charge${Math.round(p * 100)}`);
     }
-    // Step to the release frame (the last key).
-    const toRelease = Math.max(0, total - elapsed);
+    // Step to the release frame (the last key). A skill with no word casts at once, outside a frame:
+    // step one frame so the release is drawn (before 02/11 the auto "release" shot showed nothing).
+    const toRelease = plan.word > 0 ? Math.max(0, total - elapsed) : 1;
     if (toRelease > 0) await page.eval(`window.__lab.step(${toRelease})`);
-    let since = 0;
+    // Frames after the release count from the cast: for a wordless skill that extra frame is frame 1
+    // (its blade lands on update 18 after the cast, so "impact" must be update 18, not 19).
+    let since = plan.word > 0 ? 0 : toRelease;
     for (const [f, label] of plan.after) {
       if (f > since) await page.eval(`window.__lab.step(${f - since})`);
       since = Math.max(since, f);
@@ -89,6 +93,16 @@ export default async function (page) {
         if (f > s2) await page.eval(`window.__lab.step(${f - s2})`);
         s2 = Math.max(s2, f);
         await shot(skill, n++, label);
+      }
+      if (plan.parry) {
+        // Step until the bolt reaches the ring (the block happens on that frame).
+        for (let i = 0; i < 120 && (await page.eval("window.__lab.boltActive()")); i += 1) await page.eval("window.__lab.step(1)");
+        let s3 = 0;
+        for (const [f, label] of plan.parry) {
+          if (f > s3) await page.eval(`window.__lab.step(${f - s3})`);
+          s3 = Math.max(s3, f);
+          await shot(skill, n++, label);
+        }
       }
     }
   }

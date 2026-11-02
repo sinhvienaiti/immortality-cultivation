@@ -50,16 +50,21 @@ export type SpriteBlend = "add" | "ink";
 export type SpriteFacing = "camera" | "ground";
 
 const SPRITE_VERTEX = /* glsl */ `
+uniform float uPull;   // camera sprites: pulled toward the camera along the view ray by this share of their size
+uniform float uCrop;   // share of the texture (centred) the quad shows; the quad shrinks with it
 attribute vec4 iPos;   // xyz, size (m)
 attribute vec4 iCol;   // rgb (HDR), alpha
 attribute vec4 iRot;   // rotation (rad), stretch (s), aspect, unused
 attribute vec3 iVel;   // world velocity (m/s)
 varying vec2 vUv;
 varying vec4 vCol;
+#ifdef GROUND_FADE
+varying float vWorldY;
+#endif
 void main() {
-  vUv = uv;
+  vUv = 0.5 + (uv - 0.5) * uCrop;
   vCol = iCol;
-  vec2 c = position.xy;
+  vec2 c = position.xy * uCrop;
   float s = iPos.w;
 #ifdef GROUND
   float cr = cos(iRot.x), sr = sin(iRot.x);
@@ -67,6 +72,15 @@ void main() {
   vec4 mv = viewMatrix * vec4(iPos.x + o.x, iPos.y, iPos.z + o.y, 1.0);
 #else
   vec4 mv = viewMatrix * vec4(iPos.xyz, 1.0);
+  // A big quad near the ground would be cut by it in a hard line (the camera looks down at 55°):
+  // bring it toward the camera along its view ray and shrink it by the same ratio, so its place
+  // and size on screen stay and only its depth changes.
+  float k = 1.0;
+  if (uPull > 0.0) {
+    float d = length(mv.xyz);
+    if (d > 1e-4) k = max(d - s * uPull, min(d, 0.5)) / d;
+  }
+  mv.xyz *= k;
   vec3 vv = (viewMatrix * vec4(iVel, 0.0)).xyz;
   float len = length(vv.xy);
   vec2 o;
@@ -79,18 +93,36 @@ void main() {
     o = vec2(cr * c.x - sr * c.y, sr * c.x + cr * c.y) * s;
     o.x *= iRot.z;
   }
-  mv.xy += o;
+  mv.xy += o * k;
+#endif
+#ifdef GROUND_FADE
+  // World height of the vertex (the view matrix is a rotation plus a translation).
+  vWorldY = dot(viewMatrix[1].xyz, mv.xyz) + cameraPosition.y;
 #endif
   gl_Position = projectionMatrix * mv;
 }`;
 
 const SPRITE_FRAGMENT = /* glsl */ `
 uniform sampler2D map;
+uniform float uCrop;
+uniform float uCropFade;
+uniform float uGroundFade;
 varying vec2 vUv;
 varying vec4 vCol;
+#ifdef GROUND_FADE
+varying float vWorldY;
+#endif
 void main() {
   vec4 t = texture2D(map, vUv);
   float a = t.a * vCol.a;
+#ifdef CROP
+  // Fade to nothing at the circle inscribed in the cropped window: no square edge, corners discarded.
+  a *= 1.0 - smoothstep(uCropFade, 1.0, length(vUv - 0.5) * 2.0 / uCrop);
+#endif
+#ifdef GROUND_FADE
+  // Gone at the ground, so the floor never slices the quad in a hard line.
+  a *= smoothstep(0.0, uGroundFade, vWorldY);
+#endif
   if (a < 0.002) discard;
 #ifdef INK
   gl_FragColor = vec4(vCol.rgb * a, a);
@@ -107,6 +139,7 @@ export class SpriteSpec {
   vx = 0;
   vy = 0;
   vz = 0;
+  /** Seconds; ≤ 0 makes a one-frame sprite (re-emitted every frame by its caller). */
   life = 0.3;
   size0 = 0.5;
   size1 = 0.5;
@@ -140,6 +173,62 @@ export class SpriteSpec {
 
 const F = 21; // floats per sprite state
 
+/**
+ * Dynamic attributes that upload only the items in use. Each keeps one update
+ * range for good (three's addUpdateRange makes an object per call, and three
+ * empties the list after every upload), so a frame allocates nothing here.
+ */
+class PrefixAttribute extends THREE.BufferAttribute {
+  private readonly prefix = { start: 0, count: 0 };
+  constructor(array: Float32Array, itemSize: number) {
+    super(array, itemSize);
+    this.setUsage(THREE.DynamicDrawUsage);
+    this.updateRanges.push(this.prefix);
+  }
+  override clearUpdateRanges(): void {}
+  /** Sends the first `items` items at the next render. */
+  sendPrefix(items: number): void {
+    this.prefix.count = items * this.itemSize;
+    this.needsUpdate = true;
+  }
+}
+
+class PrefixInstancedAttribute extends THREE.InstancedBufferAttribute {
+  private readonly prefix = { start: 0, count: 0 };
+  constructor(array: Float32Array, itemSize: number) {
+    super(array, itemSize);
+    this.setUsage(THREE.DynamicDrawUsage);
+    this.updateRanges.push(this.prefix);
+  }
+  override clearUpdateRanges(): void {}
+  sendPrefix(items: number): void {
+    this.prefix.count = items * this.itemSize;
+    this.needsUpdate = true;
+  }
+}
+
+/** Sends the first `items` items of each attribute, or nothing when `items` is 0 (the mesh is hidden then). */
+function uploadPrefix(attrs: readonly (PrefixAttribute | PrefixInstancedAttribute)[], items: number): void {
+  if (items <= 0) return;
+  for (const a of attrs) a.sendPrefix(items);
+}
+
+export interface SpritePoolOptions {
+  /** Camera sprites: pulled toward the camera along the view ray by this share of their size (default 0.5). */
+  pull?: number;
+  /**
+   * Share of the texture (centred) the quad shows, for soft textures whose
+   * visible shape fills only the middle (default 1, all). Sizes keep meaning
+   * the whole texture; the quad and the UVs shrink together, and the window
+   * fades to nothing at its inscribed circle, so far fewer pixels are drawn.
+   */
+  crop?: number;
+  /** Where that fade starts, as a share of the window's radius (default 0.8). */
+  cropFade?: number;
+  /** Camera sprites: fade in over this many metres above the ground, so the floor never slices them (0: off). */
+  groundFade?: number;
+}
+
 export class SpritePool {
   readonly mesh: THREE.Mesh;
   readonly spec = new SpriteSpec();
@@ -148,7 +237,7 @@ export class SpritePool {
   private readonly col: Float32Array;
   private readonly rotA: Float32Array;
   private readonly vel: Float32Array;
-  private readonly attrs: THREE.InstancedBufferAttribute[];
+  private readonly attrs: PrefixInstancedAttribute[];
   private readonly geometry: THREE.InstancedBufferGeometry;
   private live = 0;
 
@@ -158,7 +247,12 @@ export class SpritePool {
     blend: SpriteBlend,
     facing: SpriteFacing = "camera",
     renderOrder = 10,
+    opts: SpritePoolOptions = {},
   ) {
+    const pull = opts.pull ?? 0.5;
+    const crop = Math.min(1, Math.max(0.05, opts.crop ?? 1));
+    const cropFade = Math.min(0.99, Math.max(0, opts.cropFade ?? 0.8));
+    const groundFade = facing === "camera" ? Math.max(0, opts.groundFade ?? 0) : 0;
     const base = new THREE.PlaneGeometry(1, 1);
     const geometry = new THREE.InstancedBufferGeometry();
     geometry.index = base.index;
@@ -169,12 +263,11 @@ export class SpritePool {
     this.rotA = new Float32Array(capacity * 4);
     this.vel = new Float32Array(capacity * 3);
     this.attrs = [
-      new THREE.InstancedBufferAttribute(this.pos, 4),
-      new THREE.InstancedBufferAttribute(this.col, 4),
-      new THREE.InstancedBufferAttribute(this.rotA, 4),
-      new THREE.InstancedBufferAttribute(this.vel, 3),
+      new PrefixInstancedAttribute(this.pos, 4),
+      new PrefixInstancedAttribute(this.col, 4),
+      new PrefixInstancedAttribute(this.rotA, 4),
+      new PrefixInstancedAttribute(this.vel, 3),
     ];
-    for (const a of this.attrs) a.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute("iPos", this.attrs[0]!);
     geometry.setAttribute("iCol", this.attrs[1]!);
     geometry.setAttribute("iRot", this.attrs[2]!);
@@ -184,10 +277,18 @@ export class SpritePool {
     const defines: Record<string, string> = {};
     if (blend === "ink") defines.INK = "";
     if (facing === "ground") defines.GROUND = "";
+    if (crop < 1) defines.CROP = "";
+    if (groundFade > 0) defines.GROUND_FADE = "";
     const material = new THREE.ShaderMaterial({
       vertexShader: SPRITE_VERTEX,
       fragmentShader: SPRITE_FRAGMENT,
-      uniforms: { map: { value: texture } },
+      uniforms: {
+        map: { value: texture },
+        uPull: { value: facing === "camera" ? Math.max(0, pull) : 0 },
+        uCrop: { value: crop },
+        uCropFade: { value: cropFade },
+        uGroundFade: { value: groundFade },
+      },
       defines,
       transparent: true,
       depthWrite: false,
@@ -201,11 +302,32 @@ export class SpritePool {
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;
+    // Hidden while empty: the renderer then skips it whole (no upload, no program or uniform setup).
+    this.mesh.visible = false;
     this.state = new Float32Array(capacity * F);
   }
 
   get count(): number {
     return this.live;
+  }
+
+  /**
+   * Drops the one-frame sprites already drawn. Call it at the start of a
+   * frame, before that frame's cards are emitted: otherwise last frame's
+   * cards still hold the capacity the new ones need (a pool would have to be
+   * twice the cards it shows, or cards blink every other frame). Keeps the
+   * order of the rest, so a pool holding only one-frame cards copies nothing.
+   */
+  dropOneFrame(): void {
+    const st = this.state;
+    let w = 0;
+    for (let i = 0; i < this.live; i += 1) {
+      const o = i * F;
+      if (st[o + 7]! <= 0 && st[o + 6]! > 0) continue;
+      if (w !== i) st.copyWithin(w * F, o, o + F);
+      w += 1;
+    }
+    this.live = w;
   }
 
   /** Spawns one sprite from `spec` (dropped when full: callers cap their own bursts). */
@@ -242,6 +364,7 @@ export class SpritePool {
   clear(): void {
     this.live = 0;
     this.geometry.instanceCount = 0;
+    this.mesh.visible = false;
   }
 
   update(dt: number): void {
@@ -249,6 +372,21 @@ export class SpritePool {
     let i = 0;
     while (i < this.live) {
       const o = i * F;
+      if (st[o + 7]! <= 0) {
+        // One-frame sprite (life ≤ 0): drawn once, gone at the next update whatever dt is,
+        // so cards re-emitted every frame never pile up during hit-stop (dropOneFrame
+        // removes them earlier, before the next frame's cards).
+        if (st[o + 6]! > 0) {
+          const last = (this.live - 1) * F;
+          if (last !== o) st.copyWithin(o, last, last + F);
+          this.live -= 1;
+          continue;
+        }
+        st[o + 6] = 1;
+        this.write(i);
+        i += 1;
+        continue;
+      }
       const age = st[o + 6]! + dt;
       if (age >= st[o + 7]!) {
         // Swap the last live sprite in.
@@ -274,7 +412,8 @@ export class SpritePool {
       i += 1;
     }
     this.geometry.instanceCount = this.live;
-    for (const a of this.attrs) a.needsUpdate = true;
+    this.mesh.visible = this.live > 0;
+    uploadPrefix(this.attrs, this.live);
   }
 
   private write(i: number): void {
@@ -282,9 +421,10 @@ export class SpritePool {
     const o = i * F;
     const age = st[o + 6]!;
     const life = st[o + 7]!;
-    const t = age / life;
+    const once = life <= 0;
+    const t = once ? 0 : age / life;
     const fadeIn = st[o + 16]!;
-    let alpha = fadeIn > 0 && age < fadeIn ? age / fadeIn : 1;
+    let alpha = !once && fadeIn > 0 && age < fadeIn ? age / fadeIn : 1;
     alpha *= 1 - easeInCubic(t);
     const size = lerp(st[o + 8]!, st[o + 9]!, easeOutCubic(t));
     const p = i * 4;
@@ -311,12 +451,15 @@ export class SpritePool {
 const RIBBON_VERTEX = /* glsl */ `
 attribute float aT;
 attribute vec4 aCol;
+attribute vec3 aRim;
 varying float vT;
 varying vec4 vCol;
+varying vec3 vRim;
 varying float vSide;
 void main() {
   vT = aT;
   vCol = aCol;
+  vRim = aRim;
   vSide = mod(float(gl_VertexID), 2.0);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
@@ -326,16 +469,19 @@ uniform sampler2D map;
 uniform float uTime;
 varying float vT;
 varying vec4 vCol;
+varying vec3 vRim;
 varying float vSide;
 void main() {
   // vT: 0 at the head, 1 at the tail; vSide 0/1 across the strip.
-  float across = abs(vSide * 2.0 - 1.0);
-  float core = pow(1.0 - across, 3.0);
-  float body = 1.0 - across * across;
+  // Sword-light: a thin HDR core (vCol, the only part that blooms) inside a wide
+  // coloured halo (vRim, <= 0.9), so the trail reads as light, not as a white smear.
+  float s = clamp(1.0 - abs(vSide * 2.0 - 1.0), 0.0, 1.0);
+  float core = pow(s, 7.0);
+  float body = s * s * (3.0 - 2.0 * s);
   vec4 t = texture2D(map, vec2(vT * 2.0 - uTime * 1.5, vSide));
   float erode = smoothstep(0.0, 0.35, t.a + (1.0 - vT) * 0.6 - vT * 0.5);
-  float a = vCol.a * body * erode * (1.0 - vT);
-  vec3 rgb = vCol.rgb * (0.35 + core * 1.65);
+  float a = vCol.a * erode * (1.0 - vT);
+  vec3 rgb = vRim * body * 0.95 + vCol.rgb * core * (1.0 - vT * 0.6);
   gl_FragColor = vec4(rgb * a, a);
 }`;
 
@@ -348,10 +494,13 @@ export class RibbonPool {
   private readonly filled: Int32Array;
   private readonly widthM: Float32Array;
   private readonly colour: Float32Array; // r g b a per ribbon
+  private readonly rimC: Float32Array; // r g b per ribbon (halo, ≤ 0.9)
   private readonly active: Uint8Array;
   private readonly positions: Float32Array;
   private readonly ts: Float32Array;
   private readonly cols: Float32Array;
+  private readonly rims: Float32Array;
+  private readonly attrs: PrefixAttribute[];
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: THREE.ShaderMaterial;
   private readonly camPos = new THREE.Vector3();
@@ -367,11 +516,13 @@ export class RibbonPool {
     this.filled = new Int32Array(capacity);
     this.widthM = new Float32Array(capacity);
     this.colour = new Float32Array(capacity * 4);
+    this.rimC = new Float32Array(capacity * 3);
     this.active = new Uint8Array(capacity);
     const verts = capacity * points * 2;
     this.positions = new Float32Array(verts * 3);
     this.ts = new Float32Array(verts);
     this.cols = new Float32Array(verts * 4);
+    this.rims = new Float32Array(verts * 3);
     const index: number[] = [];
     for (let r = 0; r < capacity; r += 1) {
       for (let p = 0; p < points - 1; p += 1) {
@@ -381,9 +532,16 @@ export class RibbonPool {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setIndex(index);
-    geometry.setAttribute("position", new THREE.BufferAttribute(this.positions, 3).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute("aT", new THREE.BufferAttribute(this.ts, 1).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute("aCol", new THREE.BufferAttribute(this.cols, 4).setUsage(THREE.DynamicDrawUsage));
+    this.attrs = [
+      new PrefixAttribute(this.positions, 3),
+      new PrefixAttribute(this.ts, 1),
+      new PrefixAttribute(this.cols, 4),
+      new PrefixAttribute(this.rims, 3),
+    ];
+    geometry.setAttribute("position", this.attrs[0]!);
+    geometry.setAttribute("aT", this.attrs[1]!);
+    geometry.setAttribute("aCol", this.attrs[2]!);
+    geometry.setAttribute("aRim", this.attrs[3]!);
     this.geometry = geometry;
     this.material = new THREE.ShaderMaterial({
       vertexShader: RIBBON_VERTEX,
@@ -400,6 +558,7 @@ export class RibbonPool {
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;
+    this.mesh.visible = false;
   }
 
   /** Starts ribbon `i` at a point with a width and an HDR colour. */
@@ -413,12 +572,24 @@ export class RibbonPool {
     this.colour[c + 1] = g;
     this.colour[c + 2] = b;
     this.colour[c + 3] = a;
+    // Halo defaults to the core's hue at 0.85 (≤ 0.9); setRim gives it its own colour.
+    const m = Math.max(r, g, b, 1e-3);
+    this.rimC[i * 3] = (r / m) * 0.85;
+    this.rimC[i * 3 + 1] = (g / m) * 0.85;
+    this.rimC[i * 3 + 2] = (b / m) * 0.85;
     const base = i * this.points * 3;
     for (let p = 0; p < this.points; p += 1) {
       this.hist[base + p * 3] = x;
       this.hist[base + p * 3 + 1] = y;
       this.hist[base + p * 3 + 2] = z;
     }
+  }
+
+  /** The halo colour of ribbon `i` (linear, keep each channel ≤ 0.9: it must not bloom). */
+  setRim(i: number, r: number, g: number, b: number): void {
+    this.rimC[i * 3] = r;
+    this.rimC[i * 3 + 1] = g;
+    this.rimC[i * 3 + 2] = b;
   }
 
   /** The head of ribbon `i` this frame. */
@@ -444,9 +615,14 @@ export class RibbonPool {
   update(dt: number, camera: THREE.Camera): void {
     this.time += dt;
     this.material.uniforms.uTime!.value = this.time;
+    // Only ribbons below the highest live one are built, sent and drawn; none live: hidden, nothing sent.
+    let hi = 0;
+    for (let r = 0; r < this.capacity; r += 1) if (this.active[r] !== 0) hi = r + 1;
+    this.mesh.visible = hi > 0;
+    if (hi === 0) return;
     camera.getWorldPosition(this.camPos);
     const n = this.points;
-    for (let r = 0; r < this.capacity; r += 1) {
+    for (let r = 0; r < hi; r += 1) {
       const vbase = r * n * 2;
       if (this.active[r] === 0) {
         for (let k = 0; k < n * 2; k += 1) this.cols[(vbase + k) * 4 + 3] = 0;
@@ -488,19 +664,306 @@ export class RibbonPool {
           this.cols[q + 1] = this.colour[c + 1]!;
           this.cols[q + 2] = this.colour[c + 2]!;
           this.cols[q + 3] = this.colour[c + 3]!;
+          const h = (v + s) * 3;
+          this.rims[h] = this.rimC[r * 3]!;
+          this.rims[h + 1] = this.rimC[r * 3 + 1]!;
+          this.rims[h + 2] = this.rimC[r * 3 + 2]!;
         }
       }
     }
-    this.geometry.getAttribute("position").needsUpdate = true;
-    this.geometry.getAttribute("aT").needsUpdate = true;
-    this.geometry.getAttribute("aCol").needsUpdate = true;
+    this.geometry.setDrawRange(0, hi * (n - 1) * 6);
+    uploadPrefix(this.attrs, hi * n * 2);
+  }
+}
+
+// ── Beams ───────────────────────────────────────────────────────────────────
+
+const BEAM_VERTEX = /* glsl */ `
+attribute vec4 iBase;  // xyz, width (m)
+attribute vec3 iAxis;  // base → tip (m)
+attribute vec3 iCore;  // HDR core × alpha
+attribute vec3 iHalo;  // halo (≤ 0.9) × alpha
+attribute vec2 iFade;  // share of the length that fades at the base, at the tip
+varying vec2 vUv;
+varying vec3 vCore;
+varying vec3 vHalo;
+varying vec2 vFade;
+void main() {
+  vUv = uv;
+  vCore = iCore;
+  vHalo = iHalo;
+  vFade = iFade;
+  vec4 a = viewMatrix * vec4(iBase.xyz, 1.0);
+  vec4 b = viewMatrix * vec4(iBase.xyz + iAxis, 1.0);
+  vec2 d = b.xy - a.xy;
+  float l = length(d);
+  vec2 n = l > 1e-5 ? vec2(-d.y, d.x) / l : vec2(1.0, 0.0);
+  vec4 mv = mix(a, b, position.y + 0.5);
+  mv.xy += n * position.x * iBase.w;
+  gl_Position = projectionMatrix * mv;
+}`;
+
+const BEAM_FRAGMENT = /* glsl */ `
+uniform float uTime;
+varying vec2 vUv;
+varying vec3 vCore;
+varying vec3 vHalo;
+varying vec2 vFade;
+void main() {
+  float s = clamp(1.0 - abs(vUv.x * 2.0 - 1.0), 0.0, 1.0);
+  float y = clamp(vUv.y, 0.0, 1.0);
+  float ends = smoothstep(0.0, max(vFade.x, 1e-3), y) * (1.0 - smoothstep(1.0 - max(vFade.y, 1e-3), 1.0, y));
+  // Energy ripples running up the beam: light, not a flat card.
+  float ripple = 0.82 + 0.18 * sin(y * 26.0 - uTime * 32.0);
+  float halo = s * s * ripple;
+  float core = pow(s, 12.0);
+  vec3 rgb = (vHalo * halo + vCore * core) * ends;
+  if (rgb.r + rgb.g + rgb.b < 0.002) discard;
+  gl_FragColor = vec4(rgb, 1.0);
+}`;
+
+/** What the next beam looks like; set fields, then call `emit()`. Reused, never allocated per spawn. */
+export class BeamSpec {
+  /** Base point (world). */
+  x = 0;
+  y = 0;
+  z = 0;
+  /** Unit direction base → tip. */
+  dx = 0;
+  dy = 1;
+  dz = 0;
+  /** Length over life (m), eased out. */
+  len0 = 1;
+  len1 = 1;
+  /** Seconds for the tip to sweep out from the base (0: full length on the first frame). */
+  grow = 0;
+  /** Width over life (m). */
+  w0 = 0.3;
+  w1 = 0.3;
+  /** Base velocity (m/s): a moving streak. */
+  vx = 0;
+  vy = 0;
+  vz = 0;
+  /** Seconds; ≤ 0 makes a one-frame beam. */
+  life = 0.2;
+  /** Thin HDR core (blooms) and the halo around it (≤ 0.9 per channel). */
+  cr = 3;
+  cg = 3;
+  cb = 3;
+  hr = 0.8;
+  hg = 0.8;
+  hb = 0.8;
+  a = 1;
+  /** Share of the length fading out at the base and at the tip. */
+  fadeBase = 0.08;
+  fadeTip = 0.45;
+  reset(): this {
+    this.dx = this.dz = 0;
+    this.dy = 1;
+    this.len0 = this.len1 = 1;
+    this.grow = 0;
+    this.w0 = this.w1 = 0.3;
+    this.vx = this.vy = this.vz = 0;
+    this.life = 0.2;
+    this.cr = this.cg = this.cb = 3;
+    this.hr = this.hg = this.hb = 0.8;
+    this.a = 1;
+    this.fadeBase = 0.08;
+    this.fadeTip = 0.45;
+    return this;
+  }
+}
+
+const BF = 25; // floats per beam state
+
+/**
+ * Axis billboards: a quad from a base point along a world direction, turned
+ * to face the camera round that axis, with a thin HDR core inside a coloured
+ * halo (light pillars, burst rays, sword-light streaks, light shafts). One
+ * draw call; the first frame is the brightest; nothing allocates per frame.
+ */
+export class BeamPool {
+  readonly mesh: THREE.Mesh;
+  readonly spec = new BeamSpec();
+  private readonly state: Float32Array;
+  private readonly base: Float32Array;
+  private readonly axis: Float32Array;
+  private readonly core: Float32Array;
+  private readonly halo: Float32Array;
+  private readonly fade: Float32Array;
+  private readonly attrs: PrefixInstancedAttribute[];
+  private readonly geometry: THREE.InstancedBufferGeometry;
+  private readonly material: THREE.ShaderMaterial;
+  private live = 0;
+  private time = 0;
+
+  constructor(readonly capacity: number, renderOrder = 13) {
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.index = quad.index;
+    geometry.setAttribute("position", quad.getAttribute("position"));
+    geometry.setAttribute("uv", quad.getAttribute("uv"));
+    this.base = new Float32Array(capacity * 4);
+    this.axis = new Float32Array(capacity * 3);
+    this.core = new Float32Array(capacity * 3);
+    this.halo = new Float32Array(capacity * 3);
+    this.fade = new Float32Array(capacity * 2);
+    this.attrs = [
+      new PrefixInstancedAttribute(this.base, 4),
+      new PrefixInstancedAttribute(this.axis, 3),
+      new PrefixInstancedAttribute(this.core, 3),
+      new PrefixInstancedAttribute(this.halo, 3),
+      new PrefixInstancedAttribute(this.fade, 2),
+    ];
+    geometry.setAttribute("iBase", this.attrs[0]!);
+    geometry.setAttribute("iAxis", this.attrs[1]!);
+    geometry.setAttribute("iCore", this.attrs[2]!);
+    geometry.setAttribute("iHalo", this.attrs[3]!);
+    geometry.setAttribute("iFade", this.attrs[4]!);
+    geometry.instanceCount = 0;
+    this.geometry = geometry;
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: BEAM_VERTEX,
+      fragmentShader: BEAM_FRAGMENT,
+      uniforms: { uTime: { value: 0 } },
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      blendEquation: THREE.AddEquation,
+    });
+    this.mesh = new THREE.Mesh(geometry, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = renderOrder;
+    this.mesh.visible = false;
+    this.state = new Float32Array(capacity * BF);
+  }
+
+  get count(): number {
+    return this.live;
+  }
+
+  /** Drops the one-frame beams already drawn; call at the start of a frame, before its beams are emitted (as SpritePool.dropOneFrame). */
+  dropOneFrame(): void {
+    const st = this.state;
+    let w = 0;
+    for (let i = 0; i < this.live; i += 1) {
+      const o = i * BF;
+      if (st[o + 15]! <= 0 && st[o + 14]! > 0) continue;
+      if (w !== i) st.copyWithin(w * BF, o, o + BF);
+      w += 1;
+    }
+    this.live = w;
+  }
+
+  emit(): void {
+    if (this.live >= this.capacity) return;
+    const s = this.spec;
+    const o = this.live * BF;
+    const st = this.state;
+    st[o] = s.x;
+    st[o + 1] = s.y;
+    st[o + 2] = s.z;
+    st[o + 3] = s.dx;
+    st[o + 4] = s.dy;
+    st[o + 5] = s.dz;
+    st[o + 6] = s.len0;
+    st[o + 7] = s.len1;
+    st[o + 8] = s.grow;
+    st[o + 9] = s.w0;
+    st[o + 10] = s.w1;
+    st[o + 11] = s.vx;
+    st[o + 12] = s.vy;
+    st[o + 13] = s.vz;
+    st[o + 14] = 0; // age
+    st[o + 15] = s.life;
+    st[o + 16] = s.cr;
+    st[o + 17] = s.cg;
+    st[o + 18] = s.cb;
+    st[o + 19] = s.hr;
+    st[o + 20] = s.hg;
+    st[o + 21] = s.hb;
+    st[o + 22] = s.a;
+    st[o + 23] = s.fadeBase;
+    st[o + 24] = s.fadeTip;
+    this.live += 1;
+    this.write(this.live - 1);
+  }
+
+  clear(): void {
+    this.live = 0;
+    this.geometry.instanceCount = 0;
+    this.mesh.visible = false;
+  }
+
+  update(dt: number): void {
+    this.time += dt;
+    this.material.uniforms.uTime!.value = this.time;
+    const st = this.state;
+    let i = 0;
+    while (i < this.live) {
+      const o = i * BF;
+      const life = st[o + 15]!;
+      const age = life <= 0 ? st[o + 14]! + 1 : st[o + 14]! + dt;
+      if ((life <= 0 && age > 1) || (life > 0 && age >= life)) {
+        const last = (this.live - 1) * BF;
+        if (last !== o) st.copyWithin(o, last, last + BF);
+        this.live -= 1;
+        continue;
+      }
+      st[o + 14] = age;
+      if (life > 0) {
+        st[o] = st[o]! + st[o + 11]! * dt;
+        st[o + 1] = st[o + 1]! + st[o + 12]! * dt;
+        st[o + 2] = st[o + 2]! + st[o + 13]! * dt;
+      }
+      this.write(i);
+      i += 1;
+    }
+    this.geometry.instanceCount = this.live;
+    this.mesh.visible = this.live > 0;
+    uploadPrefix(this.attrs, this.live);
+  }
+
+  private write(i: number): void {
+    const st = this.state;
+    const o = i * BF;
+    const life = st[o + 15]!;
+    const age = life <= 0 ? 0 : st[o + 14]!;
+    const t = life <= 0 ? 0 : age / life;
+    const grow = st[o + 8]!;
+    const sweep = grow > 0 ? easeOutCubic(clamp01(age / grow)) : 1;
+    const len = lerp(st[o + 6]!, st[o + 7]!, easeOutCubic(t)) * sweep;
+    const w = lerp(st[o + 9]!, st[o + 10]!, easeOutCubic(t));
+    const k = st[o + 22]! * (1 - easeInCubic(t));
+    const b = i * 4;
+    this.base[b] = st[o]!;
+    this.base[b + 1] = st[o + 1]!;
+    this.base[b + 2] = st[o + 2]!;
+    this.base[b + 3] = w;
+    const a = i * 3;
+    this.axis[a] = st[o + 3]! * len;
+    this.axis[a + 1] = st[o + 4]! * len;
+    this.axis[a + 2] = st[o + 5]! * len;
+    this.core[a] = st[o + 16]! * k;
+    this.core[a + 1] = st[o + 17]! * k;
+    this.core[a + 2] = st[o + 18]! * k;
+    this.halo[a] = st[o + 19]! * k;
+    this.halo[a + 1] = st[o + 20]! * k;
+    this.halo[a + 2] = st[o + 21]! * k;
+    this.fade[i * 2] = st[o + 23]!;
+    this.fade[i * 2 + 1] = st[o + 24]!;
   }
 }
 
 // ── Ground sigils ───────────────────────────────────────────────────────────
 
 /** Pattern of a ground plane (one shader, a define per kind). */
-export type SigilKind = "hex" | "spiral" | "arcs" | "line" | "arrow" | "ring";
+export type SigilKind = "hex" | "spiral" | "arcs" | "line" | "arrow" | "ring" | "seal";
 
 const SIGIL_VERTEX = /* glsl */ `
 varying vec2 vUv;
@@ -516,8 +979,8 @@ uniform float uGlow;     // 0..n brightness of the light layer (HDR above 1 bloo
 uniform float uInk;      // 0..1 dark ink layer under the light
 uniform float uFade;     // 0..1 overall
 uniform float uCount;    // arcs left (Hộ thân charges), spiral rotation speed…
-uniform vec3 uColor;
-uniform vec3 uCore;
+uniform vec3 uColor;     // light, ≤ 0.64 per channel (× at most 1.4 below: ≤ 0.9, no bloom)
+uniform vec3 uCore;      // thin HDR line colour (unit max)
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -535,6 +998,26 @@ float sdHex(vec2 p, float r) {
   p -= vec2(clamp(p.x, -k.z * r, k.z * r), r);
   return length(p) * sign(p.y);
 }
+// Equilateral triangle, r = half its side (iq).
+float sdTri(vec2 p, float r) {
+  const float k = 1.7320508;
+  p.x = abs(p.x) - r;
+  p.y = p.y + r / k;
+  if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
+  p.x -= clamp(p.x, -2.0 * r, 0.0);
+  return -length(p) * sign(p.y);
+}
+vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
+// A band of rune dashes of uneven length round radius r0 (n cells, turning with spin).
+float runes(float ang, float r, float r0, float w, float n, float spin) {
+  float a = (ang + 3.14159265) / 6.2831853 * n + spin;
+  float cell = floor(a);
+  float f = fract(a);
+  float h = hash(vec2(cell, 7.0));
+  float dash = smoothstep(0.08, 0.14, f) * (1.0 - smoothstep(0.3 + 0.5 * h, 0.36 + 0.5 * h, f));
+  float tall = band(r - r0, w * (0.55 + 0.45 * h));
+  return dash * tall;
+}
 const float PI = 3.14159265;
 
 void main() {
@@ -545,28 +1028,35 @@ void main() {
   float core = 0.0;
   float ink = 0.0;
   float n = fbm(p * 6.0 + uTime * 0.15);
+  float revealArc = step(fract((ang + PI) / (2.0 * PI)), uReveal);
 
 #if defined(HEX)
-  // Six-sword array: a hexagon outline with six sockets at its corners, an inner hex, spokes to the centre.
-  float outer = band(sdHex(vec2(p.y, p.x), 0.86), 0.055);
-  float inner = band(sdHex(vec2(p.y, p.x), 0.42), 0.035);
+  // Six-sword array: a hexagon outline with six sockets at its corners, an inner hex, spokes to the centre,
+  // a ring of runes round the heart; dark strokes under the bright lines so they pop on pale stone.
+  float dOuter = sdHex(vec2(p.y, p.x), 0.86);
+  float dInner = sdHex(vec2(p.y, p.x), 0.42);
+  float outer = band(dOuter, 0.05);
+  float inner = band(dInner, 0.032);
   float a6 = mod(ang + PI / 6.0, PI / 3.0) - PI / 6.0;
-  float spokes = band(sin(a6) * r, 0.03) * smoothstep(0.42, 0.5, r) * (1.0 - smoothstep(0.8, 0.86, r));
+  float spokes = band(sin(a6) * r, 0.026) * smoothstep(0.42, 0.5, r) * (1.0 - smoothstep(0.8, 0.86, r));
   float corner = 0.0;
   for (int i = 0; i < 6; i++) {
     float th = float(i) * PI / 3.0 + PI / 6.0;
     vec2 c = vec2(cos(th), sin(th)) * 0.99;
     float on = step(float(i) / 6.0, uReveal - 0.02);
-    corner += on * (1.0 - smoothstep(0.05, 0.14, length(p - c)));
+    corner += on * (1.0 - smoothstep(0.04, 0.13, length(p - c)));
   }
-  float revealArc = step(fract((ang + PI) / (2.0 * PI)), uReveal);
-  light = (outer * revealArc + inner * 0.6 * uReveal + spokes * 0.55 * uReveal) * (0.75 + 0.25 * n);
-  core = corner + outer * 0.35 * revealArc;
-  ink = smoothstep(0.98, 0.84, r) * 0.32 * (0.6 + 0.4 * n);
+  float heart = runes(ang, r, 0.3, 0.035, 24.0, uTime * 0.25) * uReveal;
+  float heartRing = band(r - 0.22, 0.014) * uReveal;
+  light = (outer * revealArc * 1.2 + inner * 0.8 * uReveal + spokes * 0.7 * uReveal + heart * 0.9 + heartRing) * (0.8 + 0.2 * n);
+  core = corner * 1.2 + outer * 0.45 * revealArc + heartRing * 0.5;
+  ink = (1.0 - smoothstep(0.86, 1.0, r)) * 0.3 * (0.65 + 0.35 * n) + band(dOuter, 0.14) * 0.35 * revealArc + band(dInner, 0.1) * 0.22 * uReveal;
 #elif defined(SPIRAL)
-  // Three galaxy belts around a dark core.
+  // Three galaxy belts around a dark core, a rune ring round the rim, dark shadows along the arms.
   float rot = uTime * uCount;
   float arms = 0.0;
+  float shade = 0.0;
+  float spine = 0.0;
   for (int i = 0; i < 3; i++) {
     float off = float(i) * 2.0 * PI / 3.0;
     float th = ang - rot - off;
@@ -574,21 +1064,29 @@ void main() {
     float d = abs(r - target);
     float along = mod(th + 2.0 * PI, 2.0 * PI) / (2.0 * PI);
     float on = step(float(i) / 3.0, uReveal + 0.001);
-    arms += on * band(d, 0.055 + 0.08 * along) * smoothstep(0.08, 0.2, r) * (1.0 - smoothstep(0.9, 1.0, r));
+    float span = smoothstep(0.08, 0.2, r) * (1.0 - smoothstep(0.86, 0.94, r));
+    arms += on * band(d, 0.05 + 0.07 * along) * span;
+    spine += on * band(d, 0.006 + 0.008 * along) * span;
+    shade += on * band(d, 0.12 + 0.1 * along) * span;
   }
-  light = arms * (0.6 + 0.4 * n);
-  core = arms * smoothstep(0.55, 0.9, n);
-  ink = (1.0 - smoothstep(0.0, 0.22, r)) * 0.75 + smoothstep(1.0, 0.7, r) * 0.25;
+  float rim = band(r - 0.955, 0.01) * revealArc;
+  float rune = runes(ang, r, 0.915, 0.022, 60.0, -uTime * 0.12) * revealArc;
+  light = arms * (0.6 + 0.4 * n) + rim * 0.9 + rune * 0.8;
+  // A crisp line along each arm and star-dust knots, not a fuzzy band.
+  core = spine * 0.9 + arms * smoothstep(0.62, 0.92, n) * 0.6 + rim * 0.6;
+  ink = (1.0 - smoothstep(0.0, 0.22, r)) * 0.75 + smoothstep(1.0, 0.7, r) * 0.25 + shade * 0.3;
 #elif defined(ARCS)
   // Three arcs with gaps; uCount arcs remain lit.
   float seg = fract((ang + PI) / (2.0 * PI) * 3.0);
   float idx = floor((ang + PI) / (2.0 * PI) * 3.0);
   float gap = smoothstep(0.0, 0.06, seg) * (1.0 - smoothstep(0.86, 0.92, seg));
   float lit = step(idx, uCount - 0.5);
-  float ring = band(r - 0.9, 0.085);
-  light = ring * gap * (0.25 + 0.75 * lit) * smoothstep(0.0, 0.02, uReveal * 1.02 - (idx / 3.0 + seg / 3.0) + 0.02);
-  core = band(r - 0.9, 0.03) * gap * lit * 0.8;
-  ink = smoothstep(1.0, 0.8, r) * 0.18;
+  float ring = band(r - 0.86, 0.075);
+  float drawn = smoothstep(0.0, 0.02, uReveal * 1.02 - (idx / 3.0 + seg / 3.0) + 0.02);
+  float rune = runes(ang, r, 0.7, 0.03, 30.0, uTime * 0.5) * drawn * (0.4 + 0.6 * lit);
+  light = (ring * gap * (0.25 + 0.75 * lit) + rune * 0.8) * drawn;
+  core = band(r - 0.86, 0.025) * gap * lit * 0.9 * drawn;
+  ink = smoothstep(1.0, 0.8, r) * 0.15 + band(r - 0.86, 0.16) * 0.3 * drawn;
 #elif defined(LINE)
   // A straight cut along x: uv.x -1 (caster) .. 1 (far end).
   float along = (p.x + 1.0) * 0.5;
@@ -603,6 +1101,19 @@ void main() {
   light = (1.0 - smoothstep(0.0, 0.4, w)) * step(along, uReveal) * 0.8;
   core = (1.0 - smoothstep(0.0, 0.1, w)) * step(along, uReveal);
   ink = (1.0 - smoothstep(0.0, 0.8, w + n * 0.3)) * step(along, uReveal) * 0.6;
+#elif defined(SEAL)
+  // The caster's seal: two rings drawn round with the word, a band of runes, a hexagram of two
+  // counter-turning triangles, a soft heart; a dark disc under it so it glows on pale stone.
+  float t0 = uTime * 0.7;
+  float ringO = band(r - 0.9, 0.022);
+  float ringO2 = band(r - 0.84, 0.01);
+  float ringI = band(r - 0.6, 0.014);
+  float rune = runes(ang, r, 0.72, 0.045, 36.0, uTime * 0.35);
+  float tri = band(sdTri(rot2(p, t0), 0.5), 0.016) + band(sdTri(rot2(p, -t0 + PI), 0.5), 0.016);
+  float heart = 1.0 - smoothstep(0.0, 0.3, r);
+  light = (ringO + ringO2 * 0.7 + ringI * 0.8 + rune * 0.9) * revealArc + tri * 0.75 * uReveal + heart * 0.35 * uReveal;
+  core = ringO * revealArc * 0.8 + tri * 0.45 * uReveal;
+  ink = (1.0 - smoothstep(0.85, 1.0, r)) * 0.4;
 #else
   // RING: a thin expanding ring (uReveal = radius 0..1).
   float d = r - uReveal * 0.95;
@@ -611,13 +1122,13 @@ void main() {
   ink = 0.0;
 #endif
 
-  float edge = 1.0 - smoothstep(0.92, 1.0, r * 0.98);
+  float edge = 1.0 - smoothstep(0.96, 1.0, r);
 #if defined(LINE) || defined(ARROW)
   edge = 1.0;
 #endif
   float la = clamp(light * uGlow, 0.0, 6.0) * edge;
   float ca = clamp(core * uGlow * 2.0, 0.0, 6.0) * edge;
-  vec3 rgb = uColor * min(la, 0.9) + uCore * ca;
+  vec3 rgb = uColor * min(la, 1.4) + uCore * ca;
   float inkA = clamp(ink * uInk, 0.0, 1.0) * edge;
   // Premultiplied over: light adds, ink darkens.
   float a = clamp(inkA, 0.0, 1.0) * uFade;

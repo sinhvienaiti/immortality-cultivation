@@ -43,6 +43,14 @@ export interface WeaponGlow {
   readonly core: Rgb;
   /** Halos, blade glow cards, rings, afterimages: max channel 0.86 (≤ 0.9, no bloom). */
   readonly halo: Rgb;
+  /**
+   * Outer glow of the spectacle layers (aura halos, shock rings, beam and
+   * ribbon halos, sigil light; D56): the element's colour pushed deeper so the
+   * light reads as colour, not as a pale smear on stone. Max channel 0.86. Metal
+   * takes its family's steel blue (SKILL_CATALOG §1: silver, ivory, pale steel
+   * blue), so the Kiếm set keeps no gold.
+   */
+  readonly rim: Rgb;
   /** Trail and ribbon base, max 0.92; callers scale it ×1.6–2.6 so only the ribbon's thin centre blooms. */
   readonly body: Rgb;
   /** Spirit motes: small HDR dots, max channel 2.6, ≤ 30 % white. */
@@ -114,6 +122,9 @@ const MOTE_MAX = 2.6;
 const SIGIL_MAX = 0.58;
 const FLASH_WHITE = 0.45;
 
+/** How much deeper the rim is than the accent (linear power on the unit colour), per element. */
+const RIM_GAMMA: Readonly<Record<WeaponElement, number>> = { metal: 2.6, ice: 2.0, thunder: 1.3, wood: 1.5, fire: 1, earth: 1.6, water: 1.3, wind: 1.8 };
+
 const SRGB = THREE.SRGBColorSpace;
 const hsl = { h: 0, s: 0, l: 0 };
 
@@ -146,13 +157,22 @@ function flashOf(unit: Rgb): { flash: string; flashHex: number } {
   return { flash: "#" + c.getHexString(SRGB), flashHex: c.getHex(SRGB) };
 }
 
-/** VFX colours from a single element accent (every element but Fire). */
-export function glowOf(accent: string, chroma = GLOW_CHROMA): WeaponGlow {
+/** The rim: `hex` as a unit linear colour raised to `gamma` (deeper, more saturated), max channel 0.86. */
+export function rimOf(hex: string, gamma: number): Rgb {
+  const u = unitLinear(hex);
+  const d: Rgb = [u[0] ** gamma, u[1] ** gamma, u[2] ** gamma];
+  const m = Math.max(d[0], d[1], d[2], 1e-6);
+  return [(d[0] / m) * HALO_MAX, (d[1] / m) * HALO_MAX, (d[2] / m) * HALO_MAX];
+}
+
+/** VFX colours from a single element accent (every element but Fire); `rim` defaults to the accent made deeper. */
+export function glowOf(accent: string, chroma = GLOW_CHROMA, rim: Rgb = rimOf(accent, 1.5)): WeaponGlow {
   const n = unitLinear(accent, chroma);
   const tint = mixWhite(n, CORE_WHITE, 1);
   return {
     core: scaled(tint, CORE_MAX),
     halo: scaled(n, HALO_MAX),
+    rim,
     body: scaled(tint, BODY_MAX),
     mote: scaled(tint, MOTE_MAX),
     tint,
@@ -170,6 +190,7 @@ export function glowOfRamp(ramp: readonly [string, string, string]): WeaponGlow 
   return {
     core: scaled(core, CORE_MAX),
     halo: scaled(body, HALO_MAX),
+    rim: scaled(body, HALO_MAX),
     body: scaled(tint, BODY_MAX),
     mote: scaled(core, MOTE_MAX),
     tint,
@@ -200,7 +221,7 @@ function weapon(e: Entry): WeaponDef {
     ...(e.element === "wood" ? { accent2: WOOD_JADE } : {}),
     ...(fire ? { ramp: FIRE_RAMP } : {}),
     rail: railOf(accent),
-    glow: fire ? glowOfRamp(FIRE_RAMP) : glowOf(accent),
+    glow: fire ? glowOfRamp(FIRE_RAMP) : glowOf(accent, GLOW_CHROMA, rimOf(e.element === "metal" ? FAMILY_ACCENT[e.family] : accent, RIM_GAMMA[e.element])),
     model: MODEL_DIR + e.id + ".glb",
   };
 }

@@ -35,9 +35,15 @@ const look = applyLook(view, { exposure: Number(params.get("exposure") ?? "0.72"
 buildField(view, { tint: params.get("ground") ?? "#7c848b", repeat: 6 });
 
 const texLoader = new THREE.TextureLoader();
+const texCache = new Map<string, THREE.Texture>();
+/** A Kenney CC0 particle texture (art-src/lab/tex), loaded once however many layers share it. */
 function tex(name: string): THREE.Texture {
-  const t = texLoader.load(LAB_ASSETS + "tex/" + name + ".png");
-  t.colorSpace = THREE.SRGBColorSpace;
+  let t = texCache.get(name);
+  if (t === undefined) {
+    t = texLoader.load(LAB_ASSETS + "tex/" + name + ".png");
+    t.colorSpace = THREE.SRGBColorSpace;
+    texCache.set(name, t);
+  }
   return t;
 }
 const textures: KiemTextures = {
@@ -52,6 +58,9 @@ const textures: KiemTextures = {
   splash: tex("dirt_02"),
   scorch: tex("dirt_03"),
   ring: tex("circle_02"),
+  shock: tex("circle_03"),
+  halo: tex("light_01"),
+  twirl: tex("twirl_01"),
 };
 const ribbonNoise = tex("smoke_01");
 
@@ -282,7 +291,8 @@ function frame(dt: number): void {
   updateBolt(world);
   herd.update(world);
   caster.update(world);
-  fx.update(world);
+  // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
+  fx.update(world, dt);
   enemyBolt.update(world);
   // Camera kick: a spring along the blow, in metres (~1 px ≈ 2 cm at this distance).
   if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
@@ -304,6 +314,8 @@ declare global {
       setHerd(mode: HerdMode): void;
       setWpm(v: number): void;
       typing(): boolean;
+      /** True while the test enemy bolt is still flying at the caster. */
+      boltActive(): boolean;
       /** Equips a sword by id (D55); resolves false for an unknown id or a sabre or spear. */
       setWeapon(id: string): Promise<boolean>;
       /** The equipped weapon's id. */
@@ -330,6 +342,7 @@ void (async () => {
     setHerd: (mode) => herd.setMode(mode),
     setWpm: (v) => (wpm = v),
     typing: () => typing !== null,
+    boltActive: () => bolt.active,
     setWeapon,
     weapon: () => fx.weapon,
     camera(mode, x = 0, z = -6, distanceM = 15) {
