@@ -119,3 +119,72 @@ describe("screen effects by tier (power pass)", () => {
     expect(cam.fov).toBe(28);
   });
 });
+
+describe("screen dramaturgy (power pass round 2)", () => {
+  const cam = (): THREE.PerspectiveCamera => {
+    const c = new THREE.PerspectiveCamera(28, 16 / 9, 1, 400);
+    c.position.set(0, 40, 30);
+    c.lookAt(0, 0, 0);
+    c.updateMatrixWorld(true);
+    return c;
+  };
+
+  it("darkens the world through its lights when the host has the hook, and gives them back", () => {
+    const h = host();
+    const sent: number[] = [];
+    const fx = new ScreenFx({ ...h, worldLight: (k) => sent.push(k) });
+    const c = cam();
+    fx.holdDark(SCREEN_TIERS.ultimate.hold);
+    for (let i = 0; i < 40; i += 1) fx.update(1 / 60, c);
+    expect(sent.at(-1)).toBeCloseTo(1 - SCREEN_TIERS.ultimate.hold, 2);
+    expect(fx.shown.desat).toBeGreaterThan(0.3);
+    fx.holdDark(0);
+    for (let i = 0; i < 60; i += 1) fx.update(1 / 60, c);
+    expect(sent.at(-1)).toBe(1);
+    fx.holdDark(0.5);
+    for (let i = 0; i < 10; i += 1) fx.update(1 / 60, c);
+    fx.reset();
+    expect(sent.at(-1)).toBe(1);
+  });
+
+  it("flashes the basic blow and slot 1 locally, never the whole screen", () => {
+    const fx = new ScreenFx(host());
+    const c = cam();
+    fx.impact("basic", "primary");
+    fx.localFlash(0, 1, -5, "basic");
+    fx.release("skill", true);
+    fx.impact("skill", "primary");
+    fx.localFlash(0, 1, -5, "skill");
+    fx.update(1e-6, c);
+    expect(fx.shown.flash).toBe(0);
+    expect(fx.shown.dark).toBe(0);
+    expect(fx.shown.local).toBeGreaterThan(0.3);
+  });
+
+  it("lands the climax as a sharp flash of three frames, a short zoom blur and a fringe", () => {
+    const fx = new ScreenFx(host());
+    const c = cam();
+    fx.focus(0, 0.5, -6);
+    fx.impact("ultimate", "finisher");
+    fx.update(1e-6, c);
+    expect(fx.shown.flash).toBeCloseTo(SCREEN_TIERS.ultimate.flash, 3);
+    expect(fx.shown.blur).toBeGreaterThan(0);
+    expect(fx.shown.split).toBeGreaterThan(0);
+    for (let i = 0; i < 3; i += 1) fx.update(1 / 60, c);
+    expect(fx.shown.flash).toBe(0);
+    for (let i = 0; i < 3; i += 1) fx.update(1 / 60, c);
+    expect(fx.shown.blur).toBe(0);
+  });
+
+  it("holds a rumble floor without stacking it into the shake's peak", () => {
+    const fx = new ScreenFx(host());
+    const c = cam();
+    for (let i = 0; i < 30; i += 1) {
+      fx.rumble(2.6, 0.14);
+      fx.update(1 / 60, c);
+    }
+    expect(fx.shown.shakePx).toBeCloseTo(2.6, 1);
+    for (let i = 0; i < 12; i += 1) fx.update(1 / 60, c);
+    expect(fx.shown.shakePx).toBe(0);
+  });
+});

@@ -151,7 +151,8 @@ export class CameraZoom {
     // The wide framing on real time (it plays through a hit-stop and the cut-in's pause).
     if (this.wideAge < 1 || this.wide !== this.wideGoal) {
       this.wideAge = Math.min(1, this.wideAge + Math.max(0, dtS) / Math.max(1e-3, this.wideDur));
-      this.wide = this.wideFrom + (this.wideGoal - this.wideFrom) * ease5(this.wideAge);
+      if (this.wideAge >= 1 - 1e-9) this.wideAge = 1;
+      this.wide = this.wideAge >= 1 ? this.wideGoal : this.wideFrom + (this.wideGoal - this.wideFrom) * ease5(this.wideAge);
     }
     this.pushAge += Math.max(0, dtS);
     const t = ease(this.now) * (1 - this.wide);

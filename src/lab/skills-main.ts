@@ -37,7 +37,7 @@ import { LabHerd, type HerdMode } from "./herd";
 import { applyLook, buildField, LAB_ASSETS } from "./look";
 import { collectLayerNames, MotionProbe } from "./motion-probe";
 import { CameraKick, FlashLights, smooth01 } from "./feel";
-import { ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
+import { SCREEN_TIERS, ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { CutIn } from "./cutin";
@@ -111,7 +111,19 @@ const kick = new CameraKick();
 // Screen effects by tier (canon D58 (3), POWER_RESEARCH.md): trauma shake, punch, hit-stop, slow motion,
 // darkening, flash and edge split in one pass before the OutputPass. Made before any other overlay, so its
 // fallback quad (Low, Medium) draws under the damage numbers. ?fx=0..1 is the accessibility intensity.
-const screen = new ScreenFx({ composer: view.stage.composer, composerOn: () => view.stage.bloom.enabled, addOverlay: (o) => view.addOverlay(o) });
+// Round 2: the darkening dims the world's lights (sun, hemisphere, key, rims, image-based light), so every additive
+// VFX layer keeps its light over a dark field; the pass adds a vignette and drains the world's colour.
+const worldLights: { light: THREE.Light; base: number }[] = [];
+let envBase = -1;
+void look.ready.then(() => (envBase = view.scene.environmentIntensity));
+function worldLight(k: number): void {
+  if (worldLights.length === 0) {
+    for (const l of [look.sun, view.stage.hemisphere, view.stage.keyLight, ...view.stage.rimLights]) worldLights.push({ light: l, base: l.intensity });
+  }
+  for (const w of worldLights) w.light.intensity = w.base * k;
+  if (envBase >= 0) view.scene.environmentIntensity = envBase * k;
+}
+const screen = new ScreenFx({ composer: view.stage.composer, composerOn: () => view.stage.bloom.enabled, addOverlay: (o) => view.addOverlay(o), worldLight });
 screen.intensity = Math.max(0, Math.min(1, Number(params.get("fx") ?? "1")));
 /** One event, every listener on the same frame (events.ts). */
 const bus = new LabBus();
@@ -134,14 +146,30 @@ function screenImpact(ms: number): void {
   lastImpact.slot = slot;
   const role: ImpactRole = ms < 0 ? "secondary" : slot === "k4" && ms <= 50 ? "secondary" : ms >= 80 || slot === "k2" ? "finisher" : "primary";
   screen.setFlashColor(fx.paletteOf(slot).flashHex);
+  // The ultimate's climax blurs and fringes toward the vortex's heart.
+  if (slot === "k5" && role === "finisher") screen.focus(ultAim.x, 1.2, ultAim.z);
   screen.impact(tierOf(slot), role);
-  // The ultimate's last wave is its climax: the world-change sound answers on this frame.
-  if (slot === "k5" && role === "finisher") worldEvent("k5", "climax");
+  // The ultimate's last wave is its climax: the world-change sound answers on this frame; the world stays dark a
+  // moment for the scars to glow, then the light comes back.
+  if (slot === "k5" && role === "finisher") {
+    worldEvent("k5", "climax");
+    ultDarkEnd = labTime + 0.45;
+  }
 }
+/** Slot 1 and the basic blow never tint the whole screen (round 2: both judges called the green wash a filter). */
+function localOnly(slot: string): boolean {
+  return slot === "auto" || slot === "k1";
+}
+/** The ultimate's held darkening: from its cut-in to a moment after its climax (lab seconds; −1 open-ended). */
+let ultDark = false;
+let ultDarkEnd = -1;
 bus.on((e) => {
   if (e.kind === "release") {
     if (e.slot !== "k7" && e.slot !== "auto") screen.setFlashColor(fx.paletteOf(e.slot as KiemSlot).flashHex);
-    screen.release(e.tier);
+    screen.release(e.tier, localOnly(e.slot));
+  } else if (e.kind === "impact" && e.role !== "secondary") {
+    // Primary blows flash where they land (a soft disc of light in the pass), never the whole screen.
+    screen.localFlash(e.x, e.y, e.z, e.tier);
   }
 });
 // Sound hooks (canon D58 (6), sound.ts): files under art-src/lab/audio/<event-id>/, silent when absent; the same
@@ -307,6 +335,9 @@ const tmpColour = new THREE.Color();
 const VAN_KIEM_TINT = VAN_KIEM_COLOUR;
 /** Key 7's flash, parsed once (a colour string is parsed on every set). */
 const VAN_FLASH = new THREE.Color(VAN_KIEM_FLASH);
+/** Key 7's cut: its middle on the ground (van-kiem.ts stroke s0 → s1) and the clock its sweep starts (s, F192). */
+const VAN_CUT_MID = [0, -6.5] as const;
+const VAN_SWEEP_AT = 192 / 60;
 function skillRgb(slot: string): number {
   if (numberRgbWeapon !== fx.weapon) {
     for (const k of Object.keys(numberRgb)) delete numberRgb[k];
@@ -371,22 +402,30 @@ const van = new VanKiemFx(
         screen.setFlashColor(VAN_FLASH);
         screen.impact("skill", "primary");
       } else if (role === "primary") screen.impact("skill", "secondary");
+      // The hunt's hundreds of blows hold a low rumble under the shake (never stacking into a constant jolt).
+      else if (role === "secondary" && van.clock < VAN_SWEEP_AT) screen.rumble(2.6, 0.14);
       emitImpact("k7", target, dx, dz, power, role, killed, skillRgb("k7"));
     },
     phase(p: VanKiemPhase) {
       if (p === "open") {
-        screen.holdDark(0.12);
+        // The sky darkens and the world's colour drains while the river runs (the ultimate's held level).
+        screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
         worldEvent("k7", "open");
-      } else if (p === "hush") worldEvent("k7", "hush");
+      } else if (p === "hush") {
+        // A breath before the cut: the world sinks a little deeper, so the climax's flash lands on black.
+        screen.holdDark(Math.min(0.8, SCREEN_TIERS.ultimate.hold + 0.12), SCREEN_TIERS.ultimate.desat);
+        worldEvent("k7", "hush");
+      }
       else if (p === "climax") {
-        // The finisher at ultimate strength: 60 ms stop, 0.45× for 180 ms, punch, edge split, flash, a dark pulse.
+        // The finisher at ultimate strength: a 100 ms stop, 0.3x slow motion, punch, a sharp 3-frame flash, a zoom
+        // blur and a fringe toward the cut's middle; the world stays dark for the scars to glow.
         screen.setFlashColor(VAN_FLASH);
+        screen.focus(VAN_CUT_MID[0], 0.5, VAN_CUT_MID[1]);
         screen.impact("ultimate", "finisher");
-        screen.darken(0.28, 0.45);
         kick.impulse(4 * KICK_M_PER_PX, 0, 1);
         worldEvent("k7", "climax");
       } else if (p === "close") {
-        screen.holdDark(0);
+        screen.holdDark(SCREEN_TIERS.ultimate.hold * 0.55, SCREEN_TIERS.ultimate.desat * 0.55);
         worldEvent("k7", "close");
       } else if (p === "end") {
         screen.holdDark(0);
@@ -426,8 +465,9 @@ function startUltimate(tx: number, tz: number): void {
   c.tier = "ultimate";
   bus.emit(c);
   worldEvent("k5", "open");
-  screen.setFlashColor("#eef8ff");
-  screen.flash(0.08, 0.06);
+  // The world darkens under the cut-in (before the release), so the swords blaze against the dark when it fires.
+  ultDark = true;
+  ultDarkEnd = -1;
   screen.punch(0.012, 0.2);
 }
 /** A big skill fires: at the whole-field fit a short dolly push (zoomed in, the wide framing is the camera's move). */
@@ -673,6 +713,8 @@ function reset(): void {
   numbers.clear();
   van.reset();
   cutin.stop();
+  ultDark = false;
+  ultDarkEnd = -1;
   sound.reset();
   pendingVan = false;
   herd.toughness = 1;
@@ -795,6 +837,12 @@ function frame(dt: number): void {
   // The cut-in holds the world (and the typing timer, which runs on world time); its last frame fires the ultimate.
   if (cutin.update(dt)) fireUltimate();
   const world = cutin.active ? 0 : screen.advance(dt);
+  // The ultimate's held darkening ends a moment after its climax (key 7 sets its own from its phases).
+  if (ultDark && ultDarkEnd >= 0 && labTime >= ultDarkEnd) {
+    ultDark = false;
+    ultDarkEnd = -1;
+    if (!van.running) screen.holdDark(0);
+  } else if (ultDark) screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
   updateTyping(world);
   updateBolt(world);
   herd.update(world);
