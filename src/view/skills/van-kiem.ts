@@ -157,7 +157,9 @@ void main() {
   float across = abs(vUv.x - 0.5) * 2.0;
   float soft = 1.0 - smoothstep(0.35, 1.0, across);
   float core = 1.0 - smoothstep(0.0, 0.22, across);
-  float fade = pow(1.0 - vUv.y, 1.6);
+  // Clamped before pow(): under MSAA (Ultra) an edge pixel is shaded past the card, vUv.y > 1, and pow of a
+  // negative base is NaN, which the bloom spread into black blocks.
+  float fade = pow(clamp(1.0 - vUv.y, 0.0, 1.0), 1.6);
   float head = 1.0 - smoothstep(0.0, 0.25, vUv.y);
   // Halo ≤ 0.9 in the sword's colour; a thin HDR core near the head only (it alone blooms).
   vec3 c = vCol * soft * fade * 0.85 + mix(vCol, vec3(1.0), 0.3) * core * head * 2.6;
