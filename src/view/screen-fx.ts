@@ -637,10 +637,9 @@ export class ScreenFx {
     this.punchAge += dt;
     this.punchNow = this.punchLevel() * k;
     this.darkAge += dt;
-    this.flashAge += dt;
-    this.splitAge += dt;
-    this.blurAge += dt;
-    this.localAge += dt;
+    // The flash, fringe, blur and local flash age after they are read (end of update): a blow that lands before
+    // this frame's update shows its full level on the next drawn frame at any frame rate. Aged first, the climax's
+    // 0.42 flash drew 0.19 then 0.05 at 60 Hz, 0.05 alone at 30 Hz.
     // The held darkening eases (half-life 80 ms) toward its goal.
     this.darkHold += (this.darkHoldGoal - this.darkHold) * (1 - Math.pow(0.5, dt / 0.08));
     if (Math.abs(this.darkHold - this.darkHoldGoal) < 1e-4) this.darkHold = this.darkHoldGoal;
@@ -696,6 +695,10 @@ export class ScreenFx {
     s.shakePx = px;
     s.rollDeg = THREE.MathUtils.radToDeg(this.roll);
     s.punch = this.punchNow;
+    this.flashAge += dt;
+    this.splitAge += dt;
+    this.blurAge += dt;
+    this.localAge += dt;
   }
 
   /**

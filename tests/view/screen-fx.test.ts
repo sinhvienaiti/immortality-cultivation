@@ -166,14 +166,34 @@ describe("screen dramaturgy (power pass round 2)", () => {
     const c = cam();
     fx.focus(0, 0.5, -6);
     fx.impact("ultimate", "finisher");
-    fx.update(1e-6, c);
-    expect(fx.shown.flash).toBeCloseTo(SCREEN_TIERS.ultimate.flash, 3);
-    expect(fx.shown.blur).toBeGreaterThan(0);
-    expect(fx.shown.split).toBeGreaterThan(0);
-    for (let i = 0; i < 3; i += 1) fx.update(1 / 60, c);
-    expect(fx.shown.flash).toBe(0);
+    // At 60 Hz: the full flash on the first drawn frame, then 0.19 and 0.05, then none (the documented three frames).
+    const seen: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      fx.update(1 / 60, c);
+      seen.push(fx.shown.flash);
+      if (i === 0) {
+        expect(fx.shown.blur).toBeCloseTo(SCREEN_TIERS.ultimate.blur, 3);
+        expect(fx.shown.split).toBeCloseTo(SCREEN_TIERS.ultimate.splitPx, 3);
+      }
+    }
+    expect(seen[0]).toBeCloseTo(SCREEN_TIERS.ultimate.flash, 3);
+    expect(seen[1]).toBeCloseTo(SCREEN_TIERS.ultimate.flash * (4 / 9), 3);
+    expect(seen[2]).toBeCloseTo(SCREEN_TIERS.ultimate.flash * (1 / 9), 3);
+    expect(seen[3]).toBe(0);
     for (let i = 0; i < 3; i += 1) fx.update(1 / 60, c);
     expect(fx.shown.blur).toBe(0);
+  });
+
+  it("shows the climax's full flash on its first frame at any frame rate", () => {
+    for (const hz of [30, 60, 144]) {
+      const fx = new ScreenFx(host());
+      fx.impact("ultimate", "finisher");
+      fx.update(1 / hz, cam());
+      expect(fx.shown.flash).toBeCloseTo(SCREEN_TIERS.ultimate.flash, 3);
+      fx.localFlash(0, 1, -5, "skill");
+      fx.update(1 / hz, cam());
+      expect(fx.shown.local).toBeCloseTo(SCREEN_TIERS.skill.local, 3);
+    }
   });
 
   it("holds a rumble floor without stacking it into the shake's peak", () => {
