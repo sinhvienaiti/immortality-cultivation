@@ -41,6 +41,7 @@ import { ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { CutIn } from "./cutin";
+import { LabSound } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
@@ -134,6 +135,8 @@ function screenImpact(ms: number): void {
   const role: ImpactRole = ms < 0 ? "secondary" : slot === "k4" && ms <= 50 ? "secondary" : ms >= 80 || slot === "k2" ? "finisher" : "primary";
   screen.setFlashColor(fx.paletteOf(slot).flash);
   screen.impact(tierOf(slot), role);
+  // The ultimate's last wave is its climax: the world-change sound answers on this frame.
+  if (slot === "k5" && role === "finisher") worldEvent("k5", "climax");
 }
 bus.on((e) => {
   if (e.kind === "release") {
@@ -141,6 +144,13 @@ bus.on((e) => {
     screen.release(e.tier);
   }
 });
+// Sound hooks (canon D58 (6), sound.ts): files under art-src/lab/audio/<event-id>/, silent when absent; the same
+// events as the body, VFX, camera and hit-stop, on the same frame. Audio starts on the first key or click.
+const sound = new LabSound();
+bus.on((e) => sound.on(e));
+const unlockAudio = (): void => sound.unlock();
+window.addEventListener("keydown", unlockAudio);
+window.addEventListener("pointerdown", unlockAudio);
 /** The release event: on the key's frame, before the VFX cast (they read the hand after the caster's update). */
 function emitRelease(slot: string, tx: number, tz: number): void {
   const r = bus.release;
@@ -156,6 +166,14 @@ function emitRelease(slot: string, tx: number, tz: number): void {
   r.frame = frameNo;
   r.time = labTime;
   bus.emit(r);
+  // Every skill shouts on its release (big ones a donghua line, small ones a cry); Phi Kiếm stays quiet. Thiên
+  // Hà's callout comes with its cut-in instead.
+  if (slot !== "auto" && slot !== "k5") {
+    const c = bus.callout;
+    c.slot = slot;
+    c.tier = r.tier;
+    bus.emit(c);
+  }
 }
 /** Lab time on real seconds (the key's time stamp). */
 let labTime = 0;
@@ -561,6 +579,11 @@ function type(slot: LabSlot): void {
   }
   probe.event("type", slot);
   const [tx, tz] = TARGET[slot];
+  const ce = bus.cast;
+  ce.slot = slot;
+  ce.x = caster.x;
+  ce.z = caster.z;
+  bus.emit(ce);
   // The body turns to the word's target while it is typed (the dash too: it leaves that way).
   if (slot !== "guard") caster.face(tx - caster.x, tz - caster.z);
   typing = { slot, letters: WORD_LEN[slot], typed: 0, next: 0, tx, tz };
@@ -637,6 +660,7 @@ function reset(): void {
   compiler.reset();
   van.reset();
   cutin.stop();
+  sound.reset();
   pendingVan = false;
   herd.toughness = 1;
   lights.reset();
@@ -773,6 +797,7 @@ function frame(dt: number): void {
   // Numbers are UI: they compile and float on real time (through a hit-stop or the cut-in).
   compiler.update(dt);
   numbers.update(dt);
+  sound.update(dt);
   enemyBolt.update(world);
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
   // The base pose: the whole-field fit blended toward the close view on Lam (zoom 0 is exactly the fit, so a resize
@@ -922,6 +947,8 @@ declare global {
       van(): { clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
       cutin(): number;
+      /** Sound hooks: files found per event id, what was asked since reset (heard or silent), sounds started. */
+      sound(): { found: Record<string, number>; asked: Record<string, number>; played: number };
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
     };
@@ -1160,6 +1187,7 @@ void (async () => {
     events: () => ({ ...bus.counts }),
     van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
     cutin: () => cutin.time,
+    sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played }),
     async swarm(mode) {
       const def = fx.weaponInfo;
       const hero = await loadBladeGeometry(def.model, def.fit);
