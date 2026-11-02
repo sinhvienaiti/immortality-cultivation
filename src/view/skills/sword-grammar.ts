@@ -4,13 +4,14 @@
  * white spine, its taper and its direction, so every sword here is a camera-facing strip drawn from its base to its
  * tip in SCREEN space (widths in px at 1080p, never thinner than their floors, wider when the world width is), with
  * the shape painted analytically in one instanced draw:
- * - LEAD (4–6 a cast): pommel, grip and guard in gold (the only gold), a blade with a narrow deep-navy edge, a
+ * - LEAD (4–6 a cast): pommel, grip and guard in platinum (round 3b; gold before), a blade with a narrow deep-navy edge, a
  *   two-tone cyan body (a lit and a shaded bevel) and a hard white spine of HDR 4–8, tip first;
  * - MID (16–32): no hilt: a white tapered spine, a cyan body, a narrow navy edge, a short white-to-cyan streak
  *   behind its root (≥ 4 px wide at 1080p);
  * - FAR (40–100): a directional streak, a white head fading to cyan, no sword shape;
  * - SPINE: only the white spine and a narrow cyan rim, laid over a real blade model (the basic shot's weapon).
- * Palette: white, cyan and deep navy (gold only on lead hilts). Bodies are premultiplied alpha (they occlude what is
+ * Palette: white, cyan and deep navy (platinum hilts). Round 3b: lead and mid blades share one design (navy outline,
+ * white-hot edge, dark core, fuller ridge, platinum hilt). Bodies are premultiplied alpha (they occlude what is
  * behind and read with bloom off); the spine, the streaks and the far heads are added (alpha 0 in the same
  * premultiplied blend), so only thin cores reach the bloom. Instances draw in the order written: far, mid, lead.
  * Depth-tested, never depth-written. No allocation per frame.
@@ -22,7 +23,7 @@ export const SWORD_MID = 1;
 export const SWORD_FAR = 2;
 export const SWORD_SPINE = 3;
 
-/** The grammar's palette (linear): HDR white spine, cyan bodies (≤ 0.9), deep navy edges, gold hilts (lead only). */
+/** The grammar's palette (linear): HDR white edges and spines, cyan bodies (≤ 0.9), deep navy outlines, platinum hilts. */
 export const GRAMMAR = {
   /**
    * The spine's light: a cyan-tinted white. At HDR 4–8 the tone curve renders its middle white, while the bloom it
@@ -32,7 +33,8 @@ export const GRAMMAR = {
   cyan: [0.0, 0.26, 0.76] as const,
   cyanLit: [0.05, 0.56, 0.9] as const,
   navy: [0.004, 0.014, 0.05] as const,
-  gold: [0.9, 0.56, 0.12] as const,
+  /** The hilts (round 3b: platinum, not gold; the judges read gold and navy bands as bee stripes). */
+  platinum: [0.66, 0.72, 0.82] as const,
 } as const;
 
 const VERTEX = /* glsl */ `
@@ -86,7 +88,7 @@ uniform vec3 uWhite;
 uniform vec3 uCyan;
 uniform vec3 uCyanLit;
 uniform vec3 uNavy;
-uniform vec3 uGold;
+uniform vec3 uPlat;
 varying vec2 vP;
 varying float vHalf;
 varying float vKind;
@@ -127,44 +129,47 @@ void main() {
     return;
   }
   bool lead = vKind < 0.5;
-  // Where the blade starts along the strip (a lead's hilt below it) and where its taper to the point starts.
-  float b0 = lead ? 0.2 : 0.0;
-  float taper0 = 0.78;
+  // Round 3b (item 3, both judges: "bee-striped hilts", "glow capsules with no blade design"): every sword is a
+  // designed blade on a platinum hilt: a navy outline, a white-hot cutting edge, a dark core with a fuller ridge.
+  float b0 = lead ? 0.2 : 0.15;
+  float taper0 = 0.74;
   float u = (y - b0) / (1.0 - b0);
-  // The blade's half width: full, then a point; a slightly rounded root.
   float h = vHalf * (u < taper0 ? 1.0 : pow(max(0.0, (1.0 - u) / (1.0 - taper0)), 0.85));
   h *= smoothstep(-0.02, 0.05, u);
   float blade = inside(x, h) * step(0.0, u);
-  float edgePx = max(1.0 * k, 0.16 * vHalf);
-  float edge = blade * (1.0 - inside(x, h - edgePx));
-  // Two-tone bevel: the lit side brighter, the shaded side the deep cyan.
-  vec3 bodyCol = mix(uCyan, uCyanLit, step(0.0, x));
-  body = mix(bodyCol, uNavy, edge) * blade;
+  float outPx = max(1.0 * k, 0.1 * vHalf);
+  float edgePx = max(1.2 * k, 0.16 * vHalf);
+  float outline = blade * (1.0 - inside(x, h - outPx));
+  float cut = blade * (1.0 - inside(x, h - outPx - edgePx)) * (1.0 - outline);
+  float t = clamp(abs(x) / max(h, 1e-3), 0.0, 1.0);
+  // Dark core to bright bevel; the lit side a little brighter; a thin fuller ridge down the middle.
+  vec3 core = uNavy * 3.0 + uCyan * 0.32;
+  vec3 bodyCol = mix(core, mix(uCyan, uCyanLit, step(0.0, x)), smoothstep(0.25, 0.9, t));
+  float ridge = inside(x, max(0.6 * k, 0.07 * vHalf)) * step(u, 0.9);
+  bodyCol = mix(bodyCol, uCyanLit * 0.9, ridge * 0.7);
+  body = mix(bodyCol, uNavy, outline) * blade;
   a = blade;
-  // The hard white spine (≥ 2 px at 1080p), from the root to just short of the point.
-  float spineH = max(1.0 * k, 0.2 * vHalf);
-  float spine = inside(x, spineH * (u < 0.85 ? 1.0 : max(0.0, (1.0 - u) / 0.15))) * smoothstep(0.0, 0.04, u) * step(u, 0.97);
-  add += uWhite * hdr * spine;
-  if (lead) {
-    // The hilt in gold (the only gold): pommel, grip (navy wrapped, gold bands), guard (a bar ~2.4 blades wide).
-    float g0 = 0.17;
-    float guard = inside(x, vHalf * 2.4) * step(g0, y) * step(y, b0 + 0.005);
-    float grip = inside(x, vHalf * 0.55) * step(0.045, y) * step(y, g0);
-    float bands = step(0.5, fract(y * 46.0));
-    float pommel = inside(x, vHalf * 0.9 * (1.0 - abs(y - 0.022) / 0.024)) * step(0.0, y) * step(y, 0.046);
-    vec3 hilt = uGold * guard + mix(uNavy, uGold * 0.8, bands) * grip * (1.0 - guard) + uGold * pommel;
-    float hA = max(guard, max(grip, pommel));
-    body = mix(body, hilt, hA);
-    a = max(a, hA);
-    // A navy line under the guard so it reads apart from the blade.
-    float gEdge = hA * (1.0 - inside(x, vHalf * 2.4 - edgePx)) * guard;
-    body = mix(body, uNavy, gEdge);
-  } else if (y < 0.0) {
-    // MID's short streak behind its root: white to cyan, ≥ 4 px wide at its root, gone at its end.
-    float t = clamp(1.0 + y / max(vLook.z, 1e-3), 0.0, 1.0);
-    float sh = max(2.0 * k, vHalf * 0.55) * t;
+  // The white-hot edge (HDR, the part that blooms), fading toward the root, brightest near the point.
+  add += uWhite * hdr * cut * (0.55 + 0.45 * smoothstep(0.1, 0.8, u));
+  add += uWhite * hdr * 0.6 * ridge * blade * smoothstep(0.0, 0.1, u) * (1.0 - smoothstep(0.8, 0.95, u));
+  // The platinum hilt: pommel, a navy-wrapped grip (no bands), a guard bar ~2.4 blades wide with a navy line.
+  float g0 = b0 - 0.035;
+  float guard = inside(x, vHalf * 2.4) * step(g0, y) * step(y, b0 + 0.005);
+  float grip = inside(x, vHalf * 0.55) * step(0.04, y) * step(y, g0);
+  float pommel = inside(x, vHalf * 0.9 * (1.0 - abs(y - 0.02) / 0.022)) * step(0.0, y) * step(y, 0.042);
+  vec3 hilt = uPlat * guard + mix(uNavy * 2.0, uPlat * 0.55, smoothstep(0.3, 1.0, abs(x) / max(vHalf * 0.55, 1e-3))) * grip * (1.0 - guard) + uPlat * pommel;
+  float hA = max(guard, max(grip, pommel));
+  body = mix(body, hilt, hA);
+  a = max(a, hA);
+  float gEdge = hA * (1.0 - inside(x, vHalf * 2.4 - outPx)) * guard;
+  body = mix(body, uNavy, gEdge);
+  add += uWhite * 1.4 * guard * hA * (1.0 - inside(x, vHalf * 0.3));
+  if (!lead && y < 0.0) {
+    // MID's streak behind its root: white to cyan, ≥ 4 px wide at its root, gone at its end.
+    float ts = clamp(1.0 + y / max(vLook.z, 1e-3), 0.0, 1.0);
+    float sh = max(2.0 * k, vHalf * 0.55) * ts;
     float c = inside(x, sh);
-    add += mix(uCyan * 0.8, uWhite * 1.6, t * t) * c * t;
+    add += mix(uCyan * 0.8, uWhite * 1.6, ts * ts) * c * ts;
   }
   gl_FragColor = vec4(body * a * 0.95 * A + add * A, a * 0.95 * A);
 }`;
@@ -211,7 +216,7 @@ export class GraphicSwords {
         uCyan: { value: v3(GRAMMAR.cyan) },
         uCyanLit: { value: v3(GRAMMAR.cyanLit) },
         uNavy: { value: v3(GRAMMAR.navy) },
-        uGold: { value: v3(GRAMMAR.gold) },
+        uPlat: { value: v3(GRAMMAR.platinum) },
       },
       transparent: true,
       depthWrite: false,

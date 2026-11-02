@@ -43,6 +43,7 @@
  */
 import * as THREE from "three";
 import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
+import { RiverBody } from "./river-body";
 import { GraphicSwords, SWORD_FAR, SWORD_LEAD, SWORD_MID } from "./sword-grammar";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
@@ -89,21 +90,22 @@ export interface VanKiemTextures {
 }
 
 /** River size per tier: mid swords and far streaks (the diagnosis: ~6 leads, 16–32 readable swords, 40–100 streaks). */
-export const VAN_KIEM_SWORDS = { low: { mid: 16, far: 40 }, medium: { mid: 24, far: 64 }, high: { mid: 32, far: 100 }, ultra: { mid: 32, far: 100 } } as const;
+/** Round 3b (item 3): 64 % fewer swords than round 3a (32 + 100 on High), each 2–3× larger, inside one river body. */
+export const VAN_KIEM_SWORDS = { low: { mid: 8, far: 16 }, medium: { mid: 10, far: 26 }, high: { mid: 12, far: 36 }, ultra: { mid: 12, far: 36 } } as const;
 const HERO_N = 6;
-const SEEDS = 40;
+const SEEDS = 20;
 /** Lengths (m): a mid sword, a far streak, the lead blades leaving the hand and the lead blades in the river. */
-const SWORD_M = 1.9;
-const FAR_M = 3.4;
-const HERO_M = 2.2;
-const LEAD_M = 4.2;
+const SWORD_M = 4.4;
+const FAR_M = 6.2;
+const HERO_M = 3.0;
+const LEAD_M = 7.0;
 /** Blade half widths (m) and half-width floors (px at 1080p): lead, mid, far. */
-const LEAD_HALF = 0.075;
-const MID_HALF = 0.055;
-const FAR_HALF = 0.02;
-const LEAD_FLOOR_PX = 5;
-const MID_FLOOR_PX = 4;
-const FAR_FLOOR_PX = 2.5;
+const LEAD_HALF = 0.16;
+const MID_HALF = 0.12;
+const FAR_HALF = 0.045;
+const LEAD_FLOOR_PX = 8;
+const MID_FLOOR_PX = 6;
+const FAR_FLOOR_PX = 3.5;
 /** Spine levels (linear HDR entering the bloom; the diagnosis asks 4–8 at threshold 1): lead, mid (× the stream's wave), far head. */
 const LEAD_SPINE = 5.5;
 const MID_SPINE = 5.2;
@@ -123,8 +125,8 @@ const T_FOLD_END = 207 * TICK;
 const T_DONE = 230 * TICK;
 const BATCH_S = 0.1;
 /** Swords a hunt batch sends (a third fewer than round 1's 30–40: a readable sheaf, not a heap). */
-const BATCH_MIN = 10;
-const BATCH_SPAN = 6;
+const BATCH_MIN = 5;
+const BATCH_SPAN = 3;
 const AIM_S = 0.12;
 const WOUND_S = 0.06;
 const FADE_S = 0.12;
@@ -178,6 +180,9 @@ const CUT_RGB = 0xc4ecff;
 export class VanKiemFx {
   /** Every sword of the cast, one instanced draw (sword-grammar.ts): far streaks, then mid swords, then lead blades. */
   private readonly swords: GraphicSwords;
+  /** The river as one luminous body the swords ride in (round 3b, river-body.ts). */
+  private readonly body: RiverBody;
+  private readonly pathFn = (u: number, lat: number, h: number, out: THREE.Vector3): THREE.Vector3 => this.riverAt(u, lat, h, out);
   private readonly ribbons: RibbonPool;
   private readonly hits: SpritePool;
   private readonly stars: SpritePool;
@@ -267,6 +272,7 @@ export class VanKiemFx {
     this.n = this.mid + Math.max(8, Math.min(200, Math.floor(counts.far)));
     this.cap = HERO_N + this.n;
     this.swords = new GraphicSwords(this.cap, 12);
+    this.body = new RiverBody(9);
     this.ribbons = new RibbonPool(HERO_N, 46, tex.noise, 11);
     this.hits = new SpritePool(160, tex.slash, "add", "camera", 13);
     this.stars = new SpritePool(220, tex.star, "add", "camera", 14);
@@ -274,7 +280,7 @@ export class VanKiemFx {
     this.beams = new BeamPool(160, 13);
     this.marks = new SpritePool(160, tex.ring, "add", "ground", 6, { twoSided: true });
     this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05, twoSided: true });
-    host.layer.add(this.scar.mesh, this.marks.mesh, this.ribbons.mesh, this.swords.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh);
+    host.layer.add(this.scar.mesh, this.marks.mesh, this.body.group, this.ribbons.mesh, this.swords.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh);
     const N = this.cap;
     this.st = new Uint8Array(N);
     this.age = new Float32Array(N);
@@ -565,7 +571,7 @@ export class VanKiemFx {
         this.age[i] = 0;
         // The sheaf bends one way.
         this.cx[i] = bend * this.rand.range(1.2, 2.6);
-        this.lockThread(i, target);
+        // Round 3b: no lock threads (dashed debug-looking lines); the sword's own turn shows the choice.
         got += 1;
       }
     }
@@ -625,38 +631,6 @@ export class VanKiemFx {
     this.dur[lead] = 0.34;
   }
 
-  private lockThread(i: number, target: number): void {
-    const T = this.host.targets;
-    const tx = T.x(target);
-    const ty = T.midY(target);
-    const tz = T.z(target);
-    const dx = tx - this.px[i]!;
-    const dy = ty - this.py[i]!;
-    const dz = tz - this.pz[i]!;
-    const l = Math.hypot(dx, dy, dz) || 1;
-    const b = this.beams.spec.reset();
-    b.x = this.px[i]!;
-    b.y = this.py[i]!;
-    b.z = this.pz[i]!;
-    b.dx = dx / l;
-    b.dy = dy / l;
-    b.dz = dz / l;
-    b.len0 = b.len1 = l;
-    b.grow = 0.06;
-    b.w0 = 0.06;
-    b.w1 = 0.025;
-    b.life = AIM_S + 0.08;
-    b.cr = CYAN[0] * 1.4;
-    b.cg = CYAN[1] * 1.4;
-    b.cb = CYAN[2] * 1.4;
-    b.hr = CYAN[0] * 0.3;
-    b.hg = CYAN[1] * 0.3;
-    b.hb = CYAN[2] * 0.3;
-    b.fadeBase = 0.2;
-    b.fadeTip = 0.2;
-    this.beams.emit();
-  }
-
   /** Starts sword i's dive from where it is to its target (a batch set its bend in cx). */
   private dive(i: number): void {
     this.dives += 1;
@@ -691,6 +665,9 @@ export class VanKiemFx {
 
   update(dt: number): void {
     if (this.active) this.step(dt);
+    // The body opens with the river (F1–30), holds through the hunt and drains into the gather.
+    const on = this.active ? smooth01((this.t - T_SEAM) / 0.35) * (1 - smooth01((this.t - T_GATHER) / 0.3)) : 0;
+    this.body.update(this.pathFn, 3.3, on, this.t);
     this.drawSwords();
     this.ribbons.update(dt, this.host.camera);
     this.hits.update(dt);
@@ -711,7 +688,7 @@ export class VanKiemFx {
     this.kPlunge = 1 - Math.pow(0.65, f);
     if (t0 < T_SEAM && t >= T_SEAM) {
       this.host.phase("open");
-      this.seam();
+      // Round 3b: no thin white guide seam (it read as a debug spline); the river body opens instead.
     }
     // Seeds rise from the field (F4–12); the rest of the river fades in along it (F12–30).
     if (t >= T_SEEDS && this.seedLeft > 0) {
@@ -811,40 +788,6 @@ export class VanKiemFx {
         // The trail eases out: the gather's spiral and the stroke read cleaner without it.
         this.ribbons.stop(i, 0.25);
       } else k += 1;
-    }
-  }
-
-  private seam(): void {
-    // A pale jade seam opens along the river (8 segments), widening as the river does.
-    for (let k = 0; k < 8; k += 1) {
-      this.riverAt(k / 8, 0, 0, this.v);
-      this.riverAt((k + 1) / 8, 0, 0, this.w);
-      const dx = this.w.x - this.v.x;
-      const dy = this.w.y - this.v.y;
-      const dz = this.w.z - this.v.z;
-      const l = Math.hypot(dx, dy, dz);
-      const b = this.beams.spec.reset();
-      b.x = this.v.x;
-      b.y = this.v.y;
-      b.z = this.v.z;
-      b.dx = dx / l;
-      b.dy = dy / l;
-      b.dz = dz / l;
-      b.len0 = l * 1.05;
-      b.len1 = l * 1.05;
-      b.grow = 0.08 + 0.02 * k;
-      b.w0 = 0.1;
-      b.w1 = 0.42;
-      b.life = 0.7;
-      b.cr = CORE[0] * 4;
-      b.cg = CORE[1] * 4;
-      b.cb = CORE[2] * 4;
-      b.hr = CYAN[0] * 0.85;
-      b.hg = CYAN[1] * 0.85;
-      b.hb = CYAN[2] * 0.85;
-      b.fadeBase = 0.05;
-      b.fadeTip = 0.05;
-      this.beams.emit();
     }
   }
 
