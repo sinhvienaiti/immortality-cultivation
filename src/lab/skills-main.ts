@@ -399,7 +399,7 @@ const van = new VanKiemFx(
       lights.flash(at, view.camera.position, colour, intensity);
     },
   },
-  { glow: textures.glow, slash: textures.slash, star: textures.star },
+  { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch },
   VAN_KIEM_SWORDS[quality],
 );
 /**

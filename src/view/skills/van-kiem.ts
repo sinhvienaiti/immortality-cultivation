@@ -58,6 +58,9 @@ export interface VanKiemTextures {
   readonly glow: THREE.Texture;
   readonly slash: THREE.Texture;
   readonly star: THREE.Texture;
+  /** A thin ring (ground marks of the strikes) and an ink stain (the cut's scorched scar). */
+  readonly ring: THREE.Texture;
+  readonly scorch: THREE.Texture;
 }
 
 /** River size per tier (canon §20.2's sword pool: 150 / 300 / 500; this skill takes 120 / 200 / 320). */
@@ -247,6 +250,9 @@ export class VanKiemFx {
   private readonly hits: SpritePool;
   private readonly stars: SpritePool;
   private readonly beams: BeamPool;
+  /** Ground: a jade ring where each sword lands, and the cut's ink scar and its glowing seam. */
+  private readonly marks: SpritePool;
+  private readonly scar: SpritePool;
   private readonly rand = new Rand(7717);
   private readonly n: number;
   private readonly cap: number;
@@ -317,7 +323,9 @@ export class VanKiemFx {
     this.hits = new SpritePool(160, tex.slash, "add", "camera", 13);
     this.stars = new SpritePool(160, tex.star, "add", "camera", 14);
     this.beams = new BeamPool(160, 13);
-    host.layer.add(this.river.mesh, this.blades.mesh, this.tails.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh);
+    this.marks = new SpritePool(160, tex.ring, "add", "ground", 6);
+    this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05 });
+    host.layer.add(this.scar.mesh, this.marks.mesh, this.river.mesh, this.blades.mesh, this.tails.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh);
     const N = this.cap;
     this.st = new Uint8Array(N);
     this.age = new Float32Array(N);
@@ -628,6 +636,8 @@ export class VanKiemFx {
     this.hits.update(dt);
     this.stars.update(dt);
     this.beams.update(dt);
+    this.marks.update(dt);
+    this.scar.update(dt);
   }
 
   private step(dt: number): void {
@@ -1014,6 +1024,19 @@ export class VanKiemFx {
     r.g = 2.4 + c[1];
     r.b = 2.4 + c[2];
     this.stars.emit();
+    // Where it landed: a jade ring opening on the ground under the beast.
+    const g = this.marks.spec.reset();
+    g.x = x;
+    g.y = 0.04;
+    g.z = z;
+    g.life = 0.38;
+    g.size0 = 0.5 * k;
+    g.size1 = 2.0 * k;
+    g.r = JADE[0] * 0.8;
+    g.g = JADE[1] * 0.8;
+    g.b = JADE[2] * 0.8;
+    g.a = 0.75;
+    this.marks.emit();
   }
 
   private finisherBeam(): void {
@@ -1021,6 +1044,44 @@ export class VanKiemFx {
     const dx = this.s1.x - this.s0.x;
     const dz = this.s1.z - this.s0.z;
     const l = Math.hypot(dx, dz);
+    // The scar it leaves: ink stains along the line (dark under the light) and a glowing seam that cools.
+    for (let k = 0; k <= 16; k += 1) {
+      const u = k / 16;
+      const sc = this.scar.spec.reset();
+      sc.x = this.s0.x + dx * u + this.rand.range(-0.3, 0.3);
+      sc.y = 0.02;
+      sc.z = this.s0.z + dz * u + this.rand.range(-0.3, 0.3);
+      sc.life = 2.2;
+      sc.size0 = 2.6;
+      sc.size1 = 3.4;
+      sc.rot = this.rand.range(0, 6.28);
+      sc.r = 0.03;
+      sc.g = 0.045;
+      sc.b = 0.05;
+      sc.a = 0.7;
+      this.scar.emit();
+    }
+    const seam = this.beams.spec.reset();
+    seam.x = this.s0.x - (dx / l) * 1.5;
+    seam.y = 0.08;
+    seam.z = this.s0.z - (dz / l) * 1.5;
+    seam.dx = dx / l;
+    seam.dy = 0;
+    seam.dz = dz / l;
+    seam.len0 = seam.len1 = l + 3;
+    seam.grow = 0.06;
+    seam.w0 = 0.9;
+    seam.w1 = 0.35;
+    seam.life = 1.6;
+    seam.cr = JADE[0] * 3.4;
+    seam.cg = JADE[1] * 3.4;
+    seam.cb = JADE[2] * 3.4;
+    seam.hr = CYAN[0] * 0.7;
+    seam.hg = CYAN[1] * 0.7;
+    seam.hb = CYAN[2] * 0.7;
+    seam.fadeBase = 0.05;
+    seam.fadeTip = 0.05;
+    this.beams.emit();
     for (let k = 0; k < 5; k += 1) {
       const side = k === 0 ? 0 : k <= 2 ? 1 : -1;
       const gold = k === 2 || k === 4;
@@ -1033,13 +1094,14 @@ export class VanKiemFx {
       b.dz = dz / l;
       b.len0 = b.len1 = l + 6;
       b.grow = side === 0 ? 0.05 : 0;
-      b.w0 = side === 0 ? 2.6 : gold ? 2.2 : 1.6;
-      b.w1 = side === 0 ? 0.6 : gold ? 3.0 : 1.0;
+      // Wide soft fronts (a wave of light, not a laser line); the seam at rest is the thin bright one.
+      b.w0 = side === 0 ? 2.6 : gold ? 3.4 : 3.0;
+      b.w1 = side === 0 ? 0.6 : gold ? 4.2 : 1.6;
       b.vx = (this.sweepNx * side * SWEEP_R) / SWEEP_S;
       b.vz = (this.sweepNz * side * SWEEP_R) / SWEEP_S;
       b.life = side === 0 ? 0.45 : SWEEP_S + 0.1;
       const core = gold ? GOLD : CYAN;
-      const kc = gold ? 1.6 : 4;
+      const kc = gold ? 1.4 : side === 0 ? 4 : 2.6;
       b.cr = core[0] * kc;
       b.cg = core[1] * kc;
       b.cb = core[2] * kc;
@@ -1153,6 +1215,8 @@ export class VanKiemFx {
     this.hits.clear();
     this.stars.clear();
     this.beams.clear();
+    this.marks.clear();
+    this.scar.clear();
     for (let i = 0; i < this.cap; i += 1) {
       this.dx[i] = 0;
       this.dy[i] = 1;
