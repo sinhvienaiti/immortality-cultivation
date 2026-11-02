@@ -133,14 +133,14 @@ function screenImpact(ms: number): void {
   lastImpact.frame = frameNo;
   lastImpact.slot = slot;
   const role: ImpactRole = ms < 0 ? "secondary" : slot === "k4" && ms <= 50 ? "secondary" : ms >= 80 || slot === "k2" ? "finisher" : "primary";
-  screen.setFlashColor(fx.paletteOf(slot).flash);
+  screen.setFlashColor(fx.paletteOf(slot).flashHex);
   screen.impact(tierOf(slot), role);
   // The ultimate's last wave is its climax: the world-change sound answers on this frame.
   if (slot === "k5" && role === "finisher") worldEvent("k5", "climax");
 }
 bus.on((e) => {
   if (e.kind === "release") {
-    if (e.slot !== "k7" && e.slot !== "auto") screen.setFlashColor(fx.paletteOf(e.slot as KiemSlot).flash);
+    if (e.slot !== "k7" && e.slot !== "auto") screen.setFlashColor(fx.paletteOf(e.slot as KiemSlot).flashHex);
     screen.release(e.tier);
   }
 });
@@ -299,18 +299,24 @@ const dmgRand = new Rand(907);
 let attacks = 0;
 const attackOf: Record<string, number> = {};
 const hitsOf: Record<string, number> = {};
-/** The skill's colour for its numbers (sRGB hex of its halo), cached per weapon. */
+/** The skill's colour for its numbers (sRGB hex of its halo), cached per slot for the equipped weapon (no key string per blow). */
 const numberRgb: Record<string, number> = {};
+let numberRgbWeapon = "";
 const tmpColour = new THREE.Color();
 /** Key 7's number tint (linear): Clear Wind's jade-cyan. */
 const VAN_KIEM_TINT = VAN_KIEM_COLOUR;
+/** Key 7's flash, parsed once (a colour string is parsed on every set). */
+const VAN_FLASH = new THREE.Color(VAN_KIEM_FLASH);
 function skillRgb(slot: string): number {
-  const key = fx.weapon + ":" + slot;
-  let v = numberRgb[key];
+  if (numberRgbWeapon !== fx.weapon) {
+    for (const k of Object.keys(numberRgb)) delete numberRgb[k];
+    numberRgbWeapon = fx.weapon;
+  }
+  let v = numberRgb[slot];
   if (v === undefined) {
     const h = slot === "k7" ? VAN_KIEM_TINT : fx.paletteOf(slot as KiemSlot).halo;
     v = tmpColour.setRGB(h[0], h[1], h[2]).getHex(THREE.SRGBColorSpace);
-    numberRgb[key] = v;
+    numberRgb[slot] = v;
   }
   return v;
 }
@@ -362,7 +368,7 @@ const van = new VanKiemFx(
       // The first of the eight blades is the volley's primary blow (one stop); the others land as secondary hits.
       if (role === "primary" && !vanFirstHit) {
         vanFirstHit = true;
-        screen.setFlashColor(VAN_KIEM_FLASH);
+        screen.setFlashColor(VAN_FLASH);
         screen.impact("skill", "primary");
       } else if (role === "primary") screen.impact("skill", "secondary");
       emitImpact("k7", target, dx, dz, power, role, killed, skillRgb("k7"));
@@ -374,7 +380,7 @@ const van = new VanKiemFx(
       } else if (p === "hush") worldEvent("k7", "hush");
       else if (p === "climax") {
         // The finisher at ultimate strength: 60 ms stop, 0.45× for 180 ms, punch, edge split, flash, a dark pulse.
-        screen.setFlashColor(VAN_KIEM_FLASH);
+        screen.setFlashColor(VAN_FLASH);
         screen.impact("ultimate", "finisher");
         screen.darken(0.28, 0.45);
         kick.impulse(4 * KICK_M_PER_PX, 0, 1);
