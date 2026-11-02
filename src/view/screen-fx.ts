@@ -232,9 +232,11 @@ export class ScreenFx {
   private readonly pass: ScreenPass;
   private readonly quad = new ScreenQuad();
   private readonly removeQuad: () => void;
-  /** What applyCamera changed, undone by restoreCamera. */
+  /** What applyCamera changed, undone by restoreCamera, and the camera as it left it (a camera placed again since keeps its new pose). */
   private appliedRoll = 0;
   private appliedFov = 0;
+  private fovAfter = 0;
+  private readonly quatAfter = new THREE.Quaternion();
   private readonly right = new THREE.Vector3();
   private readonly up = new THREE.Vector3();
   private readonly fwd = new THREE.Vector3();
@@ -482,17 +484,18 @@ export class ScreenFx {
     s.punch = this.punchNow;
   }
 
-  /** Undoes last frame's roll and punch (call before the host places the camera this frame). */
+  /**
+   * Undoes last frame's roll and punch (call before the host places the camera this frame). A camera the host
+   * placed or refitted since (a resize, a view change) is left as it is: undoing then would leave a lasting error.
+   */
   restoreCamera(camera: THREE.PerspectiveCamera): void {
-    if (this.appliedRoll !== 0) {
-      camera.rotateZ(-this.appliedRoll);
-      this.appliedRoll = 0;
-    }
-    if (this.appliedFov !== 0) {
+    if (this.appliedRoll !== 0 && camera.quaternion.equals(this.quatAfter)) camera.rotateZ(-this.appliedRoll);
+    this.appliedRoll = 0;
+    if (this.appliedFov !== 0 && camera.fov === this.fovAfter) {
       camera.fov += this.appliedFov;
-      this.appliedFov = 0;
       camera.updateProjectionMatrix();
     }
+    this.appliedFov = 0;
   }
 
   /** Adds this frame's roll and punch to the placed camera (its position offset is `offset`, the host adds it). */
@@ -507,6 +510,8 @@ export class ScreenFx {
       this.appliedFov = d;
       camera.updateProjectionMatrix();
     }
+    this.fovAfter = camera.fov;
+    this.quatAfter.copy(camera.quaternion);
     camera.updateMatrixWorld(true);
   }
 
