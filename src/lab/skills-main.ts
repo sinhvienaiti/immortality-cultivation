@@ -36,7 +36,9 @@ import { CLIP_RELEASE_S, LabCaster, type CasterClip } from "./caster";
 import { LabHerd, type HerdMode } from "./herd";
 import { applyLook, buildField, LAB_ASSETS } from "./look";
 import { collectLayerNames, MotionProbe } from "./motion-probe";
-import { CameraKick, CameraShake, FlashLights, HitStop, smooth01 } from "./feel";
+import { CameraKick, FlashLights, smooth01 } from "./feel";
+import { ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
+import { LabBus } from "./events";
 import { CasterPresence } from "./presence";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
@@ -96,9 +98,58 @@ const zoom = new CameraZoom();
 /** A fixed camera set by __lab.camera (not "play"): the zoom leaves it alone until "play" again. */
 let customCamera = false;
 const kick = new CameraKick();
-// Camera shake on strikes (round 2 "weight"): 0.1–0.2 m dying in ~120 ms, halved at Low, × 0.75 at Medium.
-const shake = new CameraShake(quality === "low" ? 0.5 : quality === "medium" ? 0.75 : 1);
-const stop = new HitStop();
+// Screen effects by tier (canon D58 (3), POWER_RESEARCH.md): trauma shake, punch, hit-stop, slow motion,
+// darkening, flash and edge split in one pass before the OutputPass. Made before any other overlay, so its
+// fallback quad (Low, Medium) draws under the damage numbers. ?fx=0..1 is the accessibility intensity.
+const screen = new ScreenFx({ composer: view.stage.composer, composerOn: () => view.stage.bloom.enabled, addOverlay: (o) => view.addOverlay(o) });
+screen.intensity = Math.max(0, Math.min(1, Number(params.get("fx") ?? "1")));
+/** One event, every listener on the same frame (events.ts). */
+const bus = new LabBus();
+/** Each lab skill's screen tier: Phi Kiếm a basic blow, Thiên Hà the ultimate, the rest (key 7 too) skills. */
+function tierOf(slot: string): ScreenTier {
+  return slot === "auto" ? "basic" : slot === "k5" ? "ultimate" : "skill";
+}
+/** Lab frames drawn (the screen-impact dedupe: hitStop and shake of one blow arrive on one frame). */
+let frameNo = 0;
+const lastImpact = { frame: -1, slot: "" };
+/**
+ * KiemFx asks for a hit-stop and a shake per strike (its old per-skill numbers); the tier table decides now.
+ * The stop's length tells the role: Lạc Kiếm Trận's 50 ms beats are secondary hits, Nhất Tuyến's lone cut and
+ * Thiên Hà's last wave (83 ms) are finishers.
+ */
+function screenImpact(ms: number): void {
+  const slot = fx.striking;
+  if (lastImpact.frame === frameNo && lastImpact.slot === slot) return;
+  lastImpact.frame = frameNo;
+  lastImpact.slot = slot;
+  const role: ImpactRole = ms < 0 ? "secondary" : slot === "k4" && ms <= 50 ? "secondary" : ms >= 80 || slot === "k2" ? "finisher" : "primary";
+  screen.setFlashColor(fx.paletteOf(slot).flash);
+  screen.impact(tierOf(slot), role);
+}
+bus.on((e) => {
+  if (e.kind === "release") {
+    if (e.slot !== "k7" && e.slot !== "auto") screen.setFlashColor(fx.paletteOf(e.slot as KiemSlot).flash);
+    screen.release(e.tier);
+  }
+});
+/** The release event: on the key's frame, before the VFX cast (they read the hand after the caster's update). */
+function emitRelease(slot: string, tx: number, tz: number): void {
+  const r = bus.release;
+  r.slot = slot;
+  r.tier = tierOf(slot);
+  r.x = caster.x;
+  r.z = caster.z;
+  const dx = tx - caster.x;
+  const dz = tz - caster.z;
+  const l = Math.hypot(dx, dz) || 1;
+  r.dx = dx / l;
+  r.dz = dz / l;
+  r.frame = frameNo;
+  r.time = labTime;
+  bus.emit(r);
+}
+/** Lab time on real seconds (the key's time stamp). */
+let labTime = 0;
 /** About 2 cm of kick per "px" a skill asks for (the old lab scale). */
 const KICK_M_PER_PX = 0.02;
 // The kit stage's one impact light jumps to each new flash at full strength: the lab lights its flashes itself.
@@ -127,10 +178,11 @@ const hostApi: KiemHost = {
     kick.impulse(px * KICK_M_PER_PX, dx / l, dz / l);
   },
   hitStop(ms) {
-    stop.start(ms);
+    screenImpact(ms);
   },
-  shake(metres) {
-    shake.add(metres);
+  shake() {
+    // A shake with no stop on its frame (Lưu Quang Bộ's arrival): a secondary blow of its tier.
+    screenImpact(-1);
   },
   pull(x, z, r, seconds) {
     herd.pull(x, z, r, seconds);
@@ -212,7 +264,7 @@ function updateBolt(dt: number): void {
         probe.event("hit");
         caster.hit(bolt.x, bolt.z);
         presence.hit(caster.x, caster.z, bolt.x, bolt.z);
-        shake.add(0.12);
+        screen.shake(4, 0.12);
       }
     } else {
       bolt.x += (dx / d) * step;
@@ -271,10 +323,11 @@ function type(slot: KiemSlot): void {
   if (slot === "auto" || !typedMode) {
     typing = null;
     probe.lastKey(slot);
-    // A release cuts a hit-stop still holding: the body answers the last key within the 50 ms gate (feel.ts cut).
-    stop.cut();
+    // A release cuts a hit-stop still holding: the body answers the last key within the 50 ms gate.
+    screen.cut();
     const [tx, tz] = slot === "auto" ? TARGET.auto : TARGET[slot];
     caster.release(slot, tx, tz);
+    emitRelease(slot, tx, tz);
     queueCast(slot, slot === "auto" ? 0 : tx, slot === "auto" ? 0 : tz);
     return;
   }
@@ -314,8 +367,9 @@ function updateTyping(dt: number): void {
     const p = typing.typed / typing.letters;
     if (typing.typed >= typing.letters) {
       probe.lastKey(typing.slot);
-      stop.cut();
+      screen.cut();
       caster.release(typing.slot, typing.tx, typing.tz);
+      emitRelease(typing.slot, typing.tx, typing.tz);
       queueCast(typing.slot, typing.tx, typing.tz);
       typing = null;
       break;
@@ -337,12 +391,12 @@ function reset(): void {
   pending.charge = pending.cast = false;
   bolt.active = false;
   enemyBolt.clear();
-  stop.reset();
+  screen.reset();
   kick.reset();
-  shake.reset();
   presence.reset();
   lights.reset();
   probe.reset();
+  bus.resetCounts();
   caster.resetChecks();
   handSword?.reset();
 }
@@ -416,6 +470,17 @@ if (params.get("ui") !== "0") {
   };
   tl.append(typedBox, document.createTextNode("Typed charge (type the word first)"));
   panel.append(tl);
+  // Screen-effect intensity (accessibility: shake, punch, darkening, flash, split; 0 turns them off).
+  const il = document.createElement("label");
+  il.style.cssText = "display:flex;gap:6px;align-items:center";
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = "100";
+  slider.value = String(Math.round(screen.intensity * 100));
+  slider.oninput = () => (screen.intensity = Number(slider.value) / 100);
+  il.append(document.createTextNode("Screen effects"), slider);
+  panel.append(il);
   // Weapon selector: the four wave-1 swords (WEAPON_DESIGN §6); shapes are the stand-in until their GLBs exist.
   const wl = document.createElement("label");
   wl.textContent = "Sword ";
@@ -440,7 +505,11 @@ if (params.get("ui") !== "0") {
 function frame(dt: number): void {
   // Hit-stop: part frames counted, an eased exit (feel.ts). The world runs on per-second rates and
   // time-sampled trails, so a variable rAF step shows the same motion at 60 and 120 Hz (appendix C §2.7).
-  const world = stop.advance(dt);
+  frameNo += 1;
+  labTime += dt;
+  // Last frame's roll and punch come off before the camera is placed again.
+  screen.restoreCamera(view.camera);
+  const world = screen.advance(dt);
   updateTyping(world);
   updateBolt(world);
   herd.update(world);
@@ -460,9 +529,11 @@ function frame(dt: number): void {
     camBase.copy(view.camera.position);
   } else if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
   kick.update(dt);
-  shake.update(dt, view.camera);
+  screen.update(dt, view.camera, innerHeight);
   lights.update(dt);
-  view.camera.position.set(camBase.x + kick.x + shake.x, camBase.y + shake.y, camBase.z + kick.z + shake.z);
+  const so = screen.offset;
+  view.camera.position.set(camBase.x + kick.x + so.x, camBase.y + so.y, camBase.z + kick.z + so.z);
+  screen.applyCamera(view.camera);
   view.render(dt);
   // After the draw: world matrices are fresh and the probe reads what was shown.
   if (probeOn) {
@@ -588,6 +659,12 @@ declare global {
        * per-frame ms (cpu, total), draw calls, triangles, blades drawn (hero, swarm) and the GPU string.
        */
       perf(frames: number, dt?: number): { cpu: number[]; total: number[]; drawCalls: number; triangles: number; hero: number; swarm: number; gpu: string; k5n: number };
+      /** The screen effects shown this frame (darkening, flash, split, shake px, roll, punch, world speed). */
+      screen(): Record<string, number | boolean>;
+      /** Screen-effect intensity 0–1 (accessibility). */
+      setFx(intensity: number): void;
+      /** Event counts since the last reset (release, impact, death, flyby, world, callout). */
+      events(): Record<string, number>;
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
     };
@@ -640,8 +717,9 @@ void (async () => {
     // The caster acts the slot first: KiemHost.play names only a clip (K4 asks for Skill2 like the guard, K1 for Attack
     // like Phi Kiếm), so a cast left to play() acted the wrong skill (review fix).
     cast: (slot, tx, tz) => {
-      stop.cut();
+      screen.cut();
       caster.release(slot, tx, tz);
+      emitRelease(slot, tx, tz);
       fx.cast(slot, tx, tz);
     },
     enemyShot,
@@ -814,6 +892,9 @@ void (async () => {
       fx.blades.drawn(drawn);
       return { cpu, total, drawCalls: info.drawCalls, triangles: info.triangles, hero: drawn.hero, swarm: drawn.swarm, gpu: info.gpu, k5n: Number.isFinite(k5n) && k5n > 0 ? Math.min(K5_MAX, k5n) : -1 };
     },
+    screen: () => ({ ...screen.shown }),
+    setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
+    events: () => ({ ...bus.counts }),
     async swarm(mode) {
       const def = fx.weaponInfo;
       const hero = await loadBladeGeometry(def.model, def.fit);

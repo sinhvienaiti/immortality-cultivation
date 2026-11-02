@@ -734,6 +734,11 @@ export class KiemFx {
     return this.skillPal[slot];
   }
 
+  /** The slot whose colours the emit helpers use now: the one striking when KiemHost.hitStop or shake is called. */
+  get striking(): KiemSlot {
+    return this.palSlot;
+  }
+
   /** Points the emit helpers at a slot's colours. */
   private use(slot: KiemSlot): void {
     this.pal = this.skillPal[slot];
