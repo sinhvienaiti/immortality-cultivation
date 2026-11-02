@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { describe, expect, it } from "vitest";
-import { IMPACT_DARK, IMPACT_INVERT, SCREEN_TIERS, ScreenFx, type ScreenFxHost } from "../../src/view/screen-fx";
+import { IMPACT_DARK, IMPACT_INVERT, SCREEN_TIERS, ScreenFx, ULT_CLIMAX_FRAMES, type ScreenFxHost } from "../../src/view/screen-fx";
 
 /** A composer stand-in: the pass list and insertPass, no WebGL. */
 function host(): ScreenFxHost & { passes: unknown[]; overlays: number } {
@@ -58,12 +58,13 @@ describe("screen effects by tier (power pass)", () => {
       const fx = new ScreenFx(host());
       fx.impact(tier, "finisher");
       let frames = 0;
-      for (let i = 0; i < 8; i += 1) {
+      for (let i = 0; i < 24; i += 1) {
         fx.update(1 / 60, cam);
         if (i === 0) expect(fx.shown.shakePx).toBeLessThanOrEqual(SCREEN_TIERS[tier].shakePx + 1e-6);
         if (fx.shown.impactStep >= 0) frames += 1;
       }
-      expect(frames).toBe(SCREEN_TIERS[tier].frames);
+      // Round 3b: each graphic state holds 4 frames at 60 Hz.
+      expect(frames).toBe(SCREEN_TIERS[tier].frames * 4);
     }
   });
 
@@ -166,23 +167,39 @@ describe("screen dramaturgy (power pass round 2)", () => {
     expect(fx.shown.impactLocal).toBe(1);
     expect(fx.shown.impactMode).toBe(IMPACT_INVERT);
     expect(fx.shown.impactStep).toBe(0);
-    // One frame, then a hard return.
+    // Held 3 frames (round 3b), then a hard return.
+    fx.update(1 / 60, c);
+    fx.update(1 / 60, c);
+    expect(fx.shown.impactStep).toBe(0);
     fx.update(1 / 60, c);
     expect(fx.shown.impactStep).toBe(-1);
   });
 
-  it("lands key 7's finisher as two graphic frames (dark, inverted) and K5's climax as three, then a hard return", () => {
+  it("lands key 7's finisher as two held graphic states (dark, inverted), K5's climax as its own two, then a hard return", () => {
     const c = cam();
-    for (const [frames, want] of [[undefined, [IMPACT_DARK, IMPACT_INVERT]], [3, [IMPACT_DARK, IMPACT_DARK, IMPACT_INVERT]]] as const) {
+    const hold = (m: number): number[] => [m, m, m, m];
+    for (const [frames, want] of [
+      [undefined, [...hold(IMPACT_DARK), ...hold(IMPACT_INVERT)]],
+      [3, [...hold(IMPACT_DARK), ...hold(IMPACT_DARK), ...hold(IMPACT_INVERT)]],
+      [ULT_CLIMAX_FRAMES, [...hold(IMPACT_DARK), ...hold(IMPACT_INVERT)]],
+    ] as const) {
       const fx = new ScreenFx(host());
       fx.impact("ultimate", "finisher", frames);
       const seen: number[] = [];
-      for (let i = 0; i < 6; i += 1) {
+      for (let i = 0; i < 16; i += 1) {
         fx.update(1 / 60, c);
         seen.push(fx.shown.impactMode);
       }
-      expect(seen).toEqual([...want, ...new Array<number>(6 - want.length).fill(0)]);
+      expect(seen).toEqual([...want, ...new Array<number>(16 - want.length).fill(0)]);
     }
+    // A new release cuts a held frame at once (key to release stays within 50 ms).
+    const cutFx = new ScreenFx(host());
+    cutFx.impact("ultimate", "finisher");
+    cutFx.update(1 / 60, c);
+    expect(cutFx.shown.impactStep).toBe(0);
+    cutFx.cut();
+    cutFx.update(1 / 60, c);
+    expect(cutFx.shown.impactStep).toBe(-1);
     // No tinted flash, zoom blur or chroma fringe is left in the table (round 3a removed them).
     for (const key of ["flash", "blur", "splitPx", "local"]) expect(Object.keys(SCREEN_TIERS.ultimate)).not.toContain(key);
   });
@@ -196,14 +213,14 @@ describe("screen dramaturgy (power pass round 2)", () => {
       expect(fx.shown.impactMode).toBe(IMPACT_DARK);
       const modes = new Set<number>();
       let drawn = 1;
-      for (let i = 0; i < 20 && fx.shown.impactStep >= 0; i += 1) {
+      for (let i = 0; i < 60 && fx.shown.impactStep >= 0; i += 1) {
         modes.add(fx.shown.impactMode);
         fx.update(1 / hz, cam());
         if (fx.shown.impactStep >= 0) drawn += 1;
       }
       expect(modes.has(IMPACT_INVERT)).toBe(true);
-      // About 1/60 s a step: two drawn frames at 30 and 60 Hz, three a step at 144 Hz (~21 ms each).
-      expect(drawn).toBe(hz === 144 ? 6 : 2);
+      // 4/60 s a state (round 3b): 2 drawn frames a state at 30 Hz, 4 at 60 Hz, 10 at 144 Hz.
+      expect(drawn).toBe(hz === 144 ? 20 : hz === 60 ? 8 : 4);
     }
   });
 

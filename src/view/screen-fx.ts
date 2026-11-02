@@ -84,8 +84,8 @@ export interface TierFx {
  */
 export const SCREEN_TIERS: Readonly<Record<ScreenTier, TierFx>> = {
   basic: { shakePx: 3, shakeS: 0.09, rollDeg: 0, punch: 0, punchS: 0, stopMs: 0, finisherStopMs: 0, slow: 1, slowS: 0, dark: 0, darkS: 0, hold: 0, desat: 0, frames: 0, localFrame: true, localPx: 72 },
-  skill: { shakePx: 7, shakeS: 0.2, rollDeg: 0, punch: 0.015, punchS: 0.2, stopMs: 50, finisherStopMs: 67, slow: 0.6, slowS: 0.14, dark: 0.22, darkS: 0.3, hold: 0.45, desat: 0.45, frames: 1, localFrame: true, localPx: 92 },
-  ultimate: { shakePx: 16, shakeS: 0.35, rollDeg: 0.35, punch: 0.04, punchS: 0.3, stopMs: 50, finisherStopMs: 100, slow: 0.3, slowS: 0.28, dark: 0.45, darkS: 0.5, hold: 0.45, desat: 0.6, frames: 2, localFrame: true, localPx: 110 },
+  skill: { shakePx: 7, shakeS: 0.2, rollDeg: 0, punch: 0.015, punchS: 0.2, stopMs: 50, finisherStopMs: 90, slow: 0.6, slowS: 0.14, dark: 0.22, darkS: 0.3, hold: 0.45, desat: 0.45, frames: 1, localFrame: true, localPx: 92 },
+  ultimate: { shakePx: 16, shakeS: 0.35, rollDeg: 0.35, punch: 0.04, punchS: 0.3, stopMs: 50, finisherStopMs: 110, slow: 0.3, slowS: 0.28, dark: 0.45, darkS: 0.5, hold: 0.45, desat: 0.6, frames: 2, localFrame: true, localPx: 110 },
 };
 
 /** Graphic frame modes (ImpactPass uMode). */
@@ -107,7 +107,7 @@ interface ImpactStep {
   readonly bSize: number;
 }
 /**
- * The frames of a finisher by count (each shown ~1/60 s, at least one drawn frame, then a hard return): a dark
+ * The frames of a finisher by count (each held STEP_S, at least one drawn frame, then a hard return): a dark
  * frame with dim cyan focus rays (or the sword-streak field) behind the figures; the inverted frame with ink focus
  * lines and an ink brush burst at the strike.
  */
@@ -123,10 +123,23 @@ const SEQUENCES: readonly (readonly ImpactStep[])[] = [
     { mode: IMPACT_DARK, a: "streaks", aSize: 2.2, b: null, bSize: 0 },
     { mode: IMPACT_INVERT, a: "rays", aSize: 2.4, b: "crack", bSize: 0.7 },
   ],
+  // The ultimate's own climax (round 3b, K5's heaven sword): a dark frame with a white burst star at the strike over
+  // the focus rays, then the inverted frame with a wide ink brush burst; key 7 keeps the sword-streak field.
+  [
+    { mode: IMPACT_DARK, a: "rays", aSize: 2.6, b: "burst", bSize: 0.75 },
+    { mode: IMPACT_INVERT, a: "rays", aSize: 2.6, b: "crack", bSize: 1.15 },
+  ],
 ];
+/** SEQUENCES index of the ultimate's own climax. */
+export const ULT_CLIMAX_FRAMES = 4;
 /** The local frame: the burst star bounds an inverted patch, a slash crescent cuts across it in ink along the blow. */
 const LOCAL_STEP: ImpactStep = { mode: IMPACT_INVERT, a: "burst", aSize: 2.3, b: "slash", bSize: 1.7 };
-const STEP_S = 1 / 60;
+/**
+ * How long each graphic state holds (round 3b: round 3a's single 1/60 s frames read as flicker to both judges): a
+ * full-screen state 4 frames at 60 Hz (67 ms), a local burst 3 (50 ms). A new release cuts any hold (cut()).
+ */
+const STEP_S = 4 / 60;
+const LOCAL_STEP_S = 3 / 60;
 
 /** Largest shake (px at 1080p) trauma 1 stands for. */
 const MAX_PX = 18;
@@ -698,6 +711,10 @@ export class ScreenFx {
     this.slowExit = SLOW_EXIT_S;
     this.slowScale = 1;
     this.guardLeft = RELEASE_GUARD_S;
+    // A held graphic frame ends with the key too: the new release is never drawn under an old blow's frame.
+    this.step = -1;
+    this.localStep = -1;
+    this.stepFresh = this.localFresh = false;
   }
 
   /** True while a hit-stop holds the world. */
@@ -770,11 +787,11 @@ export class ScreenFx {
    * Steps a graphic sequence's clock: a step set this frame shows now; later steps advance once ~1/60 s has passed
    * (at least one drawn frame each, at most one step a frame). Returns the step to show (−1: done).
    */
-  private advanceStep(step: number, fresh: boolean, age: number, dt: number, len: number): [number, number] {
+  private advanceStep(step: number, fresh: boolean, age: number, dt: number, len: number, hold = STEP_S): [number, number] {
     if (step < 0) return [-1, 0];
     if (fresh || dt <= 0) return [step, age];
     const a = age + dt;
-    if (a >= STEP_S - 1e-4) return [step + 1 >= len ? -1 : step + 1, 0];
+    if (a >= hold - 1e-4) return [step + 1 >= len ? -1 : step + 1, 0];
     return [step, a];
   }
 
@@ -823,7 +840,7 @@ export class ScreenFx {
     // Graphic frames: a step set this frame (a blow before this update) shows on this frame's draw.
     [this.step, this.stepAge] = this.advanceStep(this.step, this.stepFresh, this.stepAge, dt, this.seq.length);
     this.stepFresh = false;
-    [this.localStep, this.localAge] = this.advanceStep(this.localStep, this.localFresh, this.localAge, dt, 1);
+    [this.localStep, this.localAge] = this.advanceStep(this.localStep, this.localFresh, this.localAge, dt, 1, LOCAL_STEP_S);
     this.localFresh = false;
     const u = this.pass.uniforms as typeof SCREEN_SHADER.uniforms;
     // With the light hook the world's lights carry the darkening (VFX keep their light) and the pass adds a vignette.

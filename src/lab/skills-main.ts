@@ -39,7 +39,7 @@ import { LabHerd, type HerdMode } from "./herd";
 import { applyLook, buildField, LAB_ASSETS } from "./look";
 import { collectLayerNames, MotionProbe } from "./motion-probe";
 import { CameraKick, FlashLights, smooth01 } from "./feel";
-import { SCREEN_TIERS, ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
+import { SCREEN_TIERS, ScreenFx, ULT_CLIMAX_FRAMES, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { VictimDirector } from "./victims";
@@ -256,11 +256,11 @@ function screenImpact(ms: number): void {
   lastImpact.frame = frameNo;
   lastImpact.slot = slot;
   const role: ImpactRole = ms < 0 ? "secondary" : slot === "k4" && ms <= 50 ? "secondary" : ms >= 80 || slot === "k2" ? "finisher" : "primary";
-  // The ultimate's climax takes three graphic frames (dark, dark, invert) centred on the vortex; other finishers their
-  // tier's, centred on the blow.
+  // The ultimate's climax takes its own graphic states (a dark frame with a white burst, then an inverted brush burst,
+  // each held 4 frames) centred on the heaven sword; other finishers their tier's, centred on the blow.
   if (slot === "k5" && role === "finisher") screen.focus(ultAim.x, 1.2, ultAim.z);
   else if (role === "finisher" && lastHit.set) screen.focus(lastHit.x, lastHit.y, lastHit.z);
-  screen.impact(tierOf(slot), role, slot === "k5" && role === "finisher" ? 3 : undefined);
+  screen.impact(tierOf(slot), role, slot === "k5" && role === "finisher" ? ULT_CLIMAX_FRAMES : undefined);
   // The ultimate's last wave is its climax: the world-change sound answers on this frame; the world stays dark a
   // moment for the scars to glow, then the light comes back.
   if (slot === "k5" && role === "finisher") {
