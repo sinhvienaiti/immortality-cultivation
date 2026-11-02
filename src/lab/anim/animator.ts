@@ -22,6 +22,16 @@
  * step back, a stop sways on and settles, and the root never turns faster
  * than 360°/s (locomotion.ts).
  *
+ * Round 3 (gestures.ts): each slot plays a casting gesture (sword-finger
+ * seal, sky edict lift, fan sweep, bow-stance thrust, overhead raise, planted
+ * guard, dash crouch) with a weight shift, the feet stepping into its stance
+ * (requested steps with their own length, the back foot of a lunge anchored),
+ * the wrists shaped, the tail whipped on the release; a cast turns the body to
+ * its target faster than a walk (≤ 600°/s, eased; quicker re-plant steps);
+ * the torso and head lead every turn; the chest's heading is capped at
+ * 720°/s; a stop ends on a settle step; a blow staggers in 2 frames and steps
+ * back 0.38 m.
+ *
  * Frame order (appendix C §2.2): state → acting → pose → inertialization →
  * Hit additive → root → world layers (lean, acting pose, recoil, breathing,
  * look-at) → arm aims → foot IK → spring chains. VFX read the hand after
@@ -31,7 +41,7 @@
  * with the same names reuses it (MOTION_PLAN step 5). No allocation per frame.
  */
 import * as THREE from "three";
-import { Acting, MOVES, type MoveId } from "./acting";
+import { Acting, moveDef, type MoveId } from "./acting";
 import { FootLock, type FootMode } from "./foot-ik";
 import { analyseGait, type GaitFeet, type GaitInfo } from "./gait";
 import { Inertializer } from "./inertial";
@@ -49,8 +59,8 @@ export const HALFLIFE = {
   release: 0.04,
   charge: 0.06,
   toIdle: 0.09,
-  /** A skill's end into Idle: ~0.22 s to 95 % (round 2: a 0.2–0.25 s cross-fade). */
-  recover: 0.065,
+  /** A skill's end into Idle: ~0.33 s to 95 % (round 3: 0.065 swung the arm 95° in ~6 frames under a fading aim). */
+  recover: 0.1,
   dashIn: 0.04,
   dashOut: 0.08,
   hit: 0.03,
@@ -113,8 +123,15 @@ const DASH_REACH_LIFT_M = 0.16;
 const DASH_LAND_SHARE = 0.08;
 /** A clip foot lower than this over its standing height counts as on the ground (m). */
 const LAND_CLEAR_M = 0.03;
-/** A hit steps the body back this far (m), the feet planted (they step after). */
-const HIT_STEP_M = 0.15;
+/** A hit steps the body back this far (m), the feet stepping with it (round-2 judges: 0.3–0.5 m with a step). */
+const HIT_STEP_M = 0.38;
+/** A cast turn: the turn's speed and acceleration × this, the body this far past the lagging foot, re-plant steps this long (s). */
+const CAST_TURN_BOOST = 2.2;
+const CAST_TURN_LEAD = 95 * DEG;
+const CAST_STEP_S = 0.17;
+/** After a stop the feet settle under the body this long after (s), in a step this long (s). */
+const SETTLE_AFTER_S = 0.14;
+const SETTLE_STEP_S = 0.28;
 /** After touch-down the feet settle this long (s) before standing locks plant them wherever they touch. */
 const LAND_SETTLE_S = 0.3;
 const MOVE_ON = 0.04;
@@ -188,6 +205,11 @@ export class Animator {
   private first = true;
   private springsReset = true;
   private turnLead = TURN_LEAD;
+  /** The stance request last handed to the feet, and the settle step's countdown after a stop (s, −1 none). */
+  private stanceSeq = 0;
+  private settleIn = -1;
+  /** The tail chain (springs) for the acting's whips. */
+  private tailChain = -1;
   private readonly forward = new THREE.Vector3(0, 0, 1);
   private readonly handR: THREE.Object3D | null;
   /** A pose held on purpose with both arms raised (the arms-out check skips it). */
@@ -251,10 +273,11 @@ export class Animator {
     const tip = (b: THREE.Bone, fallback: number): number => (skinned ? tipFromSkin(skinned, b, fallback) : fallback);
     const tail = ["tail_01", "tail_02", "tail_03", "tail_04", "tail_05"].map((nm) => this.rig.bone(nm)).filter((b): b is THREE.Bone => b !== null);
     if (tail.length > 0) {
-      // Stiffer at the base, looser to the tip; a share of the body's motion trails it.
-      this.springs.addChain(tail, tip(tail[tail.length - 1]!, 0.18), (i) => {
+      // Stiffer at the base, looser to the tip; most of the body's own motion trails it, so it lags each step, turn,
+      // dash and stop (round-2 judges: the tail stayed stiff walking). Round 2 had trail 0.3, 2.4–1.4 Hz, ζ 0.55.
+      this.tailChain = this.springs.addChain(tail, tip(tail[tail.length - 1]!, 0.18), (i) => {
         const u = i / Math.max(1, tail.length - 1);
-        return { hz: 2.4 - 1.0 * u, zeta: 0.55, gravity: 1.2, trail: 0.3, maxDeg: 22 + 10 * u, maxDegS: 360, radius: 0.04 };
+        return { hz: 2.1 - 1.0 * u, zeta: 0.42, gravity: 1.2, trail: 0.62 + 0.25 * u, maxDeg: 26 + 16 * u, maxDegS: 520, radius: 0.04, trailStepM: 0.06 };
       });
     }
     for (const nm of ["ear_l", "ear_r"]) {
@@ -387,6 +410,7 @@ export class Animator {
     this.lookHold = 0;
     this.landHold = 0;
     this.turnLead = TURN_LEAD;
+    this.settleIn = -1;
     this.transition = -1;
     this.intendedPose = false;
     this.acting.reset();
@@ -425,14 +449,24 @@ export class Animator {
     const err = Math.abs(wrapPi(this.loco.yawGoal - this.loco.yaw));
     const inPlace = this.loco.speed < 0.2 && err > 60 * DEG;
     this.loco.turnHalflife = inPlace ? TURN_IN_PLACE_HL : 0.06;
-    if (inPlace && this.state !== "charge") {
-      // The head leads the turn (clamped to 20° by the look-at).
-      const l = Math.hypot(fx, fz) || 1;
-      this.lookAt(this.loco.showX + (fx / l) * 6, 1.1, this.loco.showZ + (fz / l) * 6, 1);
-      this.lookHold = Math.max(this.lookHold, 0.45);
-    }
+    // The torso and head lead the turn (Layers' turn lead), no look target needed.
     if (this.state === "fidget") this.toIdle(HALFLIFE.fidget);
     return Math.abs(wrapPi(this.loco.yawGoal - before));
+  }
+
+  /**
+   * A cast turns the body to its target (x, z): quicker than a walk's turn (≤ 600°/s, eased in and out), the feet
+   * re-planting in quicker steps, the torso and head leading. Pre-turned while the word is typed; on an instant cast
+   * the hand already points while the body comes round.
+   */
+  castFace(x: number, z: number): void {
+    const dx = x - this.loco.showX;
+    const dz = z - this.loco.showZ;
+    if (dx * dx + dz * dz < 0.25) return;
+    const err = Math.abs(wrapPi(Math.atan2(dx, dz) - this.loco.yaw));
+    if (err < 4 * DEG) return;
+    this.face(dx, dz);
+    this.loco.turnBoost = CAST_TURN_BOOST;
   }
 
   /** One key of a typed word for `move` on its strike clip: the wind-up follows the progress (§5.6), the acting coils. */
@@ -457,6 +491,8 @@ export class Animator {
     }
     this.chargeGoal = Math.max(0, st.release - RELEASE_LEAD) * p;
     this.acting.charge(move, p, keysLeft, tx, tz);
+    // Pre-turn to the target while the word is typed (the guard holds its ground).
+    if (moveDef(move).faceTarget) this.castFace(tx, tz);
     this.layers.breathWeight = 0.5;
   }
 
@@ -481,13 +517,14 @@ export class Animator {
     // A light recoil under the acting's lean (the body drives into the strike; the spine still kicks back a little).
     this.layers.kick(110, -1, 0);
     this.layers.breathWeight = 0.3;
+    const def = moveDef(move);
     if (hasTarget) {
-      // The head looks at the target (K5 looks up at the sky it calls first).
-      const def = MOVES[move];
-      if (move === "k5") this.lookAt(this.loco.showX + this.loco.fx * 3, 6, this.loco.showZ + this.loco.fz * 3, 1);
-      else this.lookAt(tx, def.targetY > 0 ? 1.0 : 0.4, tz, 1);
+      // The body comes round to the target (an instant cast: the hand points first); the head looks at it (the sky
+      // gestures look up through their own head pitch).
+      if (def.faceTarget) this.castFace(tx, tz);
+      this.lookAt(tx, def.targetY > 0 ? 1.0 : 0.4, tz, 1);
     }
-    this.lookHold = move === "k5" ? 0.45 : 0.5;
+    this.lookHold = def.gesture === "overheadRaise" || def.gesture === "skyLift" ? 0.45 : 0.5;
   }
 
   /** The strike the lab released last, its age (s): a host's own play() right after a release is the same strike. */
@@ -542,6 +579,13 @@ export class Animator {
 
   stopMove(): void {
     this.loco.stop();
+  }
+
+  /** A wind-up left without its release (a primed attack that never fired): back to Idle on the recovery springs. */
+  cancelCharge(): void {
+    if (this.state !== "charge") return;
+    this.acting.cancel();
+    this.toIdle(HALFLIFE.toIdle);
   }
 
   /** The skill code moves the caster (kiem.ts's dash). */
@@ -602,11 +646,26 @@ export class Animator {
     this.layers.applyHit();
     this.root.updateMatrixWorld(true);
     this.feet?.capture();
-    this.layers.turnHint = this.loco.yawGoal - this.loco.yaw;
+    this.layers.turnHint = wrapPi(this.loco.yawGoal - this.loco.yaw);
     this.layers.applyWorld(fx, fz, act);
     act.applyArms(fx, fz);
     act.limitArms();
+    if (this.settleIn >= 0) {
+      this.settleIn -= dt;
+      // The settle step after a stop: the feet that stand off their place under the body step to it.
+      if (this.settleIn < 0 && this.state === "loco" && this.gaitShown < 0) this.feet?.requestSteps(SETTLE_STEP_S, 0.05, -1);
+    }
     if (this.feet) {
+      // The gesture's stance: offsets per foot, anchored where the logical body stands unless a blow moves the body.
+      const st = act.stance;
+      const an = act.anchor;
+      this.feet.setStance(st.lf, st.lr, st.lyaw * DEG, st.rf, st.rr, st.ryaw * DEG, -act.offX * an, -act.offZ * an);
+      if (act.stanceSeq !== this.stanceSeq) {
+        this.stanceSeq = act.stanceSeq;
+        this.feet.requestSteps(st.stepS, st.liftM, act.stanceFirst);
+      }
+      // A cast turn re-plants in quicker steps.
+      this.feet.turnStepS = this.loco.turnBoost > 1 ? CAST_STEP_S : 0.3;
       // Moving off slowly, a re-plant step under way lands first (cancelling it would drop the foot).
       const moving = this.gaitShown >= 0 || this.loco.speed > 0.05;
       // In the air (lifted with both clip feet clear of the ground, or the dash path still fast, also when a skill took
@@ -622,7 +681,8 @@ export class Animator {
       // A standing turn stays within 70° of the foot that lags most; the feet step to catch up (plan step 2.8: re-plant at
       // 45–60°). Moving off, the limit opens over ~0.3 s instead of at once (no whip of the rest of the turn).
       this.loco.feetYaw = this.feet.laggingYaw(this.loco.yawGoal);
-      this.turnLead = mode === "stand" ? TURN_LEAD : Math.min(Math.PI, this.turnLead + 3 * Math.PI * dt);
+      const lead = this.loco.turnBoost > 1 ? CAST_TURN_LEAD : TURN_LEAD;
+      this.turnLead = mode === "stand" ? lead : Math.min(Math.PI, this.turnLead + 3 * Math.PI * dt);
       this.loco.yawLead = this.turnLead >= Math.PI ? 0 : this.turnLead;
     }
     if (this.springsReset) {
@@ -630,8 +690,14 @@ export class Animator {
       this.springsReset = false;
     }
     // The tail streams behind the dash's glide, and eases back after the landing.
-    const boost = this.state === "dash" && this.landed < 0 ? 2.5 : 1;
+    const boost = this.state === "dash" && this.landed < 0 ? 1.5 : 1;
     this.springs.trailBoost += (boost - this.springs.trailBoost) * (1 - Math.exp(-dt / 0.06));
+    // The acting's whips (a release, a landing, a blow, a stop): the tail tips swing against the facing and up.
+    if (act.tailKick > 0 && this.tailChain >= 0) {
+      const k = act.tailKick;
+      this.springs.kick(this.tailChain, -fx * k, 0.35 * k, -fz * k);
+      act.tailKick = 0;
+    } else act.tailKick = 0;
     this.springs.update(dt);
     this.first = false;
   }
@@ -754,10 +820,13 @@ export class Animator {
     if (!active) {
       this.layers.leanForwardGoal = 0;
       this.layers.leanSideGoal = 0;
+      // A side gait's turn bias ends with the walk (it stayed on and turned the next standing turn off its goal).
+      loco.yawBias = 0;
       if (this.gaitShown >= 0) {
         // Arriving: the body sways on past the stop and settles (a balance step's weight; the feet re-plant).
         this.acting.stopSway(this.gaitSpeed);
         this.gaitSpeed = 0;
+        this.settleIn = SETTLE_AFTER_S;
         this.toIdle(HALFLIFE.moveToIdle);
         return;
       }

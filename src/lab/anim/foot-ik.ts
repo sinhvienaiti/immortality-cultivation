@@ -38,7 +38,17 @@
  * since it planted (the clip's own foot motion passes through; a heading
  * read off the foot itself flips when the toes point down). The bend axis comes from the clip's knee, blended to
  * the facing as the leg straightens, so the knee never flips. Targets are the
- * clip feet recorded before the procedural layers. No allocation per frame.
+ * clip feet recorded before the procedural layers.
+ *
+ * Stances (motion round 3, gestures.ts): standing, each foot's goal is the clip
+ * foot plus a stance offset in the facing frame (forward, right, heading: a
+ * bow stance's front foot out, its back foot turned out; a guard's wide base),
+ * plus an anchor that takes the acting's lunge back out, so the back foot of a
+ * lunge stays where it stood. A requested step (a stance change, a blow's step
+ * back, the settle step after a stop) goes at once with its own length and
+ * lift instead of waiting for the drift; one foot is always planted (the second
+ * starts once the first is past STEP_FORCE_OVERLAP of its step). No allocation
+ * per frame.
  */
 import * as THREE from "three";
 import { clamp, criticalSpring, smoothstep, springY, wrapPi } from "./math";
@@ -81,6 +91,11 @@ interface Leg {
   toX: number;
   toZ: number;
   toYaw: number;
+  /** This step's length (s) and peak lift (m): a re-plant step, or a gesture's stance step (faster, lower). */
+  stepDur: number;
+  stepLift: number;
+  /** A step asked for (a stance, a blow, a settle): seconds it stays pending (0: none). */
+  force: number;
   /** Step lift (m) and its fade velocity after a cancelled step. */
   lift: number;
   liftV: number;
@@ -113,6 +128,12 @@ const STEP_DRIFT = 0.1;
  * planted (motion round 2: at 0.6 both feet were in the air for ~8 frames of each step of a 180° turn).
  */
 const STEP_OVERLAP = 0.88;
+/** A requested step: the second foot may start once the first is this far through (both quick, one still planted). */
+const STEP_FORCE_OVERLAP = 0.6;
+/** A requested step goes only for a foot this far (m) or turned this far (rad) off its goal; it waits this long (s). */
+const FORCE_MIN_M = 0.025;
+const FORCE_MIN_YAW = (8 * Math.PI) / 180;
+const FORCE_WAIT_S = 0.6;
 /** Standing this long before a drift step (the inertialization settles first). */
 const STAND_DELAY_S = 0.12;
 /** Moving: a lock further than this from the clip foot lets go (a run's stance speed is not constant, so the offset swells mid-stance). */
@@ -185,6 +206,14 @@ export class FootLock {
   readonly lockedNow = [false, false];
   private standT = 0;
   private lastMode: FootMode = "stand";
+  /** Stance per leg: forward, right (m), heading (rad) in the facing frame; the anchor (world m). */
+  private readonly stanceN = new Float64Array(6);
+  private anchorX = 0;
+  private anchorZ = 0;
+  /** Which leg a requested step moves first (−1: the one further off). */
+  private forceFirst = -1;
+  /** Re-plant steps' length (s): the Animator shortens them while a cast turns the body fast. */
+  turnStepS = STEP_S;
   /** Pelvis drop (m) and its spring velocity. */
   private readonly dropS = new Float64Array(2);
   /** Per leg: how far the clip foot is under the ground (m), eased (spring x, v), so the push-up has no kink. */
@@ -225,6 +254,9 @@ export class FootLock {
         velZ: 0,
         velYaw: 0,
         stepT: -1,
+        stepDur: STEP_S,
+        stepLift: STEP_LIFT,
+        force: 0,
         stepX: 0,
         stepZ: 0,
         stepYaw: 0,
@@ -258,7 +290,10 @@ export class FootLock {
       L.contact = L.locked = L.slipped = false;
       L.offX = L.offZ = L.offYaw = L.velX = L.velZ = L.velYaw = L.lift = L.liftV = 0;
       L.stepT = -1;
+      L.force = 0;
     }
+    this.stanceN.fill(0);
+    this.anchorX = this.anchorZ = 0;
     this.stepping[0] = this.stepping[1] = false;
     this.lockedNow[0] = this.lockedNow[1] = false;
     this.standT = 0;
@@ -283,6 +318,36 @@ export class FootLock {
     let c = Infinity;
     for (const L of this.legs) c = Math.min(c, L.a0.y - L.standA, L.b0.y - L.standB);
     return c;
+  }
+
+  /**
+   * The stance the feet stand in (standing only): per foot an offset from its clip foot in the facing frame (forward,
+   * right; m) and a heading (rad, + turns the toes left), and a world anchor added to every goal (the acting's lunge
+   * taken back). Set each frame; a change alone does not step (see `requestSteps`).
+   */
+  setStance(lf: number, lr: number, lyaw: number, rf: number, rr: number, ryaw: number, anchorX: number, anchorZ: number): void {
+    const s = this.stanceN;
+    s[0] = lf;
+    s[1] = lr;
+    s[2] = lyaw;
+    s[3] = rf;
+    s[4] = rr;
+    s[5] = ryaw;
+    this.anchorX = anchorX;
+    this.anchorZ = anchorZ;
+  }
+
+  /**
+   * Steps the feet that stand off their goal now, `durS` long and `liftM` high; `first`: 0 left, 1 right, −1 the further
+   * off, −2 both at once (a hop back from a blow: the body is thrown faster than one foot at a time can follow).
+   */
+  requestSteps(durS: number, liftM: number, first: number): void {
+    for (const L of this.legs) {
+      L.force = FORCE_WAIT_S;
+      L.stepDur = durS;
+      L.stepLift = liftM;
+    }
+    this.forceFirst = first;
   }
 
   /**
@@ -329,11 +394,21 @@ export class FootLock {
       // again (it may lock and step again; locking an unreachable spot would only let go next frame).
       if (!L.contact || L.offX * L.offX + L.offZ * L.offZ < 0.01 * 0.01 || (mode === "stand" && !this.overreach(L, L.a0.x + L.offX, L.a0.y, L.a0.z + L.offZ, RELOCK))) L.slipped = false;
       const clipYaw = yaw;
-      // Where this foot stands once the turn is done: the clip foot turned about the root by `ahead`.
+      // Where this foot stands once the turn is done: the clip foot turned about the root by `ahead`, plus its stance
+      // (facing frame, turned with it) and the anchor. Moving, the gait owns the feet: no stance.
+      const stand = mode === "stand";
+      const sf = stand ? this.stanceN[i * 3]! : 0;
+      const sr = stand ? this.stanceN[i * 3 + 1]! : 0;
+      const syaw = stand ? this.stanceN[i * 3 + 2]! : 0;
+      const gfx = Math.sin(yaw + ahead);
+      const gfz = Math.cos(yaw + ahead);
+      const stX = sf * gfx - sr * gfz + (stand ? this.anchorX : 0);
+      const stZ = sf * gfz + sr * gfx + (stand ? this.anchorZ : 0);
       const px = L.a0.x - rootX;
       const pz = L.a0.z - rootZ;
-      const goalX = rootX + px * ca + pz * sa;
-      const goalZ = rootZ - px * sa + pz * ca;
+      const goalX = rootX + px * ca + pz * sa + stX;
+      const goalZ = rootZ - px * sa + pz * ca + stZ;
+      if (L.force > 0) L.force = stand ? L.force - dt : 0;
       if (L.stepT >= 0 && mode !== "stand") {
         // Moving off or gliding: the step stops where it is and fades in the air with the lift.
         L.stepT = -1;
@@ -342,14 +417,14 @@ export class FootLock {
       }
       if (L.stepT >= 0) {
         L.stepT += dt;
-        const u = Math.min(1, L.stepT / STEP_S);
+        const u = Math.min(1, L.stepT / L.stepDur);
         // A turn asked for during the step (a new facing): the landing spot follows it while the foot is still up,
         // so it does not land where the old turn wanted and slip at once out of reach (motion round 2).
         if (u < 0.75) {
           const k = 1 - Math.exp(-dt / 0.05);
           L.toX += (goalX - L.toX) * k;
           L.toZ += (goalZ - L.toZ) * k;
-          L.toYaw += wrapPi(clipYaw + ahead - L.toYaw) * k;
+          L.toYaw += wrapPi(clipYaw + ahead + syaw - L.toYaw) * k;
         }
         // Up first, across while up, down last; the heading turns over the whole step (a pivot at either end).
         // The landing spot is fixed when the step starts, so the body turning on does not drag it.
@@ -359,7 +434,7 @@ export class FootLock {
         const oz = L.stepZ + (L.toZ - L.stepZ) * s - L.a0.z;
         const oyaw = L.stepYaw * (1 - sy) + wrapPi(L.toYaw - clipYaw) * sy;
         this.track(L, ox, oz, oyaw, inv);
-        L.lift = STEP_LIFT * smoothstep(0, STEP_RISE, u) * (1 - smoothstep(1 - STEP_RISE, 1, u));
+        L.lift = L.stepLift * smoothstep(0, STEP_RISE, u) * (1 - smoothstep(1 - STEP_RISE, 1, u));
         L.liftV = 0;
         if (u >= 1) {
           L.stepT = -1;
@@ -392,22 +467,38 @@ export class FootLock {
           tz += -dx * sn + dz * c;
         }
         this.track(L, tx - L.a0.x, tz - L.a0.z, oyaw, inv);
-        const d2 = L.offX * L.offX + L.offZ * L.offZ;
+        // Off the stance goal (the clip foot plus the stance and anchor): drift and twist are measured from there.
+        const dsx = L.offX - stX;
+        const dsz = L.offZ - stZ;
+        const d2 = dsx * dsx + dsz * dsz;
+        const twist = Math.abs(wrapPi(L.offYaw - syaw));
         if (mode === "stand") {
           const other = legs[1 - i];
           // One foot always bears the weight: no step while the other foot is up (stepping early, or still in the air
           // after a dash's braking step), unless this foot cannot be held at all.
           const otherUp = other !== undefined && !other.locked && other.stepT < 0 && !this.overreach(L, L.a0.x + L.offX, L.a0.y, L.a0.z + L.offZ, OVERREACH);
-          const busy = (other !== undefined && other.stepT >= 0 && other.stepT < STEP_S * STEP_OVERLAP) || otherUp;
+          const overlap = L.force > 0 ? STEP_FORCE_OVERLAP : STEP_OVERLAP;
+          const hop = L.force > 0 && this.forceFirst === -2;
+          const busy = !hop && ((other !== undefined && other.stepT >= 0 && other.stepT < other.stepDur * overlap) || otherUp);
           const gx = goalX - (L.a0.x + L.offX);
           const gz = goalZ - (L.a0.z + L.offZ);
           const turning = Math.abs(ahead) > STEP_YAW && gx * gx + gz * gz > 0.05 * 0.05;
           const drift = this.standT > STAND_DELAY_S && (d2 > STEP_DRIFT * STEP_DRIFT || !this.reachable(L, L.a0.x + L.offX, L.a0.y, L.a0.z + L.offZ));
-          const want = turning || drift || Math.abs(L.offYaw) > STEP_YAW;
-          // The foot that is further off goes first.
-          const mine = Math.abs(L.offYaw) + Math.sqrt(d2) * 3;
-          const theirs = other !== undefined && other.locked ? Math.abs(other.offYaw) + Math.hypot(other.offX, other.offZ) * 3 : 0;
-          if (want && !busy && (i === 1 || mine + 0.05 >= theirs)) {
+          // A requested step: this foot is off its goal (or turned off it).
+          const forced = L.force > 0 && (gx * gx + gz * gz > FORCE_MIN_M * FORCE_MIN_M || Math.abs(wrapPi(clipYaw + ahead + syaw - L.lockYaw)) > FORCE_MIN_YAW);
+          const want = turning || drift || twist > STEP_YAW || forced;
+          // The foot asked to go first, else the one further off.
+          const mine = twist + Math.sqrt(d2) * 3;
+          const theirs = other !== undefined && other.locked ? Math.abs(wrapPi(other.offYaw - this.stanceN[(1 - i) * 3 + 2]!)) + Math.hypot(other.offX, other.offZ) * 3 : 0;
+          const otherForced = other !== undefined && other.force > 0 && other.locked;
+          const order = hop || (forced && otherForced && this.forceFirst >= 0 ? this.forceFirst === i : i === 1 || mine + 0.05 >= theirs);
+          if (want && !busy && order) {
+            if (!forced) {
+              // A re-plant step (drift, twist, a turn): its own length; quicker while a cast turns the body fast.
+              L.stepDur = this.turnStepS;
+              L.stepLift = STEP_LIFT;
+            }
+            L.force = 0;
             L.locked = false;
             L.stepT = 0;
             L.stepX = L.a0.x + L.offX;
@@ -415,8 +506,8 @@ export class FootLock {
             L.stepYaw = L.offYaw;
             L.toX = goalX;
             L.toZ = goalZ;
-            L.toYaw = clipYaw + ahead;
-          }
+            L.toYaw = clipYaw + ahead + syaw;
+          } else if (L.force > 0 && !forced) L.force = 0;
           // Out of reach and no step now (the other foot is in the air): let go rather than hold a straight leg.
           if (L.stepT < 0 && this.overreach(L, tx, L.a0.y, tz, OVERREACH)) this.slip(L);
         } else if (d2 > MAX_SLIP_M * MAX_SLIP_M || this.overreach(L, tx, L.a0.y, tz, OVERREACH)) {

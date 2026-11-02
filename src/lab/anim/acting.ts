@@ -1,25 +1,32 @@
 /**
- * Body acting for the lab caster (motion round 2; MOTION_PLAN step 2,
+ * Body acting for the lab caster (motion rounds 2–3; MOTION_PLAN step 2,
  * CHARACTER_ANIMATION §5.6; style canon D56: anime and mythic, bold poses that
- * read when the caster is 30–70 px tall at the play camera).
+ * read when the caster is 30–70 px tall at the play camera; canon D58 (8):
+ * the arms, legs and body detailed and matched to each skill).
  *
  * The lab has only eight clips of its own (Idle, Run, Attack, Skill1, Skill2,
- * Ult, Dash, Hit) plus the Mesh2Motion walk and strafes, so each skill's
- * acting is a procedural layer on top of a clip section:
- * - anticipation while the word is typed (the centre of mass drops 4–6 cm,
- *   the sword arm and hand draw back, the torso counter-twists 10–15°), built
- *   with the progress and completed over ~8 frames after the next-to-last key;
- * - a decisive release on the last key (the arm extends to the target, the
- *   torso turns into the cast, the head looks at it): ~85 % of the way in 6
- *   frames, all of it in ~8;
- * - a hold of 18 frames (longer where the skill's own strikes still land: K1
- *   blades, K5 waves, with a pulse on each beat), then an overshoot and settle
- *   over ~0.3 s (underdamped springs), then a 0.5 s recovery (arms lower, the
- *   body settles) while the base clip cross-fades to Idle over ~0.22 s.
- * Also the dash (compression, a 26° forward lean with the arms trailing, a
- * braking pose on landing), the hit stagger (an additive directional
- * stagger: torso 18°, head 25°, 0.3 s), the stop sway and the arm tuck of
- * the run.
+ * Ult, Dash, Hit) plus the Mesh2Motion walk and strafes, so each skill acts a
+ * casting gesture (gestures.ts: the vocabulary, and which slot plays which)
+ * as a procedural layer on top of a clip section:
+ * - anticipation while the word is typed (the centre of mass drops, the
+ *   striking arm draws back, the torso counter-twists, the weight goes onto
+ *   the back foot), built with the progress and completed over ~8 frames after
+ *   the next-to-last key; an automatic attack can be primed the same way;
+ * - a decisive release on the last key (the arm to the target, the torso into
+ *   the cast, the weight onto the front foot, the stance step): ~85 % of the
+ *   way in 6 frames, all of it in ~8;
+ * - a hold (longer where the skill's own strikes still land, with a pulse on
+ *   each beat), a sustain pose where the gesture has one, an overshoot and
+ *   settle over ~0.3 s (underdamped springs), then a 0.5 s recovery while the
+ *   base clip cross-fades to Idle and the feet step back to their stance.
+ * Hands: the wrist follows the gesture's hand direction (Lam has no finger
+ * bones; a rig with fingers forms `fingers` too). Feet: a gesture's stance is
+ * handed to the foot lock (foot-ik.ts) as offsets per foot plus a step
+ * request; the Animator passes it on each frame.
+ * Also the dash (compression, a low glide leaning far forward with the arms
+ * trailing, a deep landing compression), the hit stagger (round 3: rises in 2
+ * frames, holds 3–4 frames, recovers with a small overshoot; a 0.38 m step back
+ * with the feet stepping), the stop sway and the arm tuck of the run.
  *
  * Every output is a spring (critically damped, or underdamped where the
  * overshoot is the point), so a skill typed over another, a walk or a hit in
@@ -27,134 +34,105 @@
  * left to the goal is the spring), so an arm swung from behind to the front
  * keeps an even angular speed instead of whipping through a short vector.
  * Arms are aimed in world space after the torso layers
- * (shoulder → elbow, elbow → wrist rotated towards a direction in the
- * character frame, by a weight), so the rig's local axes never matter. No
+ * (shoulder → elbow, elbow → wrist, wrist → palm rotated towards a direction in
+ * the character frame, by a weight), so the rig's local axes never matter. No
  * allocation per frame.
  */
 import * as THREE from "three";
+import { GESTURES, GESTURE_GAIN, slotGesture, type ArmPose, type GestureId, type Pose, type SlotGesture, type Stance } from "./gestures";
 import { clamp, criticalSpring, DEG, smoothstep, underdampedSpring } from "./math";
 import { Rig, rotateBoneWorld, worldQuat } from "./rig";
 
-export type MoveId = "auto" | "k1" | "k2" | "guard" | "k4" | "k5";
+/** A skill slot (auto, k1, …, k7): its gesture comes from SLOT_GESTURES. */
+export type MoveId = string;
 
-/** A direction in the character frame: forward, right, up (normalised at use). */
-type V3 = readonly [number, number, number];
-
-interface ArmPose {
-  /** Shoulder → elbow and elbow → wrist directions. */
-  readonly up: V3;
-  readonly fore: V3;
-  /** Weight of the aim over the clip arm (0–1). */
-  readonly w: number;
-  /** Share of the target direction mixed into both (0–1), and its lift (character frame up, m per m). */
-  readonly aim?: number;
-  readonly lift?: number;
-}
-
-interface Pose {
-  /** Pelvis drop (m), torso twist (deg, + turns left: the right shoulder forward), lean (deg, + forward), side lean (deg, + right side down). */
-  readonly crouch: number;
-  readonly twist: number;
-  readonly lean: number;
-  readonly side: number;
-  readonly r: ArmPose | null;
-  readonly l: ArmPose | null;
-}
-
-interface MoveDef {
+/** A slot's gesture resolved for play: poses with the gain applied, the slot's rhythm. */
+export interface MoveDef {
+  readonly gesture: GestureId;
   readonly antic: Pose;
   readonly release: Pose;
-  /** After the hold: a pose kept for `sustainS` (K5 directing the rain, the guard stance). */
-  readonly sustain?: Pose;
-  readonly sustainS?: number;
+  readonly sustain: Pose | null;
+  readonly sustainS: number;
   readonly settle: Pose;
-  /** Hold of the release pose after the snap (s). */
   readonly holdS: number;
-  /** Pulses after the release (s): the skill's own later strikes. */
-  readonly beats?: readonly number[];
-  /** The release pose is held on purpose with both arms up (the arms-out check skips it). */
-  readonly intended?: boolean;
-  /** Lunge towards the target at the release (m). */
-  readonly stepM?: number;
-  /** Target height for the aim (m): beasts' chests, or the ground of a zone. */
+  readonly beats: readonly number[] | null;
+  readonly intended: boolean;
+  /** Lunge towards the target at the release (m, gain applied). */
+  readonly stepM: number;
   readonly targetY: number;
+  readonly anticStance: Stance | null;
+  readonly releaseStance: Stance | null;
+  readonly tailWhip: number;
+  readonly faceTarget: boolean;
+}
+
+/** Deepest pelvis drop a gesture may ask for after the gain (m; Lam's legs are 0.37 m). */
+const CROUCH_MAX = 0.11;
+
+function gainPose(p: Pose, k: number): Pose {
+  return {
+    crouch: Math.min(CROUCH_MAX, p.crouch * k),
+    twist: p.twist * k,
+    lean: p.lean * k,
+    side: p.side * k,
+    shiftF: (p.shiftF ?? 0) * k,
+    shiftR: (p.shiftR ?? 0) * k,
+    head: (p.head ?? 0) * k,
+    r: p.r,
+    l: p.l,
+  };
+}
+
+function shareStance(s: Stance | undefined, k: number): Stance | null {
+  if (!s || k <= 0) return null;
+  return { ...s, lf: s.lf * k, lr: s.lr * k, lyaw: s.lyaw * k, rf: s.rf * k, rr: s.rr * k, ryaw: s.ryaw * k };
+}
+
+const defCache = new Map<string, { use: SlotGesture; def: MoveDef }>();
+
+/** The slot's gesture as played (cached until the slot is remapped). */
+export function moveDef(slot: MoveId): MoveDef {
+  const use = slotGesture(slot);
+  const hit = defCache.get(slot);
+  if (hit && hit.use === use) return hit.def;
+  const g = GESTURES[use.gesture];
+  const k = GESTURE_GAIN;
+  const share = use.stance ?? 1;
+  const release = gainPose(g.release, k);
+  const def: MoveDef = {
+    gesture: g.id,
+    antic: gainPose(g.antic, k),
+    release: use.offHand ? { ...release, l: use.offHand } : release,
+    sustain: g.sustain && (use.sustainS ?? 0) > 0 ? gainPose(g.sustain, k) : null,
+    sustainS: g.sustain ? (use.sustainS ?? 0) : 0,
+    settle: gainPose(g.settle, k),
+    holdS: use.holdS,
+    beats: use.beats ?? null,
+    intended: use.intended ?? false,
+    stepM: (g.stepM ?? 0) * k * share,
+    targetY: use.targetY,
+    anticStance: shareStance(g.anticStance, share),
+    releaseStance: shareStance(g.releaseStance, share),
+    tailWhip: g.tailWhip,
+    faceTarget: g.faceTarget,
+  };
+  defCache.set(slot, { use, def });
+  return def;
 }
 
 const ZERO: Pose = { crouch: 0, twist: 0, lean: 0, side: 0, r: null, l: null };
-
-// Arm shapes (character frame f, r, u). Right is the sword arm. The play camera sits behind and above the caster
-// (55°), where the hood hides an arm straight ahead: releases keep the arm a little out to the side and up, so the
-// gesture shows beside the head at 30–70 px while still pointing at the target.
-const R_COCK: ArmPose = { up: [-0.55, 0.6, -0.2], fore: [0.55, -0.25, 0.8], w: 0.9 };
-const L_SEAL: ArmPose = { up: [0.35, -0.45, -0.8], fore: [0.55, 0.75, 0.3], w: 0.75 };
-const L_BACK: ArmPose = { up: [-0.45, -0.6, -0.65], fore: [-0.5, -0.45, -0.75], w: 0.65 };
-const R_POINT: ArmPose = { up: [0.7, 0.62, 0.2], fore: [0.75, 0.5, 0.35], w: 1, aim: 0.6, lift: 0.25 };
-const R_LOWER: ArmPose = { up: [0.55, 0.35, -0.75], fore: [0.8, 0.1, -0.35], w: 0.55, aim: 0.3, lift: 0 };
-
-/** The six skills (the dash and the hit are their own paths). Amplitudes are sized for the play camera. */
-export const MOVES: Record<MoveId, MoveDef> = {
-  // Phi Kiếm: a flick of the sword fingers; no typed word, so the anticipation is the clip's own 50 ms.
-  auto: {
-    antic: { crouch: 0.03, twist: -10, lean: -2, side: 0, r: R_COCK, l: L_SEAL },
-    release: { crouch: 0.025, twist: 13, lean: 8, side: 0, r: R_POINT, l: L_BACK },
-    settle: { crouch: 0.01, twist: 4, lean: 3, side: 0, r: R_LOWER, l: { up: [-0.2, -0.5, -0.85], fore: [0.1, -0.2, -1], w: 0.3 } },
-    holdS: 0.27,
-    targetY: 1.0,
-  },
-  // Ngự Kiếm Quyết: sword fingers raised by the ear, then pointed; each of the three blades leaves on a pulse.
-  k1: {
-    antic: { crouch: 0.05, twist: -12, lean: -4, side: 0, r: { up: [-0.25, 0.8, 0.2], fore: [0.15, -0.25, 0.95], w: 0.95 }, l: L_SEAL },
-    release: { crouch: 0.03, twist: 13, lean: 8, side: 0, r: R_POINT, l: L_SEAL },
-    settle: { crouch: 0.012, twist: 4, lean: 3, side: 0, r: R_LOWER, l: { up: [0.2, -0.5, -0.85], fore: [0.4, 0.4, -0.5], w: 0.35 } },
-    holdS: 0.3,
-    // Blades 2 and 3 (kiem.ts T_K1_HITS 36, 66 ticks: launched 0.1 s before).
-    beats: [0.5, 1.0],
-    targetY: 1.0,
-  },
-  // Nhất Tuyến Xuyên Vân: a deep coil to the right hip, then a lunge: the arm drives straight through the line.
-  k2: {
-    antic: { crouch: 0.06, twist: -16, lean: 5, side: 0, r: { up: [-0.75, 0.4, -0.45], fore: [0.45, -0.2, -0.35], w: 0.95 }, l: { up: [0.6, -0.3, -0.35], fore: [0.85, 0.25, 0.05], w: 0.8, aim: 0.5, lift: 0 } },
-    release: { crouch: 0.045, twist: 17, lean: 16, side: 0, r: { up: [0.8, 0.5, 0.1], fore: [0.85, 0.4, 0.12], w: 1, aim: 0.75, lift: 0.12 }, l: { up: [-0.55, -0.65, -0.4], fore: [-0.65, -0.55, -0.35], w: 0.95 } },
-    settle: { crouch: 0.02, twist: 5, lean: 6, side: 0, r: R_LOWER, l: { up: [-0.35, -0.5, -0.8], fore: [-0.3, -0.3, -0.9], w: 0.45 } },
-    holdS: 0.32,
-    stepM: 0.18,
-    targetY: 1.0,
-  },
-  // Hồi Kiếm Hộ Thân: a defensive stance; the sword arm comes across the body, the off hand raised in a seal.
-  guard: {
-    antic: { crouch: 0.05, twist: -12, lean: 2, side: 0, r: R_COCK, l: { up: [0.2, -0.5, -0.85], fore: [0.6, 0.45, -0.2], w: 0.6 } },
-    release: { crouch: 0.06, twist: 8, lean: -5, side: 0, r: { up: [0.3, 0.9, -0.05], fore: [0.35, -0.9, 0.2], w: 1 }, l: { up: [0.3, -0.6, -0.4], fore: [0.25, -0.05, 0.97], w: 0.95 } },
-    sustain: { crouch: 0.05, twist: 5, lean: -3, side: 0, r: { up: [0.3, 0.85, -0.25], fore: [0.4, -0.88, 0.15], w: 0.9 }, l: { up: [0.3, -0.6, -0.45], fore: [0.3, -0.05, 0.95], w: 0.85 } },
-    sustainS: 0.55,
-    settle: { crouch: 0.025, twist: 2, lean: -1, side: 0, r: { up: [0.3, 0.6, -0.7], fore: [0.5, -0.6, -0.1], w: 0.5 }, l: { up: [0.3, -0.5, -0.8], fore: [0.4, 0.3, 0.3], w: 0.4 } },
-    holdS: 0.3,
-    targetY: 1.0,
-  },
-  // Lạc Kiếm Trận: the sword hand raised high behind, then swept down onto the zone; the array lands on a second beat.
-  k4: {
-    antic: { crouch: 0.05, twist: -12, lean: -7, side: 0, r: { up: [-0.3, 0.35, 0.9], fore: [-0.1, 0.05, 1], w: 1 }, l: { up: [0.3, -0.45, -0.8], fore: [0.55, 0.3, -0.4], w: 0.6 } },
-    release: { crouch: 0.055, twist: 14, lean: 18, side: 0, r: { up: [0.65, 0.6, -0.35], fore: [0.7, 0.45, -0.5], w: 1, aim: 0.5, lift: -0.15 }, l: L_BACK },
-    settle: { crouch: 0.02, twist: 4, lean: 5, side: 0, r: R_LOWER, l: { up: [-0.2, -0.5, -0.85], fore: [0.1, -0.2, -1], w: 0.3 } },
-    holdS: 0.3,
-    // The blades land on the array (kiem.ts T_K4_OPEN, 12 ticks).
-    beats: [0.2],
-    targetY: 0,
-  },
-  // Thiên Hà Kiếm Vũ: gathered low while the long word is typed, both arms thrown to the sky, then the sword hand
-  // brings the rain down on the zone, pulsing with each wave.
-  k5: {
-    antic: { crouch: 0.06, twist: -9, lean: 7, side: 0, r: { up: [-0.75, 0.4, -0.55], fore: [-0.55, 0.2, -0.6], w: 0.65 }, l: { up: [-0.75, -0.4, -0.55], fore: [-0.55, -0.2, -0.6], w: 0.65 } },
-    release: { crouch: -0.01, twist: 0, lean: -10, side: 0, r: { up: [0.15, 0.62, 0.75], fore: [0.1, 0.5, 0.86], w: 1 }, l: { up: [0.15, -0.62, 0.75], fore: [0.1, -0.5, 0.86], w: 1 } },
-    sustain: { crouch: 0.035, twist: 12, lean: 9, side: 0, r: { up: [0.75, 0.6, -0.1], fore: [0.8, 0.45, -0.2], w: 1, aim: 0.55, lift: 0.1 }, l: L_SEAL },
-    sustainS: 1.35,
-    settle: { crouch: 0.015, twist: 4, lean: 3, side: 0, r: R_LOWER, l: { up: [0.2, -0.5, -0.85], fore: [0.4, 0.4, -0.5], w: 0.35 } },
-    holdS: 0.3,
-    // The three waves (kiem.ts T_K5_HITS 30, 75, 120 ticks).
-    beats: [0.5, 1.25, 2.0],
-    intended: true,
-    targetY: 0,
-  },
-};
+/**
+ * The arms as Idle holds them (character frame), read while nothing acts: the recovery first brings the aimed arms
+ * there at full weight, so the base clip's switch to Idle under them does not show, then lets the aim go (round 3:
+ * the clip swung the upper arm 95° in ~6 frames as the aim faded over it).
+ */
+const REST_R = { up: [0, 0.35, -0.94], fore: [0.2, 0.2, -0.96], w: 1 };
+const REST_L = { up: [0, -0.35, -0.94], fore: [0.2, -0.2, -0.96], w: 1 };
+const REST: Pose = { crouch: 0, twist: 0, lean: 0, side: 0, r: REST_R as unknown as ArmPose, l: REST_L as unknown as ArmPose };
+/** Share of the recovery spent at the rest pose before the aim lets go. */
+const REST_SHARE = 0.5;
+/** A stance with both feet under the body (the clip's own feet). */
+const NEUTRAL: Stance = { lf: 0, lr: 0, lyaw: 0, rf: 0, rr: 0, ryaw: 0, stepS: 0.22, liftM: 0.055 };
 
 /** Release snap (s): the arms reach the extreme in ~6 frames. Settle and recovery lengths (s). */
 const SNAP_S = 0.1;
@@ -162,30 +140,47 @@ const SETTLE_S = 0.3;
 const RECOVER_S = 0.5;
 /** Dash: compression frames at the start (s), the landing brake (s). */
 const COMPRESS_S = 0.083;
-const BRAKE_S = 0.26;
-/** A blow's step back (view offset): out (s), held (s), back (s); the offset never goes further than OFF_MAX_M. */
-const HIT_OUT_S = 0.17;
-const HIT_HOLD_S = 0.12;
-const HIT_BACK_S = 0.45;
-const OFF_MAX_M = 0.3;
+const BRAKE_S = 0.28;
+/**
+ * A blow (round-2 judges: rise in 2 frames, hold 3–4, step back 0.3–0.5 m with a step): the stagger rises over
+ * HIT_RISE_S, holds HIT_HOLD_S, then recovers on an underdamped spring (a small overshoot); the shown root steps back
+ * over HIT_OUT_S, stays HIT_STAY_S, and comes back over HIT_BACK_S.
+ */
+const HIT_RISE_S = 2 / 60;
+const HIT_HOLD_S = 3.5 / 60;
+const HIT_OUT_S = 0.14;
+const HIT_STAY_S = 0.3;
+const HIT_BACK_S = 0.6;
+const OFF_MAX_M = 0.45;
+/** The stagger at its peak: lean and side lean along the push (deg), head snap (deg), knees buckling (m). */
+const HIT_LEAN = 15;
+const HIT_SIDE = 12;
+const HIT_HEAD = 20;
+const HIT_TWIST = 10;
+const HIT_CROUCH = 0.035;
 
 type Phase = "idle" | "charge" | "strike" | "dash" | "land";
 /** Strike sub-phases, by age since the release. */
 export type StrikeStage = "snap" | "hold" | "sustain" | "settle" | "recover" | "done";
 
-// Channels: 0 crouch, 1 twist, 2 lean, 3 side, then per arm (R at 4, L at 12): up xyz, fore xyz, weight, (spare).
-const N = 20;
+// Channels: 0 crouch, 1 twist, 2 lean, 3 side, 4 shift forward, 5 shift right, 6 head pitch, 7 spare; then per arm
+// (R at 8, L at 19): up xyz, fore xyz, weight, hand xyz, hand weight.
+const N = 30;
 const C_CROUCH = 0;
 const C_TWIST = 1;
 const C_LEAN = 2;
 const C_SIDE = 3;
-const ARM_R = 4;
-const ARM_L = 12;
-
-const DASH_COMPRESS: Pose = { crouch: 0.06, twist: 0, lean: 14, side: 0, r: { up: [-0.45, 0.55, -0.7], fore: [-0.3, 0.3, -0.9], w: 0.55 }, l: { up: [-0.45, -0.55, -0.7], fore: [-0.3, -0.3, -0.9], w: 0.55 } };
-const DASH_GLIDE: Pose = { crouch: 0.015, twist: 0, lean: 26, side: 0, r: { up: [-0.8, 0.38, -0.48], fore: [-0.85, 0.25, -0.45], w: 0.9 }, l: { up: [-0.8, -0.38, -0.48], fore: [-0.85, -0.25, -0.45], w: 0.9 } };
-const DASH_BRAKE: Pose = { crouch: 0.06, twist: 0, lean: -12, side: 0, r: { up: [0.45, 0.7, -0.45], fore: [0.65, 0.35, -0.1], w: 0.65 }, l: { up: [0.45, -0.7, -0.45], fore: [0.65, -0.35, -0.1], w: 0.65 } };
-const DASH_CHARGE: Pose = { crouch: 0.055, twist: 0, lean: 7, side: 0, r: { up: [-0.35, 0.6, -0.7], fore: [-0.1, 0.3, -0.95], w: 0.45 }, l: { up: [-0.35, -0.6, -0.7], fore: [-0.1, -0.3, -0.95], w: 0.45 } };
+const C_SHIFTF = 4;
+const C_SHIFTR = 5;
+const C_HEAD = 6;
+const N_BODY = 7;
+const ARM_R = 8;
+const ARM_L = 19;
+const A_W = 6;
+const A_HAND = 7;
+const A_HW = 10;
+/** Segments: R upper, R fore, L upper, L fore, R hand, L hand. */
+const SEGS = 6;
 
 const _sp = new Float64Array(2);
 const _q = new THREE.Quaternion();
@@ -209,18 +204,18 @@ export class Acting {
   /** Spring state: value, velocity per channel. */
   private readonly s = new Float64Array(N * 2);
   private readonly goal = new Float64Array(N);
-  /** Arm segment directions (character frame, unit): R upper, R fore, L upper, L fore; and the angle springs' speed. */
-  private readonly dir = new Float64Array(12);
-  private readonly dirV = new Float64Array(4);
-  /** Where the clip and layers held each arm segment last frame (character frame, unit), and whether it was read. */
-  private readonly clipDir = new Float64Array(12);
+  /** Segment directions (character frame, unit) and the angle springs' speed. */
+  private readonly dir = new Float64Array(SEGS * 3);
+  private readonly dirV = new Float64Array(SEGS);
+  /** Where the clip and layers held each segment last frame (character frame, unit), and whether it was read. */
+  private readonly clipDir = new Float64Array(SEGS * 3);
   private clipSeen = false;
   /** Each segment's aimed orientation in the character frame (yaw taken out; x, y, z, w), its direction, and whether set. */
-  private readonly aimQ = new Float64Array(16);
-  private readonly aimD = new Float64Array(12);
-  private readonly aimOn = new Uint8Array(4);
+  private readonly aimQ = new Float64Array(SEGS * 4);
+  private readonly aimD = new Float64Array(SEGS * 3);
+  private readonly aimOn = new Uint8Array(SEGS);
   /** Each segment's last clip-to-aim turn (world quaternion), for hemisphere continuity. */
-  private readonly turnPrev = new Float64Array(16);
+  private readonly turnPrev = new Float64Array(SEGS * 4);
   private phase: Phase = "idle";
   private move: MoveId | null = null;
   private def: MoveDef | null = null;
@@ -229,12 +224,14 @@ export class Acting {
   private anticGoal = 0;
   private age = 0;
   private beat = 0;
-  /** Pulse (underdamped), hit stagger (torso, head), stop sway (underdamped). */
+  /** Pulse (underdamped), stop sway (underdamped), dip (landing, underdamped). */
   private readonly pulse = new Float64Array(2);
-  private readonly hitS = new Float64Array(2);
-  private readonly headS = new Float64Array(2);
   private hitF = -1;
   private hitR = 0;
+  /** The blow's age (s, −1 none), its recovery spring and the envelope this frame (0–1). */
+  private hitT = -1;
+  private readonly hitRec = new Float64Array(2);
+  private hitE = 0;
   private readonly sway = new Float64Array(2);
   private readonly dip = new Float64Array(2);
   /** Target (world) and the facing it was aimed from. */
@@ -249,6 +246,8 @@ export class Acting {
   twistDeg = 0;
   leanDeg = 0;
   sideDeg = 0;
+  shiftFM = 0;
+  shiftRM = 0;
   headPitchDeg = 0;
   headRollDeg = 0;
   /**
@@ -267,6 +266,21 @@ export class Acting {
   /** What holds the offset out: the strike that lunged (until its recovery), a blow (`offHoldS` left), or nothing. */
   private offOwner: "none" | "strike" | "hit" = "none";
   private offHoldS = 0;
+  /**
+   * Feet: the stance asked for (offsets per foot, the Animator hands them to the foot lock each frame), a counter that
+   * changes on each new request (the feet step to it now), and whether the feet stay where the logical body stands (a
+   * lunge: the back foot stays planted) or follow the shown root (a blow's step back).
+   */
+  stance: Stance = NEUTRAL;
+  stanceSeq = 0;
+  stanceFirst = -1;
+  private stanceOn = false;
+  private anticStanced = false;
+  get anchor(): number {
+    return this.offOwner === "hit" ? 0 : 1;
+  }
+  /** A tail whip asked for this frame (m/s at the tip, against the facing); the Animator takes it. */
+  tailKick = 0;
 
   private readonly upperR: THREE.Bone | null;
   private readonly lowerR: THREE.Bone | null;
@@ -274,6 +288,9 @@ export class Acting {
   private readonly upperL: THREE.Bone | null;
   private readonly lowerL: THREE.Bone | null;
   private readonly handL: THREE.Bone | null;
+  /** Palm sockets (wrist → palm is the hand's direction). */
+  private readonly palmR: THREE.Object3D | null;
+  private readonly palmL: THREE.Object3D | null;
   private readonly pelvis: THREE.Bone | null;
   private readonly neck: THREE.Bone | null;
 
@@ -284,6 +301,8 @@ export class Acting {
     this.upperL = rig.bone("upperarm_l");
     this.lowerL = rig.bone("lowerarm_l");
     this.handL = rig.bone("hand_l");
+    this.palmR = rig.model.getObjectByName("FX_HAND_R") ?? null;
+    this.palmL = rig.model.getObjectByName("FX_HAND_L") ?? null;
     this.pelvis = rig.bone("pelvis");
     this.neck = rig.bone("neck_01");
     this.reset();
@@ -300,12 +319,13 @@ export class Acting {
     this.aimD.fill(0);
     this.aimOn.fill(0);
     this.turnPrev.fill(0);
-    for (let g = 0; g < 4; g += 1) this.dir[g * 3 + 2] = -1;
+    for (let g = 0; g < SEGS; g += 1) this.dir[g * 3 + 2] = -1;
     this.antic.fill(0);
     this.anticGoal = 0;
     this.pulse.fill(0);
-    this.hitS.fill(0);
-    this.headS.fill(0);
+    this.hitT = -1;
+    this.hitRec.fill(0);
+    this.hitE = 0;
     this.sway.fill(0);
     this.dip.fill(0);
     this.phase = "idle";
@@ -319,8 +339,13 @@ export class Acting {
     this.offT = this.offDur = 1;
     this.offOwner = "none";
     this.offHoldS = 0;
+    this.stance = NEUTRAL;
+    this.stanceOn = false;
+    this.anticStanced = false;
+    this.stanceFirst = -1;
+    this.tailKick = 0;
     this.tuck = 0;
-    this.crouchM = this.twistDeg = this.leanDeg = this.sideDeg = this.headPitchDeg = this.headRollDeg = 0;
+    this.crouchM = this.twistDeg = this.leanDeg = this.sideDeg = this.shiftFM = this.shiftRM = this.headPitchDeg = this.headRollDeg = 0;
   }
 
   /** The strike stage now (the Animator holds or releases the base clip by it). */
@@ -329,7 +354,7 @@ export class Acting {
     const d = this.def;
     const a = this.age;
     const hold = SNAP_S + d.holdS;
-    const sustain = hold + (d.sustain ? (d.sustainS ?? 0) : 0);
+    const sustain = hold + (d.sustain ? d.sustainS : 0);
     const last = d.beats ? d.beats[d.beats.length - 1]! + 0.1 : 0;
     const keep = Math.max(sustain, last);
     if (a < SNAP_S) return "snap";
@@ -338,6 +363,15 @@ export class Acting {
     if (a < keep + SETTLE_S) return "settle";
     if (a < keep + SETTLE_S + RECOVER_S) return "recover";
     return "done";
+  }
+
+  /** Age (s) at which the recovery starts. */
+  private recoverAt(): number {
+    const d = this.def;
+    if (!d) return 0;
+    const sustain = SNAP_S + d.holdS + (d.sustain ? d.sustainS : 0);
+    const last = d.beats ? d.beats[d.beats.length - 1]! + 0.1 : 0;
+    return Math.max(sustain, last) + SETTLE_S;
   }
 
   /** Both arms are up on purpose (K5's salute while held, and the ~0.12 s the arms take to come down from it). */
@@ -363,6 +397,11 @@ export class Acting {
     return this.move;
   }
 
+  /** The blow's stagger right now (0–1), for checks and the chest ring. */
+  get hitEnvelope(): number {
+    return this.hitE;
+  }
+
   private setTarget(x: number, y: number, z: number): void {
     this.tx = x;
     this.ty = y;
@@ -370,15 +409,24 @@ export class Acting {
     this.hasTarget = true;
   }
 
+  /** Asks the feet for a stance (null: back under the body), stepping now. */
+  private requestStance(s: Stance | null, first: "l" | "r" | undefined): void {
+    this.stance = s ?? NEUTRAL;
+    this.stanceOn = s !== null;
+    this.stanceFirst = first === "l" ? 0 : first === "r" ? 1 : -1;
+    this.stanceSeq += 1;
+  }
+
   /** A key of the word for `move` (progress 0…1, `keysLeft` still to type) aimed at (tx, tz). */
   charge(move: MoveId, progress: number, keysLeft: number, tx: number, tz: number): void {
-    const def = MOVES[move];
+    const def = moveDef(move);
     if (this.phase !== "charge" || this.move !== move) {
       this.phase = "charge";
       this.move = move;
       this.def = def;
       this.age = 0;
       this.antic[1] = 0;
+      this.anticStanced = false;
     }
     this.setTarget(tx, def.targetY, tz);
     // Builds with the word; after the next-to-last key it completes (~8 frames, the anticipation proper).
@@ -401,7 +449,7 @@ export class Acting {
    * (tx, tz): the typed target, or for a cast from code the point ahead, so no stale target is aimed at.
    */
   release(move: MoveId, tx: number, tz: number): void {
-    const def = MOVES[move];
+    const def = moveDef(move);
     this.phase = "strike";
     this.move = move;
     this.def = def;
@@ -409,16 +457,18 @@ export class Acting {
     this.beat = 0;
     this.setTarget(tx, def.targetY, tz);
     this.anticGoal = 0;
-    if (def.stepM) {
+    if (def.stepM > 0) {
       // The lunge towards the target, held while the strike holds; its recovery steps back (view only).
       const dx = tx - this.rootX;
       const dz = tz - this.rootZ;
       const l = Math.hypot(dx, dz);
       if (l > 1e-3) {
-        this.offsetTo((dx / l) * def.stepM, (dz / l) * def.stepM, 0.14);
+        this.offsetTo((dx / l) * def.stepM, (dz / l) * def.stepM, 0.12);
         this.offOwner = "strike";
       }
     }
+    if (def.releaseStance) this.requestStance(def.releaseStance, def.releaseStance.first);
+    this.tailKick += def.tailWhip;
   }
 
   /** The caster's root and facing this frame (for the lunge direction). */
@@ -431,12 +481,17 @@ export class Acting {
     this.def = null;
     this.age = 0;
     this.anticGoal = 0;
+    this.stance = NEUTRAL;
+    this.stanceOn = false;
+    this.tailKick += GESTURES.dashCrouch.tailWhip;
   }
 
-  /** Touch-down after a dash: the braking pose, then the recovery. */
+  /** Touch-down after a dash: the braking pose (a deep compression), then the recovery. */
   dashLand(): void {
     this.phase = "land";
     this.age = 0;
+    this.dip[1] = this.dip[1]! + 1.6;
+    this.tailKick += 0.8;
   }
 
   /** Walking off (or anything that drops the skill): the pose lets go on the recovery springs. */
@@ -446,6 +501,9 @@ export class Acting {
     this.move = null;
     this.def = null;
     this.anticGoal = 0;
+    // Moving, the feet follow the gait: the stance goes without a step request.
+    this.stance = NEUTRAL;
+    this.stanceOn = false;
   }
 
   /** An enemy blow pushing the body along (pushF, pushR) in the character frame (unit). */
@@ -453,10 +511,9 @@ export class Acting {
     const l = Math.hypot(pushF, pushR) || 1;
     this.hitF = pushF / l;
     this.hitR = pushR / l;
-    // Underdamped kicks: the torso peaks ~18° at ~60 ms (3.2 Hz, ζ 0.6), the head ~25° at ~50 ms (4 Hz, ζ 0.5).
-    this.hitS[1] = this.hitS[1]! + 726;
-    this.headS[1] = this.headS[1]! + 1150;
-    this.dip[1] = this.dip[1]! + 0.9;
+    this.hitT = 0;
+    this.hitRec[0] = 1;
+    this.hitRec[1] = 0;
     // The step back, away from the blow (view only): held a moment, then the feet bring the body back.
     const dx = this.rootX - fromX;
     const dz = this.rootZ - fromZ;
@@ -464,13 +521,20 @@ export class Acting {
     if (d > 1e-3) {
       this.offsetTo(this.offX + (dx / d) * stepM, this.offZ + (dz / d) * stepM, HIT_OUT_S);
       this.offOwner = "hit";
-      this.offHoldS = HIT_OUT_S + HIT_HOLD_S;
+      this.offHoldS = HIT_OUT_S + HIT_STAY_S;
+      // Both feet hop back with the body (a blow throws it faster than one foot at a time can follow).
+      this.stance = { ...NEUTRAL, stepS: 0.17, liftM: 0.05 };
+      this.stanceOn = false;
+      this.stanceFirst = -2;
+      this.stanceSeq += 1;
     }
+    this.tailKick += 1.2;
   }
 
   /** Arriving from a walk or run: the body sways on past the stop and settles (a balance step's weight). */
   stopSway(speed: number): void {
     this.sway[1] = this.sway[1]! + 110 + 35 * Math.min(3, speed);
+    this.tailKick += 0.4 + 0.25 * Math.min(3, speed);
   }
 
   /** Eases the view offset from where it is to (x, z) over `dur` s (smoothstep). */
@@ -485,7 +549,7 @@ export class Acting {
     this.offDur = Math.max(1e-3, dur);
   }
 
-  /** Advances the timeline and the springs; `fx, fz` the facing, (x, z) the root. */
+  /** Advances the timeline and the springs; (x, z) the root. */
   update(dt: number, x: number, z: number): void {
     this.rootX = x;
     this.rootZ = z;
@@ -498,6 +562,7 @@ export class Acting {
     let under = false;
     let underHz = 3.2;
     let underZeta = 0.45;
+    const dash = GESTURES.dashCrouch;
     switch (this.phase) {
       case "idle":
         this.setGoal(ZERO, 1, null);
@@ -505,8 +570,14 @@ export class Acting {
         hlArm = 0.11;
         break;
       case "charge":
-        if (this.def) this.setGoal(this.def.antic, a, this.def);
-        else this.setGoal(DASH_CHARGE, a, null);
+        if (this.def) {
+          this.setGoal(this.def.antic, a, this.def);
+          // Past half of the word the feet take the anticipation's stance (the ultimate widens its base).
+          if (this.def.anticStance && !this.anticStanced && a > 0.5) {
+            this.anticStanced = true;
+            this.requestStance(this.def.anticStance, this.def.anticStance.first);
+          }
+        } else this.setGoal(gained(dash.antic), a, null);
         hlScalar = a > 0.95 ? 0.035 : 0.06;
         hlArm = a > 0.95 ? 0.035 : 0.06;
         break;
@@ -515,7 +586,7 @@ export class Acting {
         const st = this.stage;
         if (st === "snap" || st === "hold") {
           this.setGoal(d.release, 1, d);
-          hlArm = 0.04;
+          hlArm = 0.045;
           hlScalar = 0.035;
           // The twist and lean whip through and back (underdamped): the decisive release.
           under = true;
@@ -532,9 +603,13 @@ export class Acting {
           underHz = 3.2;
           underZeta = 0.45;
         } else {
-          this.setGoal(ZERO, 1, null);
+          // Recovery: the arms to where Idle holds them at full weight, then the aim lets go (the clip is Idle by then).
+          const into = this.age - this.recoverAt();
+          this.setGoal(st === "recover" && into < RECOVER_S * REST_SHARE ? REST : ZERO, 1, null);
           hlScalar = 0.12;
-          hlArm = 0.11;
+          hlArm = st === "recover" && into < RECOVER_S * REST_SHARE ? 0.09 : 0.08;
+          // The feet come back under the body with the recovery.
+          if (this.stanceOn) this.requestStance(null, undefined);
           if (st === "done") this.phase = "idle";
         }
         // Beats: the skill's later strikes pulse through the body.
@@ -545,14 +620,15 @@ export class Acting {
         break;
       }
       case "dash":
-        this.setGoal(this.age < COMPRESS_S ? DASH_COMPRESS : DASH_GLIDE, 1, null);
+        this.setGoal(gained(this.age < COMPRESS_S ? dash.release : dash.sustain!), 1, null);
         hlScalar = this.age < COMPRESS_S ? 0.025 : 0.045;
         hlArm = this.age < COMPRESS_S ? 0.03 : 0.05;
         break;
       case "land":
         if (this.age < BRAKE_S) {
-          this.setGoal(DASH_BRAKE, 1, null);
+          this.setGoal(gained(dash.settle), 1, null);
           hlArm = 0.05;
+          hlScalar = 0.03;
           under = true;
           underHz = 3.4;
           underZeta = 0.5;
@@ -564,8 +640,10 @@ export class Acting {
         }
         break;
     }
-    for (let c = 0; c < ARM_R; c += 1) {
-      if (under && c !== C_CROUCH) underdampedSpring(this.s, c * 2, this.goal[c]!, underHz, underZeta, dt);
+    // A charge or strike dropped for a walk keeps no stance (the gait owns the feet).
+    if (this.phase === "idle" && this.stanceOn) this.requestStance(null, undefined);
+    for (let c = 0; c < N_BODY; c += 1) {
+      if (under && c !== C_CROUCH && c !== C_SHIFTF && c !== C_SHIFTR) underdampedSpring(this.s, c * 2, this.goal[c]!, underHz, underZeta, dt);
       else criticalSpring(this.s, c * 2, this.goal[c]!, hlScalar, dt);
     }
     // An arm unseen before this frame's step (weight ~0) follows where the clip holds it (last frame). A new aim then
@@ -573,20 +651,25 @@ export class Acting {
     // circle. Review fix: the old test read the weight after its step and needed the goal at 0, so a new aim swept in
     // from the last pose's stale direction; and a weight fading in over Attack's own swing (~40°/frame, the clip and
     // the aim 130–150° apart) turned the partial swing's axis: the upper arm jumped 142° in one frame.
-    const unseenR = this.s[(ARM_R + 6) * 2]! < 0.02;
-    const unseenL = this.s[(ARM_L + 6) * 2]! < 0.02;
-    criticalSpring(this.s, (ARM_R + 6) * 2, this.goal[ARM_R + 6]!, hlArm, dt);
-    criticalSpring(this.s, (ARM_L + 6) * 2, this.goal[ARM_L + 6]!, hlArm, dt);
-    for (let g = 0; g < 4; g += 1) {
-      const o = (g < 2 ? ARM_R : ARM_L) + (g % 2) * 3;
-      const unseen = g < 2 ? unseenR : unseenL;
+    const unseenR = this.s[(ARM_R + A_W) * 2]! < 0.02;
+    const unseenL = this.s[(ARM_L + A_W) * 2]! < 0.02;
+    const unseenHR = this.s[(ARM_R + A_HW) * 2]! < 0.02;
+    const unseenHL = this.s[(ARM_L + A_HW) * 2]! < 0.02;
+    criticalSpring(this.s, (ARM_R + A_W) * 2, this.goal[ARM_R + A_W]!, hlArm, dt);
+    criticalSpring(this.s, (ARM_L + A_W) * 2, this.goal[ARM_L + A_W]!, hlArm, dt);
+    criticalSpring(this.s, (ARM_R + A_HW) * 2, this.goal[ARM_R + A_HW]!, hlArm, dt);
+    criticalSpring(this.s, (ARM_L + A_HW) * 2, this.goal[ARM_L + A_HW]!, hlArm, dt);
+    for (let g = 0; g < SEGS; g += 1) {
+      const arm = g === 0 || g === 1 || g === 4 ? ARM_R : ARM_L;
+      const o = g < 4 ? arm + (g % 2) * 3 : arm + A_HAND;
+      const unseen = g < 4 ? (g < 2 ? unseenR : unseenL) : g === 4 ? unseenHR : unseenHL;
+      const ch = g < 4 ? arm + A_W : arm + A_HW;
       if (unseen && this.clipSeen) {
         const k = g * 3;
         this.dir[k] = this.clipDir[k]!;
         this.dir[k + 1] = this.clipDir[k + 1]!;
         this.dir[k + 2] = this.clipDir[k + 2]!;
         this.dirV[g] = 0;
-        const ch = g < 2 ? ARM_R + 6 : ARM_L + 6;
         if (this.goal[ch]! >= 0.02) {
           this.s[ch * 2] = this.goal[ch]!;
           this.s[ch * 2 + 1] = 0;
@@ -595,23 +678,23 @@ export class Acting {
       this.sphereStep(g, this.goal[o]!, this.goal[o + 1]!, this.goal[o + 2]!, unseen && !this.clipSeen ? 0 : hlArm, dt);
     }
     underdampedSpring(this.pulse, 0, 0, 5, 0.4, dt);
-    underdampedSpring(this.hitS, 0, 0, 3.2, 0.6, dt);
-    underdampedSpring(this.headS, 0, 0, 4, 0.5, dt);
     underdampedSpring(this.sway, 0, 0, 2.6, 0.45, dt);
     underdampedSpring(this.dip, 0, 0, 3.5, 0.7, dt);
+    this.updateHit(dt);
     const p = this.pulse[0]!;
-    const h = this.hitS[0]!;
-    const hh = this.headS[0]!;
-    this.crouchM = this.s[C_CROUCH * 2]! + 0.012 * p + 0.03 * this.dip[0]!;
-    this.twistDeg = this.s[C_TWIST * 2]! + 4 * p;
-    this.leanDeg = this.s[C_LEAN * 2]! + 4 * p + this.hitF * h + this.sway[0]!;
-    this.sideDeg = this.s[C_SIDE * 2]! + this.hitR * h;
-    this.headPitchDeg = -this.hitF * hh;
-    this.headRollDeg = this.hitR * hh * 0.6;
+    const e = this.hitE;
+    this.crouchM = this.s[C_CROUCH * 2]! + 0.012 * p + 0.035 * this.dip[0]! + HIT_CROUCH * e;
+    this.twistDeg = this.s[C_TWIST * 2]! + 4 * p + this.hitR * HIT_TWIST * e;
+    this.leanDeg = this.s[C_LEAN * 2]! + 4 * p + this.hitF * HIT_LEAN * e + this.sway[0]!;
+    this.sideDeg = this.s[C_SIDE * 2]! + this.hitR * HIT_SIDE * e;
+    this.shiftFM = this.s[C_SHIFTF * 2]!;
+    this.shiftRM = this.s[C_SHIFTR * 2]!;
+    this.headPitchDeg = this.s[C_HEAD * 2]! - this.hitF * HIT_HEAD * e;
+    this.headRollDeg = this.hitR * HIT_HEAD * 0.5 * e;
     // The view offset (lunge, step back): held by what made it, then eased back to the logical position.
     if (this.offOwner === "strike") {
       const st = this.stage;
-      const held = this.phase === "strike" && this.def !== null && this.def.stepM !== undefined && (st === "snap" || st === "hold" || st === "sustain" || st === "settle");
+      const held = this.phase === "strike" && this.def !== null && this.def.stepM > 0 && (st === "snap" || st === "hold" || st === "sustain" || st === "settle");
       if (!held) {
         this.offOwner = "none";
         this.offsetTo(0, 0, RECOVER_S);
@@ -624,13 +707,38 @@ export class Acting {
       }
     }
     this.offT += dt;
-    const u = smoothstep(0, 1, this.offT / this.offDur);
-    this.offX = this.offFromX + (this.offToX - this.offFromX) * u;
-    this.offZ = this.offFromZ + (this.offToZ - this.offFromZ) * u;
+    const u = this.offT / this.offDur;
+    // Out fast (the body is thrown or drives in), back eased both ways.
+    const k = this.offOwner === "none" ? smoothstep(0, 1, u) : 1 - (1 - clamp(u, 0, 1)) ** 3;
+    this.offX = this.offFromX + (this.offToX - this.offFromX) * k;
+    this.offZ = this.offFromZ + (this.offToZ - this.offFromZ) * k;
+  }
+
+  /** The blow's envelope: up in 2 frames, held 3–4, then down on an underdamped spring (a small overshoot). */
+  private updateHit(dt: number): void {
+    if (this.hitT < 0) {
+      this.hitE = 0;
+      return;
+    }
+    this.hitT += dt;
+    const t = this.hitT;
+    if (t < HIT_RISE_S) {
+      const v = t / HIT_RISE_S;
+      this.hitE = 1 - (1 - v) * (1 - v);
+    } else if (t < HIT_RISE_S + HIT_HOLD_S) {
+      this.hitE = 1;
+    } else {
+      underdampedSpring(this.hitRec, 0, 0, 2.2, 0.62, dt);
+      this.hitE = this.hitRec[0]!;
+      if (t > 1.4) {
+        this.hitT = -1;
+        this.hitE = 0;
+      }
+    }
   }
 
   /**
-   * Arm segment `g` towards the direction (x, y, z) along the great circle: the angle left is a critically damped
+   * Segment `g` towards the direction (x, y, z) along the great circle: the angle left is a critically damped
    * spring (its speed kept in dirV), so the arm turns at an even angular speed whatever the swing. Half-life 0 snaps.
    */
   private sphereStep(g: number, x: number, y: number, z: number, halflife: number, dt: number): void {
@@ -694,13 +802,17 @@ export class Acting {
     this.goal[C_TWIST] = pose.twist * k;
     this.goal[C_LEAN] = pose.lean * k;
     this.goal[C_SIDE] = pose.side * k;
+    this.goal[C_SHIFTF] = (pose.shiftF ?? 0) * k;
+    this.goal[C_SHIFTR] = (pose.shiftR ?? 0) * k;
+    this.goal[C_HEAD] = (pose.head ?? 0) * k;
     this.armGoal(ARM_R, pose.r, k, def);
     this.armGoal(ARM_L, pose.l, k, def);
   }
 
   private armGoal(o: number, arm: ArmPose | null, k: number, def: MoveDef | null): void {
     if (!arm) {
-      this.goal[o + 6] = 0;
+      this.goal[o + A_W] = 0;
+      this.goal[o + A_HW] = 0;
       return;
     }
     let ux = arm.up[0];
@@ -742,7 +854,17 @@ export class Acting {
     this.goal[o + 3] = fx;
     this.goal[o + 4] = fy;
     this.goal[o + 5] = fz;
-    this.goal[o + 6] = arm.w * k;
+    this.goal[o + A_W] = arm.w * k;
+    const hand = arm.hand;
+    if (hand === undefined) this.goal[o + A_HW] = 0;
+    else {
+      // A straight wrist continues the forearm; else the hand's own direction.
+      const h = hand === "fore" ? null : hand;
+      this.goal[o + A_HAND] = h ? h[0] : fx;
+      this.goal[o + A_HAND + 1] = h ? h[1] : fy;
+      this.goal[o + A_HAND + 2] = h ? h[2] : fz;
+      this.goal[o + A_HW] = arm.w * k;
+    }
   }
 
   /** The facing used for the aim (set by the Animator before update). */
@@ -750,17 +872,17 @@ export class Acting {
   facingZ = 1;
 
   /**
-   * The arm aims, on fresh world matrices after the torso layers: each upper arm then forearm turns from where
+   * The arm aims, on fresh world matrices after the torso layers: each upper arm, forearm then hand turns from where
    * the clip and layers put it towards its direction by its weight. `fx, fz`: the facing.
    */
   applyArms(fx: number, fz: number): void {
-    this.aimArm(this.upperR, this.lowerR, this.handR, ARM_R, fx, fz);
-    this.aimArm(this.upperL, this.lowerL, this.handL, ARM_L, fx, fz);
+    this.aimArm(this.upperR, this.lowerR, this.handR, this.palmR, ARM_R, fx, fz);
+    this.aimArm(this.upperL, this.lowerL, this.handL, this.palmL, ARM_L, fx, fz);
   }
 
-  private aimArm(upper: THREE.Bone | null, lower: THREE.Bone | null, hand: THREE.Bone | null, o: number, fx: number, fz: number): void {
+  private aimArm(upper: THREE.Bone | null, lower: THREE.Bone | null, hand: THREE.Bone | null, palm: THREE.Object3D | null, o: number, fx: number, fz: number): void {
     if (!upper || !lower || !hand || !upper.parent || !lower.parent) return;
-    const w = clamp(this.s[(o + 6) * 2]!, 0, 1);
+    const w = clamp(this.s[(o + A_W) * 2]!, 0, 1);
     const seg = o === ARM_R ? 0 : 2;
     _qy.setFromAxisAngle(_Y, Math.atan2(fx, fz));
     // Upper arm: shoulder → elbow towards its goal. The clip's direction is kept (character frame) for a new aim's start.
@@ -777,6 +899,31 @@ export class Acting {
     this.keepClipDir((seg + 1) * 3, fx, fz);
     if (w >= 1e-3) this.aimSegment(lower, seg + 1, w, fx, fz);
     else this.aimOn[seg + 1] = 0;
+    // Idle's arm (nothing acting on it): the recovery's rest pose.
+    if (this.phase === "idle" && w < 0.01 && this.hitT < 0) {
+      const rest = o === ARM_R ? REST_R : REST_L;
+      const k = seg * 3;
+      rest.up[0] = this.clipDir[k]!;
+      rest.up[1] = this.clipDir[k + 1]!;
+      rest.up[2] = this.clipDir[k + 2]!;
+      rest.fore[0] = this.clipDir[k + 3]!;
+      rest.fore[1] = this.clipDir[k + 4]!;
+      rest.fore[2] = this.clipDir[k + 5]!;
+    }
+    // Hand: wrist → palm.
+    if (palm) {
+      const hs = o === ARM_R ? 4 : 5;
+      const hw = clamp(this.s[(o + A_HW) * 2]!, 0, 1);
+      hand.getWorldPosition(_a);
+      palm.getWorldPosition(_b);
+      _c.subVectors(_b, _a);
+      if (_c.lengthSq() > 1e-10) {
+        _c.normalize();
+        this.keepClipDir(hs * 3, fx, fz);
+        if (hw >= 1e-3) this.aimSegment(hand, hs, hw, fx, fz);
+        else this.aimOn[hs] = 0;
+      }
+    }
     this.clipSeen = true;
   }
 
@@ -894,4 +1041,16 @@ export class Acting {
       upper.updateMatrixWorld(true);
     }
   }
+}
+
+const gainedCache = new Map<Pose, Pose>();
+/** A dash pose with the gain applied (cached). */
+function gained(p: Pose | undefined): Pose {
+  if (!p) return ZERO;
+  let g = gainedCache.get(p);
+  if (!g) {
+    g = gainPose(p, GESTURE_GAIN);
+    gainedCache.set(p, g);
+  }
+  return g;
 }

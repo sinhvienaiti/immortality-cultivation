@@ -16,6 +16,14 @@
  * red-white rim flash (rises in 2 frames, fades over 0.2 s) instead of a
  * red light over the whole body.
  *
+ * Round 3 (anim/gestures.ts): each slot plays a casting gesture from a data
+ * table (SLOT_GESTURES; the clip section under it is SLOT_CLIP here), so the
+ * redesigned catalog remaps slots without code; key 7's field-wide prototype
+ * (Vạn Kiếm Triều Tông) acts the two-finger sky edict on the Ult clip. An
+ * automatic attack can be primed before it fires (`prime`), so the basic
+ * attack winds up like a typed skill. The dash leaves after-images in Lam's
+ * blue (anim/afterimage.ts); a blow rings red at the chest (anim/hit-ring.ts).
+ *
  * Lam's front is −z (lam.glb), so the root's yaw is the facing + π (the P0 of
  * the step 1 report: the lab showed Lam's back to its own facing).
  *
@@ -25,9 +33,11 @@
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { KiemSlot } from "../view/skills/kiem";
+import { AfterImages } from "./anim/afterimage";
 import { Animator, type AnimatorClip, type ClipKey, type MoveId } from "./anim/animator";
 import { ArmCheck } from "./anim/arm-check";
+import { BodyCheck } from "./anim/body-check";
+import { HitRing } from "./anim/hit-ring";
 import { resampleClip } from "./anim/resample";
 import { retargetClip } from "./anim/retarget";
 import { ClipSampler, Rig } from "./anim/rig";
@@ -64,8 +74,17 @@ const LOOPS: ReadonlySet<CasterClip> = new Set<CasterClip>(["idle", "run", "walk
 /** Clip time of the strike (s): hand speed peak by FK on lam.glb (MOTION_PLAN appendix A, §5.6 `release`). */
 export const CLIP_RELEASE_S: Partial<Record<CasterClip, number>> = { attack: 0.267, thrust: 0.267, skill1: 0.267, skill2: 0.708, ult: 1.083 };
 
-/** The clip each skill slot plays (the acting of each is in anim/acting.ts; how long it holds follows its hit ticks there). */
-export const SLOT_CLIP: Record<KiemSlot, CasterClip> = { auto: "attack", k1: "attack", k2: "skill1", guard: "skill2", dash: "dash", k4: "thrust", k5: "ult" };
+/**
+ * The clip section each skill slot plays under its gesture (the gesture of each is data in anim/gestures.ts
+ * SLOT_GESTURES; how long it holds follows its hit ticks there). Key 7 is the field-wide prototype.
+ */
+export const SLOT_CLIP: Record<string, CasterClip> = { auto: "attack", k1: "attack", k2: "skill1", guard: "skill2", dash: "dash", k4: "thrust", k5: "ult", k7: "ult" };
+/** The clip a slot plays (an unknown slot: Attack). */
+function slotClip(slot: string): CasterClip {
+  return SLOT_CLIP[slot] ?? "attack";
+}
+/** Lam's own colour for the dash's after-images (the blue of its trims). */
+const HERO_COLOUR = 0x3d7bff;
 /** A strike clip asked for by the skill code without a typed word (KiemHost.play): the move it acts. */
 const CLIP_MOVE: Partial<Record<CasterClip, MoveId>> = { attack: "auto", thrust: "k4", skill1: "k2", skill2: "guard", ult: "k5" };
 
@@ -96,12 +115,22 @@ export class LabCaster {
   anim: Animator | null = null;
   /** Arms-out check (both upper arms past 70° for more than 3 frames outside an intended pose), read by __lab.metrics(). */
   private armCheck: ArmCheck | null = null;
+  /** Chest and head heading speed and turn lead (round 3), read by __lab.metrics() under `arms.body`. */
+  private bodyCheck: BodyCheck | null = null;
+  private lastDt = 1 / 60;
   /** Rim flash uniforms (shared by Lam's materials) and its age (−1 off). */
   private readonly rimK = { value: 0 };
   private readonly rimCol = { value: new THREE.Color() };
   private rimT = -1;
   private lastSegSpeed = 0;
   private wasMoving = false;
+  private after: AfterImages | null = null;
+  private ring: HitRing | null = null;
+  /** The shown root last frame (the after-images spawn while the glide is fast). */
+  private prevX = 0;
+  private prevZ = 0;
+  /** A primed automatic attack: its slot, target, age and lead (s); null none. */
+  private primed: { slot: string; tx: number; tz: number; t: number; lead: number } | null = null;
 
   async load(): Promise<void> {
     const loader = new GLTFLoader();
@@ -169,6 +198,9 @@ export class LabCaster {
     }
     anim.onClip = (key) => this.onState?.("clip", key);
     this.armCheck = new ArmCheck(model);
+    this.bodyCheck = new BodyCheck(model);
+    this.after = new AfterImages(model, this.root, HERO_COLOUR);
+    this.ring = new HitRing(model, this.root);
     // Console access for tuning (the lab is dev-only and never built).
     (window as unknown as Record<string, unknown>).__labCaster = this;
   }
@@ -217,24 +249,52 @@ export class LabCaster {
   }
 
   /** A key of a typed word on `slot` (progress 0…1, `keysLeft` still to type) aimed at (tx, tz). */
-  charge(slot: KiemSlot, progress: number, tx: number, tz: number, keysLeft = 1): void {
+  charge(slot: string, progress: number, tx: number, tz: number, keysLeft = 1): void {
     const anim = this.anim;
     if (!anim) return;
+    this.primed = null;
     if (slot === "dash") anim.charge("dash", "dash", progress, keysLeft, tx, tz);
-    else anim.charge(slot, SLOT_CLIP[slot], progress, keysLeft, tx, tz);
+    else anim.charge(slot, slotClip(slot), progress, keysLeft, tx, tz);
   }
 
   /** The last key: the strike runs on from its release, aimed at (tx, tz) (the VFX read the hand after `update`). */
-  release(slot: KiemSlot, tx?: number, tz?: number): void {
+  release(slot: string, tx?: number, tz?: number): void {
+    this.primed = null;
     if (slot === "dash") return; // the dash starts on KiemHost.play("dash")
     const has = tx !== undefined && tz !== undefined;
-    this.anim?.release(slot, SLOT_CLIP[slot], has ? tx : this.x + this.fx * 6, has ? tz : this.z + this.fz * 6, has);
+    this.anim?.release(slot, slotClip(slot), has ? tx : this.x + this.fx * 6, has ? tz : this.z + this.fz * 6, has);
+  }
+
+  /**
+   * An automatic attack fires in `leadS` seconds at (tx, tz) (the game's attack timer knows): the body winds up as a
+   * typed word would, so the release on the attack's frame has its anticipation. Without a release the wind-up lets go
+   * 0.3 s after the lead.
+   */
+  prime(slot: string, tx: number, tz: number, leadS = 0.25): void {
+    if (!this.anim || slot === "dash") return;
+    this.primed = { slot, tx, tz, t: 0, lead: Math.max(1 / 60, leadS) };
+  }
+
+  /** A primed attack's wind-up: the progress over its lead, the last "key" a third of the lead before the fire. */
+  private updatePrime(dt: number): void {
+    const p = this.primed;
+    const anim = this.anim;
+    if (!p || !anim) return;
+    p.t += dt;
+    if (p.t > p.lead + 0.3) {
+      this.primed = null;
+      anim.cancelCharge();
+      return;
+    }
+    const progress = Math.min(1, p.t / p.lead);
+    anim.charge(p.slot, slotClip(p.slot), progress, progress >= 0.66 ? 1 : 2, p.tx, p.tz);
   }
 
   /** An enemy blow landed from (fromX, fromZ): the stagger, the step back and the rim flash. */
   hit(fromX: number, fromZ: number): void {
     this.anim?.hit(fromX, fromZ);
     this.rimT = 0;
+    this.ring?.start();
   }
 
   /** KiemHost.moveCaster: the dash path (the shown root eases into it). */
@@ -247,6 +307,11 @@ export class LabCaster {
     this.anim?.place(x, z, fx, fz);
     this.rimT = -1;
     this.rimK.value = 0;
+    this.after?.reset();
+    this.ring?.reset();
+    this.primed = null;
+    this.prevX = x;
+    this.prevZ = z;
     this.lastSegSpeed = 0;
     this.wasMoving = false;
   }
@@ -336,14 +401,18 @@ export class LabCaster {
   /** Probe frame `f` was drawn: the arms-out check reads the pose (fresh world matrices). */
   check(f: number): void {
     this.armCheck?.sample(f, this.anim ? this.anim.intendedPose : false);
+    if (this.anim) this.bodyCheck?.sample(f, this.anim.loco.fx, this.anim.loco.fz, this.lastDt);
   }
 
   resetChecks(): void {
     this.armCheck?.reset();
+    this.bodyCheck?.reset();
   }
 
   armReport(): Record<string, unknown> {
-    return this.armCheck ? this.armCheck.report() : {};
+    const r: Record<string, unknown> = this.armCheck ? this.armCheck.report() : {};
+    if (this.bodyCheck) r.body = this.bodyCheck.report();
+    return r;
   }
 
   /** The Animator's state and clip analysis (JSON-safe, for __lab.anim()). */
@@ -369,8 +438,18 @@ export class LabCaster {
   update(dt: number): void {
     const anim = this.anim;
     if (!anim) return;
+    this.lastDt = dt;
+    this.updatePrime(dt);
     anim.update(dt);
     this.updateRim(dt);
+    // After-images while the dash glides fast (posed as drawn, after the Animator); the chest ring of a blow.
+    const sx = this.x;
+    const sz = this.z;
+    const speed = dt > 1e-6 ? Math.hypot(sx - this.prevX, sz - this.prevZ) / dt : 0;
+    this.prevX = sx;
+    this.prevZ = sz;
+    this.after?.update(dt, anim.state === "dash" && anim.loco.dashing, speed);
+    this.ring?.update(dt);
     // Probe markers for walks: a segment speed change, arrival.
     const loco = anim.loco;
     if (loco.hasPath && loco.segmentSpeed !== this.lastSegSpeed) {

@@ -29,6 +29,8 @@ export interface SpringSettings {
   maxDegS: number;
   /** Tip radius for the colliders (m). */
   radius: number;
+  /** Most of the centre's motion per step that trails the tip (m; default 0.03, × trailBoost). */
+  trailStepM?: number;
 }
 
 interface Joint {
@@ -78,6 +80,8 @@ export class SpringChains {
   private readonly joints: Joint[] = [];
   private readonly colliders: Collider[] = [];
   private readonly roots: THREE.Object3D[] = [];
+  /** Each chain's joints: first index and count. */
+  private readonly chains: [number, number][] = [];
   private acc = 0;
   private ready = false;
   private readonly centerInv = new THREE.Matrix4();
@@ -92,9 +96,10 @@ export class SpringChains {
 
   constructor(private readonly center: THREE.Object3D) {}
 
-  /** A chain parent → child; the last bone's tip is `tipLength` along its +Y (the Blender bone axis). */
-  addChain(bones: THREE.Bone[], tipLength: number, settings: (i: number) => SpringSettings): void {
-    if (bones.length === 0) return;
+  /** A chain parent → child; the last bone's tip is `tipLength` along its +Y (the Blender bone axis). Returns its id. */
+  addChain(bones: THREE.Bone[], tipLength: number, settings: (i: number) => SpringSettings): number {
+    if (bones.length === 0) return -1;
+    this.chains.push([this.joints.length, bones.length]);
     this.roots.push(bones[0]!);
     for (let i = 0; i < bones.length; i += 1) {
       const bone = bones[i]!;
@@ -113,6 +118,25 @@ export class SpringChains {
         animQ: new THREE.Quaternion(),
         animM: new THREE.Matrix4(),
       });
+    }
+    return this.chains.length - 1;
+  }
+
+  /**
+   * A whip on chain `id`: adds the world velocity (wx, wy, wz) m/s to its tips, growing from the base to the tip (a
+   * release, a landing, a blow or a stop throws the tail; the springs bring it back).
+   */
+  kick(id: number, wx: number, wy: number, wz: number): void {
+    const c = this.chains[id];
+    if (!c || !this.ready) return;
+    _w.set(wx, wy, wz);
+    // Velocities live in centre space (rotation only).
+    _q.setFromRotationMatrix(_m.extractRotation(this.center.matrixWorld)).invert();
+    _w.applyQuaternion(_q);
+    const [first, n] = c;
+    for (let i = 0; i < n; i += 1) {
+      const k = (i + 1) / n;
+      this.joints[first + i]!.vel.addScaledVector(_w, k);
     }
   }
 
@@ -195,7 +219,7 @@ export class SpringChains {
         _w.copy(j.pos).applyMatrix4(this.centerPrev);
         _w.sub(_v);
         const l = _w.length();
-        const lim = 0.03 * Math.max(1, this.trailBoost);
+        const lim = (s.trailStepM ?? 0.03) * Math.max(1, this.trailBoost);
         if (l > lim) _w.multiplyScalar(lim / l);
         _v.addScaledVector(_w, Math.min(1, s.trail * this.trailBoost));
       }

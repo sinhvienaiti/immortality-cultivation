@@ -32,6 +32,8 @@ const TURN_VMAX_IN_PLACE = (250 * Math.PI) / 180;
 const TURN_ACC = 34;
 const TURN_ACC_IN_PLACE = 18;
 export const TURN_CAP_RAD_S = (355 * Math.PI) / 180;
+/** A cast's turn (round-2 judges: 600–720°/s with easing): its cap. */
+export const CAST_TURN_CAP_RAD_S = (600 * Math.PI) / 180;
 
 export class Locomotion {
   // Logical position (skill code reads it) and velocity.
@@ -91,6 +93,8 @@ export class Locomotion {
   private readonly biasS = new Float64Array(2);
   /** Deceleration used to arrive (m/s²). */
   arriveDecel = 3.2;
+  /** A cast's turn: speed and acceleration × this (1 a walk's turn); back to 1 once the turn is done. */
+  turnBoost = 1;
 
   get yaw(): number {
     return this.yawS[0]!;
@@ -145,6 +149,7 @@ export class Locomotion {
     this.feetYaw = yaw;
     this.yawLead = 0;
     this.turnHalflife = 0.06;
+    this.turnBoost = 1;
     this.keepFacing = false;
     this.segmentSpeed = 0;
     this.pathN = this.pathI = 0;
@@ -261,15 +266,23 @@ export class Locomotion {
     // Standing, the body may not turn further than `yawLead` past where its planted feet point (they step to catch up).
     let goal = this.yawGoal + this.biasS[0]!;
     if (this.yawLead > 0) {
-      const d = wrapPi(goal - this.feetYaw);
-      if (d > this.yawLead) goal = this.yawS[0]! + wrapPi(this.feetYaw + this.yawLead - this.yawS[0]!);
-      else if (d < -this.yawLead) goal = this.yawS[0]! + wrapPi(this.feetYaw - this.yawLead - this.yawS[0]!);
+      // Both on the body's own branch, so the limit keeps the side of the turn the body takes. Round-3 fix: the
+      // difference was wrapped, and a goal ~180° off the feet (a strafe's bias left on) flipped to the other side:
+      // the body turned 194° the long way round before a dash.
+      const y = this.yawS[0]!;
+      const goalU = y + wrapPi(goal - y);
+      const feetU = y + wrapPi(this.feetYaw - y);
+      const d = goalU - feetU;
+      if (d > this.yawLead) goal = feetU + this.yawLead;
+      else if (d < -this.yawLead) goal = feetU - this.yawLead;
     }
     // The follower: towards the goal along the short way, speed and acceleration limited, braking in time.
     const err = wrapPi(goal - this.yawRamp);
     const inPlace = this.turnHalflife > 0.1;
-    const acc = inPlace ? TURN_ACC_IN_PLACE : TURN_ACC;
-    const vWant = Math.sign(err) * Math.min(inPlace ? TURN_VMAX_IN_PLACE : TURN_VMAX, Math.sqrt(2 * acc * 0.85 * Math.abs(err)), Math.abs(err) / Math.max(dt, 1e-4));
+    const boost = this.turnBoost;
+    const acc = (inPlace ? TURN_ACC_IN_PLACE : TURN_ACC) * boost;
+    const vmax = Math.min((inPlace ? TURN_VMAX_IN_PLACE : TURN_VMAX) * boost, CAST_TURN_CAP_RAD_S * 0.92);
+    const vWant = Math.sign(err) * Math.min(vmax, Math.sqrt(2 * acc * 0.85 * Math.abs(err)), Math.abs(err) / Math.max(dt, 1e-4));
     const dv = vWant - this.yawRampV;
     const dvMax = acc * dt;
     this.yawRampV += dv > dvMax ? dvMax : dv < -dvMax ? -dvMax : dv;
@@ -279,11 +292,14 @@ export class Locomotion {
     const before = this.yawS[0]!;
     criticalSpring(this.yawS, 0, this.yawRamp, Math.min(this.turnHalflife, 0.05), dt);
     const turned = this.yawS[0]! - before;
-    const cap = TURN_CAP_RAD_S * dt;
+    const capS = boost > 1 ? CAST_TURN_CAP_RAD_S : TURN_CAP_RAD_S;
+    const cap = capS * dt;
     if (Math.abs(turned) > cap) {
       this.yawS[0] = before + Math.sign(turned) * cap;
-      this.yawS[1] = Math.sign(turned) * TURN_CAP_RAD_S;
+      this.yawS[1] = Math.sign(turned) * capS;
     }
+    // The cast's turn is done: walks turn at their own pace again.
+    if (boost > 1 && Math.abs(wrapPi(this.yawGoal - this.yawS[0]!)) < 2 * DEG && Math.abs(this.yawRampV) < 0.5) this.turnBoost = 1;
   }
 
   private updateDash(dt: number): void {
