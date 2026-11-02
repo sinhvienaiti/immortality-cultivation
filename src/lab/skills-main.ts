@@ -283,6 +283,8 @@ const hostApi: KiemHost = {
   },
   struck(target, dx, dz, power, light, killed) {
     const slot = fx.striking;
+    // The ultimate's last wave is its finisher: its light flings the small beasts in the vortex up.
+    if (slot === "k5" && power >= 1) herd.launch(target, dx, dz);
     emitImpact(slot, target, dx, dz, power, light ? "secondary" : "primary", killed, fx.paletteOf(slot).flashHex);
   },
   moveCaster(x, z) {
@@ -369,7 +371,7 @@ bus.on((e) => {
   }
 });
 // Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.
-const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow }, quality === "low");
+const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow, scorch: textures.scorch }, quality === "low");
 bus.on((e) => {
   if (e.kind === "death") deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
 });

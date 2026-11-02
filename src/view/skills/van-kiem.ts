@@ -926,7 +926,8 @@ export class VanKiemFx {
       const s = lead ? (i + 0.5) / HERO_N : total > 1 ? k / (total - 1) : 0.5;
       const row = lead ? 0 : (k % 3) - 1;
       this.bx[i] = this.s0.x + (this.s1.x - this.s0.x) * s + this.sweepNx * row * 0.45;
-      this.by[i] = (lead ? 5.6 : 4) + row * 0.35 + s * 1.6;
+      // The lead blades a little higher than the river's rows, but low enough to stay in the play camera's frame.
+      this.by[i] = lead ? 3.6 + s * 0.8 : 4 + row * 0.35 + s * 1.6;
       this.bz[i] = this.s0.z + (this.s1.z - this.s0.z) * s + this.sweepNz * row * 0.45;
       if (lead) {
         this.lenFrom[i] = this.lenM[i]!;
@@ -1302,7 +1303,7 @@ export class VanKiemFx {
     const big = lead && this.lenM[i]! > HERO_M + 0.5;
     this.impactAt(T.x(t), T.midY(t), T.z(t), dx, dz, big ? 2.4 : lead ? 1.4 : 1, this.hue[i]!);
     // A river sword takes one stand-in HP (TargetField.hit below power 0.5); a lead blade lands a heavy blow.
-    const power = big ? 0.95 : lead ? 0.85 : 0.3;
+    const power = big ? 1.05 : lead ? 0.85 : 0.3;
     const killed = T.hit(t, dx, dz, power, 0x8ff0d2);
     this.strikes += 1;
     this.host.struck(t, dx, dz, power, role, killed);
@@ -1605,7 +1606,8 @@ export class VanKiemFx {
     const drop = smooth01(k1 / 0.4);
     for (let i = 0; i < this.cap; i += 1) {
       if (this.st[i] !== S_STROKE) continue;
-      this.py[i] = this.ay[i]! + ((i < HERO_N ? 2.2 : 0.5) - this.ay[i]!) * drop;
+      // A lead blade drives deep into the cut (its 6.4 m stands about 4.5 m out of the ground).
+      this.py[i] = this.ay[i]! + ((i < HERO_N ? 1.3 : 0.5) - this.ay[i]!) * drop;
       this.turn(i, this.sweepNx * 0.25 + ((this.s1.x - this.s0.x) / 34.5) * 0.4, -0.88, this.sweepNz * 0.25 + ((this.s1.z - this.s0.z) / 34.5) * 0.4, this.kPlunge);
     }
     if (k1 >= 1) {

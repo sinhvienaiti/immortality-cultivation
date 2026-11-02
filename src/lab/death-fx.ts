@@ -5,8 +5,12 @@
  * threads unwinding upward in the killer's colour, ink flecks flung along the
  * blow and falling (ink, never blood: canon §10.9), and for elites and the
  * king six luminous spirit shards. Sized to read at the play camera (~37 px
- * a metre at 1080p). Five draw calls, preallocated pools, no allocation per
- * frame. The bus's death event drives it (events.ts).
+ * a metre at 1080p). Round 2: the body shatters into spirit sparks in the
+ * killer's saturated colour (16 on a small beast, 28 on an elite or the
+ * king) while the herd slices it away (herd.ts), every death throws a few
+ * shards, and a ground scorch with a brief lit pool stays under it.
+ * Eight draw calls, preallocated pools, no allocation per frame. The bus's
+ * death event drives it (events.ts).
  */
 import * as THREE from "three";
 import { BeamPool, Rand, SpritePool } from "../view/skills/fxkit";
@@ -18,6 +22,8 @@ export interface DeathTextures {
   readonly shock: THREE.Texture;
   readonly splash: THREE.Texture;
   readonly glow: THREE.Texture;
+  /** An ink stain (the ground scorch). */
+  readonly scorch: THREE.Texture;
 }
 
 export class DeathFx {
@@ -26,6 +32,9 @@ export class DeathFx {
   private readonly ink: SpritePool;
   private readonly shards: SpritePool;
   private readonly threads: BeamPool;
+  private readonly sparks: SpritePool;
+  private readonly scorch: SpritePool;
+  private readonly pool: SpritePool;
   private readonly rand = new Rand(4242);
   private readonly c = new THREE.Color();
   /** Low: fewer threads and flecks. */
@@ -38,7 +47,10 @@ export class DeathFx {
     this.ink = new SpritePool(160, tex.splash, "ink", "camera", 11);
     this.shards = new SpritePool(96, tex.glow, "add", "camera", 15);
     this.threads = new BeamPool(160, 14);
-    parent.add(this.ink.mesh, this.ring.mesh, this.threads.mesh, this.shards.mesh, this.burst.mesh);
+    this.sparks = new SpritePool(720, tex.glow, "add", "camera", 15, { crop: 0.6 });
+    this.scorch = new SpritePool(96, tex.scorch, "ink", "ground", 3, { fadeIn: 0.05, twoSided: true });
+    this.pool = new SpritePool(64, tex.glow, "add", "ground", 5, { crop: 0.7, twoSided: true });
+    parent.add(this.scorch.mesh, this.pool.mesh, this.ink.mesh, this.ring.mesh, this.threads.mesh, this.shards.mesh, this.sparks.mesh, this.burst.mesh);
   }
 
   /** A beast died at (x, y, z), struck along (dx, dz), by a blow of colour `rgb` (0xRRGGBB); `beastTier` 0–4. */
@@ -81,8 +93,58 @@ export class DeathFx {
     r.b = ub * 0.8;
     r.a = 0.6;
     this.ring.emit();
+    // The body shatters into spirit sparks: from all over it, outward, rising, in the killer's colour.
+    const nSparks = Math.max(6, Math.round((big ? 28 : 16) * this.dens));
+    for (let i = 0; i < nSparks; i += 1) {
+      const a = this.rand.range(0, Math.PI * 2);
+      const r = this.rand.range(0.1, 0.45) * k;
+      const s = this.sparks.spec.reset();
+      s.x = x + Math.cos(a) * r;
+      s.y = y + this.rand.range(-0.3, 0.35) * k;
+      s.z = z + Math.sin(a) * r;
+      const sp = this.rand.range(1.8, 4.6) * (k > 2 ? 1.3 : 1);
+      s.vx = Math.cos(a) * sp + dx * 1.6;
+      s.vz = Math.sin(a) * sp + dz * 1.6;
+      s.vy = this.rand.range(1.4, 3.4);
+      s.drag = 2.6;
+      s.gravity = 0.8;
+      s.stretch = 0.035;
+      s.life = this.rand.range(0.45, 0.8);
+      s.size0 = this.rand.range(0.16, 0.28) * (k > 2 ? 1.4 : 1);
+      s.size1 = 0.04;
+      const hot = i % 4 === 0 ? 1.6 : 1;
+      s.r = (ur * 2.4 + (hot - 1)) * hot;
+      s.g = (ug * 2.4 + (hot - 1)) * hot;
+      s.b = (ub * 2.4 + (hot - 1)) * hot;
+      this.sparks.emit();
+    }
+    // A scorch on the ground where it fell and a brief pool of the killer's light.
+    const g = this.scorch.spec.reset();
+    g.x = x;
+    g.y = 0.02;
+    g.z = z;
+    g.life = 2.4;
+    g.size0 = 1.2 * k;
+    g.size1 = 1.6 * k;
+    g.rot = this.rand.range(0, 6.28);
+    g.r = INK[0];
+    g.g = INK[1];
+    g.b = INK[2];
+    g.a = 0.72;
+    this.scorch.emit();
+    const p = this.pool.spec.reset();
+    p.x = x;
+    p.y = 0.03;
+    p.z = z;
+    p.life = 0.4;
+    p.size0 = 1.6 * k;
+    p.size1 = 2.4 * k;
+    p.r = ur * 0.7;
+    p.g = ug * 0.7;
+    p.b = ub * 0.7;
+    this.pool.emit();
     // Spirit threads unwinding upward, each leaning its own way, growing from the body over ~0.18 s.
-    const nThreads = Math.max(2, Math.round((big ? 7 : 5) * this.dens));
+    const nThreads = Math.max(2, Math.round((big ? 5 : 3) * this.dens));
     for (let i = 0; i < nThreads; i += 1) {
       const a = (i / nThreads) * Math.PI * 2 + this.rand.range(-0.4, 0.4);
       const lean = this.rand.range(0.08, 0.3);
@@ -142,10 +204,11 @@ export class DeathFx {
       s.a = 0.92;
       this.ink.emit();
     }
-    // Elites and the king fracture into six luminous spirit shards.
-    if (big) {
-      for (let i = 0; i < 6; i += 1) {
-        const a = (i / 6) * Math.PI * 2 + this.rand.range(-0.3, 0.3);
+    // Every death throws luminous spirit shards: four from a small beast, eight from an elite or the king.
+    {
+      const nShards = big ? 8 : 4;
+      for (let i = 0; i < nShards; i += 1) {
+        const a = (i / nShards) * Math.PI * 2 + this.rand.range(-0.3, 0.3);
         const s = this.shards.spec.reset();
         s.x = x;
         s.y = y;
@@ -158,8 +221,8 @@ export class DeathFx {
         s.drag = 2.2;
         s.stretch = 0.06;
         s.life = 0.55;
-        s.size0 = 0.42 * k;
-        s.size1 = 0.18 * k;
+        s.size0 = (big ? 0.42 : 0.3) * k;
+        s.size1 = 0.14 * k;
         s.r = ur * 2.6;
         s.g = ug * 2.6;
         s.b = ub * 2.6;
@@ -174,6 +237,9 @@ export class DeathFx {
     this.ink.update(dt);
     this.shards.update(dt);
     this.threads.update(dt);
+    this.sparks.update(dt);
+    this.scorch.update(dt);
+    this.pool.update(dt);
   }
 
   reset(): void {
@@ -182,5 +248,8 @@ export class DeathFx {
     this.ink.clear();
     this.shards.clear();
     this.threads.clear();
+    this.sparks.clear();
+    this.scorch.clear();
+    this.pool.clear();
   }
 }

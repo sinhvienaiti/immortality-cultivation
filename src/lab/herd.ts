@@ -16,7 +16,17 @@
  * only tips 1–3° about its feet. A death dissolves the body through a noise
  * mask with a glowing edge in the killer's colour (VFX_STANDARD §3.3 "tan có
  * viền"), no shrink; the lab's death-fx.ts adds spirit threads, ink flecks
- * and a light burst on the same frame. K5's vortex
+ * and a light burst on the same frame. Round 2 (both blind judges: "the beasts
+ * barely flinch, turn into pale ghosts inside the vortex and look untouched
+ * afterwards"): big hits (power ≥ 0.95) slide the beast back 0.3–0.8 m
+ * along the blow (it stays there), the finisher's light (power > 1.1, or
+ * `launch`) flings small beasts up in one flip, elites stagger for 0.22 s
+ * with a 17° tip, and a death is a 0.32 s slice-dissolve from the cut plane
+ * outward with a hot edge in the killer's saturated colour (death-fx.ts
+ * shatters the body into spirit sparks and leaves a ground scorch); a
+ * respawn rises from the ground with a dim ember edge, never a pale glow
+ * (the "bleached beasts left standing" after K5 were respawns dissolving in
+ * with a cool white HDR edge in the vortex's middle). K5's vortex
  * (`pull`) draws the beasts in its zone toward its heart in a swirl, the dying
  * ones lifted into it as they dissolve; a respawn dissolves in from the
  * ground with a cool edge and rises (no teleport, no pop). Allocates nothing
@@ -54,12 +64,13 @@ const KNOCK_W = 12;
 /** Stagger tilt: an underdamped spring (rad/s, ζ): it tips away from the blow, overshoots once and settles. */
 const TILT_W = 15;
 const TILT_Z = 0.45;
-/** A death dissolves over this time (s); a respawn dissolves in over SPAWN_S, rising from SPAWN_SINK m down. */
-const DIE_S = 0.6;
+/** A death slices away over this time (s); a respawn dissolves in over SPAWN_S, rising from SPAWN_SINK m down. */
+const DIE_S = 0.32;
 const SPAWN_S = 0.5;
 const SPAWN_SINK = 0.25;
 /** Gone this long (s) before a dead slot respawns (power pass: 1.6 s, so the tide refills during a field-wide skill). */
 const GONE_S = 1.6;
+const GONE_CLEAR_S = 3.2;
 /** Rim flash (s): 2 frames on small beasts, 3 on elites and the king; its HDR level (× the blow's colour). */
 const RIM_S = 0.034;
 const RIM_ELITE_S = 0.05;
@@ -67,24 +78,38 @@ const RIM_LEVEL = 2.6;
 /** Recoil along the blow (m): 5–30 cm by power; elites take 60 %; the king none. */
 const RECOIL_MIN = 0.05;
 const RECOIL_MAX = 0.3;
-/** Stagger (s) of elites and big strikes, then immunity (s) from its start, so more hits never restart it. */
+/** Stagger (s) of big strikes and of elites (longer), then immunity (s) from its start, so more hits never restart it. */
 const STAGGER_S = 0.08;
+const STAGGER_ELITE_S = 0.22;
 const IMMUNE_S = 0.12;
-/** Peak tip (rad) of a small beast's flinch, an elite's stagger and the king's upper-body recoil (1–3°). */
+const IMMUNE_ELITE_S = 0.26;
+/** Peak tip (rad) of a small beast's flinch, a big strike's stagger, an elite's (17°) and the king's upper-body recoil (4°). */
 const TIP_SMALL = 0.07;
 const TIP_STAGGER = 0.16;
-const TIP_KING = 0.04;
+const TIP_ELITE = 0.3;
+const TIP_KING = 0.07;
+/** Knockback slide of a big hit (power ≥ SLIDE_POWER): 0.3–0.8 m by power, elites half, the king none; decay rate (1/s). */
+const SLIDE_POWER = 0.95;
+const SLIDE_MIN = 0.3;
+const SLIDE_MAX = 0.8;
+const SLIDE_K = 9;
+/** A launch (the finisher's light): up-speed (m/s), gravity (m/s²), along-the-blow speed (m/s); small beasts only. */
+const LAUNCH_POWER = 1.1;
+const LAUNCH_VY = 5.6;
+const LAUNCH_G = -16;
+const LAUNCH_V = 3.4;
 /** Peak of the underdamped tilt spring per unit kick (1/ω × its first-peak share at ζ = TILT_Z). */
 const TILT_PEAK = 0.62 / 15;
-/** The respawn's edge colour (linear, HDR: only the thin edge blooms). */
-const SPAWN_EDGE = [0.6, 1.1, 1.5] as const;
+/** The respawn's edge colour (linear): a dim ember, below bloom (a cool white HDR edge read as bleached ghosts). */
+const SPAWN_EDGE = [0.42, 0.1, 0.06] as const;
 
 /** Per-instance dissolve: the vertex passes its threshold, edge colour and model-space point to the fragment. */
-const DISSOLVE_VERT_PARS = "attribute float iDissolve;\nattribute vec3 iEdge;\nattribute vec3 iRim;\nvarying float vDissolve;\nvarying vec3 vEdge;\nvarying vec3 vRim;\nvarying vec3 vDisP;\n";
-const DISSOLVE_VERT = "#include <begin_vertex>\n\tvDissolve = iDissolve;\n\tvEdge = iEdge;\n\tvRim = iRim;\n\tvDisP = position;";
+const DISSOLVE_VERT_PARS = "attribute float iDissolve;\nattribute vec3 iEdge;\nattribute vec3 iRim;\nattribute vec4 iCut;\nvarying float vDissolve;\nvarying vec3 vEdge;\nvarying vec3 vRim;\nvarying vec4 vCut;\nvarying vec3 vDisP;\n";
+const DISSOLVE_VERT = "#include <begin_vertex>\n\tvDissolve = iDissolve;\n\tvEdge = iEdge;\n\tvRim = iRim;\n\tvCut = iCut;\n\tvDisP = position;";
 const DISSOLVE_FRAG_PARS = `varying float vDissolve;
 varying vec3 vEdge;
 varying vec3 vRim;
+varying vec4 vCut;
 varying vec3 vDisP;
 float labHash3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float labNoise3(vec3 p) {
@@ -95,7 +120,12 @@ float labNoise3(vec3 p) {
   float b = mix(mix(labHash3(i + vec3(0.0, 0.0, 1.0)), labHash3(i + vec3(1.0, 0.0, 1.0)), u.x), mix(labHash3(i + vec3(0.0, 1.0, 1.0)), labHash3(i + vec3(1.0, 1.0, 1.0)), u.x), u.y);
   return mix(a, b, u.z);
 }
-float labDissolveN() { return labNoise3(vDisP * 4.0) * 0.65 + labNoise3(vDisP * 11.0 + 3.1) * 0.35; }
+float labDissolveN() {
+  float n = labNoise3(vDisP * 4.0) * 0.65 + labNoise3(vDisP * 11.0 + 3.1) * 0.35;
+  // A death's slice (vCut.w = the body's mid height): it eats from the cut plane outward, ragged by the noise.
+  if (vCut.w > 0.001) n = abs(dot(vDisP - vec3(0.0, vCut.w, 0.0), vCut.xyz)) / (vCut.w * 1.9) * 0.82 + n * 0.18;
+  return n;
+}
 `;
 /** Discard below the threshold (−0.05 at 0: nothing; 1.05 at 1: all). */
 const DISSOLVE_DISCARD = "\tfloat labDn = labDissolveN();\n\tfloat labTh = vDissolve * 1.1 - 0.05;\n\tif ( vDissolve > 0.0 && labDn < labTh ) discard;";
@@ -107,6 +137,7 @@ export class LabHerd implements TargetField {
   private readonly dissolveAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly edgeAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly rimAttr: THREE.InstancedBufferAttribute[] = [];
+  private readonly cutAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly heights: number[] = [];
   private readonly sp = new Int8Array(MAX);
   private readonly slot = new Int16Array(MAX); // instance index within its species
@@ -128,6 +159,16 @@ export class LabHerd implements TargetField {
   private readonly rz = new Float32Array(MAX);
   private readonly rvx = new Float32Array(MAX);
   private readonly rvz = new Float32Array(MAX);
+  /** Knockback slide velocity (m/s, decays at SLIDE_K); air height (m), its speed, and a flip about (ax, az) while airborne. */
+  private readonly svx = new Float32Array(MAX);
+  private readonly svz = new Float32Array(MAX);
+  private readonly air = new Float32Array(MAX);
+  private readonly airV = new Float32Array(MAX);
+  private readonly flip = new Float32Array(MAX);
+  private readonly flipV = new Float32Array(MAX);
+  /** The killing blow's ground direction (the slice plane's). */
+  private readonly kdx = new Float32Array(MAX);
+  private readonly kdz = new Float32Array(MAX);
   /** Stagger tilt (rad) and its rate, about the ground axis (ax, az) ⟂ the last blow. */
   private readonly tilt = new Float32Array(MAX);
   private readonly tiltV = new Float32Array(MAX);
@@ -162,6 +203,7 @@ export class LabHerd implements TargetField {
   private readonly q = new THREE.Quaternion();
   private readonly qt = new THREE.Quaternion();
   private readonly p = new THREE.Vector3();
+  private readonly pv = new THREE.Vector3();
   private readonly s = new THREE.Vector3();
   private readonly axis = new THREE.Vector3();
   private readonly e = new THREE.Euler();
@@ -202,12 +244,15 @@ export class LabHerd implements TargetField {
       const dis = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
       const edge = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
       const rim = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+      const cut = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4);
       dis.setUsage(THREE.DynamicDrawUsage);
       edge.setUsage(THREE.DynamicDrawUsage);
       rim.setUsage(THREE.DynamicDrawUsage);
+      cut.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute("iDissolve", dis);
       geometry.setAttribute("iEdge", edge);
       geometry.setAttribute("iRim", rim);
+      geometry.setAttribute("iCut", cut);
       const material = (Array.isArray(src.material) ? src.material[0]! : src.material) as THREE.MeshStandardMaterial;
       LabHerd.dissolvable(material);
       const inst = new THREE.InstancedMesh(geometry, material, n);
@@ -224,6 +269,7 @@ export class LabHerd implements TargetField {
       this.dissolveAttr[k] = dis;
       this.edgeAttr[k] = edge;
       this.rimAttr[k] = rim;
+      this.cutAttr[k] = cut;
       this.group.add(inst);
     }
     this.update(0);
@@ -333,6 +379,7 @@ export class LabHerd implements TargetField {
       this.flash[i] = 0;
       this.rimT[i] = this.hold[i] = this.stag[i] = this.immune[i] = 0;
       this.rx[i] = this.rz[i] = this.rvx[i] = this.rvz[i] = 0;
+      this.svx[i] = this.svz[i] = this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
       this.tilt[i] = this.tiltV[i] = 0;
       this.caught[i] = 0;
       this.shownDis[i] = this.shownLift[i] = 0;
@@ -436,6 +483,21 @@ export class LabHerd implements TargetField {
     this.rimT[i] = this.rimLen[i] = elite || king ? RIM_ELITE_S : RIM_S;
     this.flash[i] = 1;
     this.tint[i] = rgb;
+    // A big hit slides the beast back 0.3–0.8 m along the blow (it stays where it lands; elites half); the
+    // finisher's light flings small beasts up in one flip. The king never moves at the root.
+    if (!king && power >= SLIDE_POWER) {
+      if (power > LAUNCH_POWER && !elite) this.launch(i, dx, dz);
+      else {
+        const d = (SLIDE_MIN + (SLIDE_MAX - SLIDE_MIN) * Math.min(1, (power - SLIDE_POWER) / 0.25)) * (elite ? 0.5 : 1);
+        // Exponential decay: distance = v0 / SLIDE_K; a slide already running keeps the faster of the two.
+        const v0 = d * SLIDE_K;
+        const cur = this.svx[i]! * dx + this.svz[i]! * dz;
+        if (v0 > cur) {
+          this.svx[i] = dx * v0;
+          this.svz[i] = dz * v0;
+        }
+      }
+    }
     // Recoil 5–30 cm along the blow: a velocity impulse on the critically damped spring (peak = push, ~80 ms out).
     // The king never moves at the root. The spring's speed is capped so stacked blows never throw a beast past 30 cm.
     if (!king) {
@@ -456,7 +518,7 @@ export class LabHerd implements TargetField {
     // flinch on small beasts, 1–3° on the king.
     if (this.immune[i]! <= 0) {
       const big = power >= 0.8;
-      const tip = king ? TIP_KING : elite || big ? TIP_STAGGER * (elite ? 0.8 : 1) : TIP_SMALL;
+      const tip = king ? TIP_KING : elite ? TIP_ELITE : big ? TIP_STAGGER : TIP_SMALL;
       // A new axis only once the last tip has nearly settled (turning a tipped body's axis would jump it).
       if (Math.abs(this.tilt[i]!) < 0.02) {
         this.ax[i] = dz;
@@ -464,8 +526,8 @@ export class LabHerd implements TargetField {
       }
       this.tiltV[i] = this.tiltV[i]! + tip / TILT_PEAK;
       if (elite || big || king) {
-        this.stag[i] = king ? 0 : STAGGER_S;
-        this.immune[i] = IMMUNE_S;
+        this.stag[i] = king ? 0 : elite ? STAGGER_ELITE_S : STAGGER_S;
+        this.immune[i] = elite ? IMMUNE_ELITE_S : IMMUNE_S;
       } else {
         this.immune[i] = RIM_S;
       }
@@ -473,6 +535,9 @@ export class LabHerd implements TargetField {
     this.hp[i] = this.hp[i]! - (power >= 0.9 ? 3 : power >= 0.5 ? 2 : 1) / this.toughness;
     if (this.hp[i]! <= 0) {
       this.dying[i] = 1e-4;
+      // The slice runs along this blow.
+      this.kdx[i] = dx;
+      this.kdz[i] = dz;
       // Killed while still dissolving in (or out): the death goes on from what is shown, and the spawn or
       // leave stops for good (it used to snap the body back whole, then resume the leave after the respawn).
       this.die0[i] = this.shownDis[i]!;
@@ -482,6 +547,26 @@ export class LabHerd implements TargetField {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Flings a small beast up along (dx, dz) in one flip (the finisher's light): it lands upright about 0.7 s
+   * later, or dies in the air. Elites and the king only stagger.
+   */
+  launch(i: number, dx: number, dz: number): void {
+    if (i < 0 || i >= this.count || this.tier(i) >= 2) return;
+    if (this.air[i]! > 0.05) return;
+    const vy = LAUNCH_VY * (0.9 + 0.2 * ((i * 37) % 10) / 10);
+    this.airV[i] = vy;
+    this.air[i] = 0.001;
+    this.svx[i] = dx * LAUNCH_V;
+    this.svz[i] = dz * LAUNCH_V;
+    // One whole turn over the flight (2 vy / g), tumbling away from the blow.
+    this.flip[i] = 0;
+    this.flipV[i] = (Math.PI * 2) / ((2 * vy) / -LAUNCH_G);
+    this.ax[i] = dz;
+    this.az[i] = -dx;
+    this.tilt[i] = this.tiltV[i] = 0;
   }
 
   update(dt: number): void {
@@ -508,6 +593,7 @@ export class LabHerd implements TargetField {
       const dis = this.dissolveAttr[k]!;
       const edge = this.edgeAttr[k]!;
       const rimA = this.rimAttr[k]!;
+      const cutA = this.cutAttr[k]!;
       // Reaction timers. A local hit-stop holds this beast still (its springs and walk wait).
       this.immune[i] = Math.max(0, this.immune[i]! - dt);
       const held = this.hold[i]! > 0;
@@ -540,6 +626,25 @@ export class LabHerd implements TargetField {
           continue;
         }
       }
+      // Knockback slide (decays; slower in the air), the flight and its flip.
+      if (this.svx[i] !== 0 || this.svz[i] !== 0) {
+        this.px[i] = this.px[i]! + this.svx[i]! * bdt;
+        this.pz[i] = this.pz[i]! + this.svz[i]! * bdt;
+        const kd = Math.exp(-(this.air[i]! > 0 ? 1.2 : SLIDE_K) * bdt);
+        this.svx[i] = this.svx[i]! * kd;
+        this.svz[i] = this.svz[i]! * kd;
+        if (Math.abs(this.svx[i]!) + Math.abs(this.svz[i]!) < 0.01) this.svx[i] = this.svz[i] = 0;
+      }
+      if (this.air[i]! > 0) {
+        this.airV[i] = this.airV[i]! + LAUNCH_G * bdt;
+        this.air[i] = this.air[i]! + this.airV[i]! * bdt;
+        this.flip[i] = this.flip[i]! + this.flipV[i]! * bdt;
+        if (this.air[i]! <= 0) {
+          // Lands upright with a squash.
+          this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
+          this.flash[i] = Math.max(this.flash[i]!, 0.6);
+        }
+      }
       let lift = 0;
       let dissolve = 0;
       if (this.dying[i]! > 0) {
@@ -549,15 +654,32 @@ export class LabHerd implements TargetField {
         const d0 = this.die0[i]!;
         dissolve = d0 + (1 - d0) * e;
         lift = this.lift0[i]! * (1 - e) + (this.caught[i] === 1 ? 0.35 : -0.08) * e;
-        const tc = (this.tint[i]! >> 16) & 255;
-        const tg = (this.tint[i]! >> 8) & 255;
-        const tb = this.tint[i]! & 255;
-        edge.setXYZ(idx, (tc / 255) * 2.4, (tg / 255) * 2.4, (tb / 255) * 2.4);
+        // The edge in the killer's colour, saturated (its flash colour is pale: the white comes out), hot.
+        const tc = ((this.tint[i]! >> 16) & 255) / 255;
+        const tg = ((this.tint[i]! >> 8) & 255) / 255;
+        const tb = (this.tint[i]! & 255) / 255;
+        const m = Math.max(tc, tg, tb, 1e-3);
+        const sr = Math.pow(tc / m, 3);
+        const sg = Math.pow(tg / m, 3);
+        const sb = Math.pow(tb / m, 3);
+        edge.setXYZ(idx, sr * 3.2, sg * 3.2, sb * 3.2);
+        // The slice plane in the model's frame: through the body's middle, along the blow and tilted (a diagonal cut).
+        const cy = (this.heights[k] ?? 0.8) * 0.5;
+        const nx = -this.kdz[i]!;
+        const nz = this.kdx[i]!;
+        const cyaw = Math.cos(this.yaw[i]!);
+        const syaw = Math.sin(this.yaw[i]!);
+        const l = Math.hypot(nx, 0.6, nz) || 1;
+        cutA.setXYZW(idx, (nx * cyaw - nz * syaw) / l, 0.6 / l, (nx * syaw + nz * cyaw) / l, cy);
         if (u >= 1) {
           this.dying[i] = 0;
           this.live[i] = 0;
           this.caught[i] = 0;
-          this.gone[i] = GONE_S;
+          this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = this.svx[i] = this.svz[i] = 0;
+          cutA.setXYZW(idx, 0, 1, 0, 0);
+          // A tide refills fast while a field-wide skill runs; otherwise the field stays cleared a while, so the
+          // kills read (respawns in a vortex's crater 1.9 s on looked as if the beasts were never touched).
+          this.gone[i] = this.toughness > 1 ? GONE_S : GONE_CLEAR_S;
           dis.setX(idx, 1);
           mesh.setMatrixAt(idx, this.zero);
           continue;
@@ -634,8 +756,8 @@ export class LabHerd implements TargetField {
       const roll = this.mode === "march" ? Math.sin(this.time * 9 + i) * 0.05 : 0;
       this.e.set(roll, this.yaw[i]!, 0);
       this.q.setFromEuler(this.e);
-      // Stagger: tip about the ground axis ⟂ the blow (applied in world space, before the yaw).
-      const tl = this.tilt[i]!;
+      // Stagger: tip about the ground axis ⟂ the blow (applied in world space, before the yaw); a flight adds its flip.
+      const tl = this.tilt[i]! + this.flip[i]!;
       if (Math.abs(tl) > 1e-4) {
         this.axis.set(this.ax[i]!, 0, this.az[i]!);
         if (this.axis.lengthSq() > 1e-8) {
@@ -649,7 +771,15 @@ export class LabHerd implements TargetField {
       const sq = 0.09 * f * f;
       this.shownDis[i] = dissolve;
       this.shownLift[i] = lift;
-      this.p.set(this.x(i), lift + bob, this.z(i));
+      this.p.set(this.x(i), lift + bob + this.air[i]!, this.z(i));
+      if (this.flip[i] !== 0) {
+        // A flipping body turns about its middle, not its feet: shift the feet by (middle − turned middle).
+        const mid = (this.heights[k] ?? 0.8) * 0.5;
+        this.pv.set(0, mid, 0).applyQuaternion(this.q);
+        this.p.x += -this.pv.x;
+        this.p.y += mid - this.pv.y;
+        this.p.z += -this.pv.z;
+      }
       this.s.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
       this.m.compose(this.p, this.q, this.s);
       mesh.setMatrixAt(idx, this.m);
@@ -658,7 +788,7 @@ export class LabHerd implements TargetField {
       if (f > 0) {
         this.flash[i] = Math.max(0, f - dt * 20);
         const rgb = this.tint[i]!;
-        const g = 1 + 1.2 * f;
+        const g = 1 + 0.5 * f;
         const w = 1 - f;
         this.c.setRGB(w + f * (((rgb >> 16) & 255) / 255) * g, w + f * (((rgb >> 8) & 255) / 255) * g, w + f * ((rgb & 255) / 255) * g);
         mesh.setColorAt(idx, this.c);
@@ -674,6 +804,7 @@ export class LabHerd implements TargetField {
       this.dissolveAttr[k]!.needsUpdate = true;
       this.edgeAttr[k]!.needsUpdate = true;
       this.rimAttr[k]!.needsUpdate = true;
+      this.cutAttr[k]!.needsUpdate = true;
     }
   }
 }
