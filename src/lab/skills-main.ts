@@ -439,12 +439,15 @@ const compiler = new DamageCompiler(numbers);
 const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 0));
 const W_HP = 90 * realmG;
 /** Canon §12.1 per blow, in W (key 7 is not in the canon yet: a stand-in). */
-const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 0.8, k7: 0.35 };
+const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 2.0, k7: 0.35 };
 const critRand = new Rand(1503);
 const dmgRand = new Rand(907);
 /** Releases so far (an attack id each) and the latest attack of each skill; K2's hits so far in its attack (−15 % each). */
 let attacks = 0;
 const attackOf: Record<string, number> = {};
+/** The latest cast's compiled damage and blows per skill (stand-in numbers; K5 must out-hit key 7, round 3b). */
+const castDamage: Record<string, number> = {};
+const castHits: Record<string, number> = {};
 const hitsOf: Record<string, number> = {};
 /** The skill's colour for its numbers (sRGB hex of its halo), cached per slot for the equipped weapon (no key string per blow). */
 const numberRgb: Record<string, number> = {};
@@ -472,6 +475,8 @@ bus.on((e) => {
     attacks += 1;
     attackOf[e.slot] = attacks;
     hitsOf[e.slot] = 0;
+    castDamage[e.slot] = 0;
+    castHits[e.slot] = 0;
     // Field-wide, ultimate and multi-target skills show one running headline total at the top of the view (round
     // 3a: their small blows count only there).
     if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4") compiler.headline(attacks);
@@ -484,6 +489,8 @@ bus.on((e) => {
     if (e.role === "secondary" && e.slot !== "k4" && e.slot !== "k7") w *= 0.6;
     const crit = critRand.next() < 0.15;
     const dmg = w * W_HP * dmgRand.range(0.92, 1.08) * (crit ? 1.5 : 1);
+    castDamage[e.slot] = (castDamage[e.slot] ?? 0) + dmg;
+    castHits[e.slot] = (castHits[e.slot] ?? 0) + 1;
     // Key 7 is an area attack: its blows on small beasts add up per 8 m cell over 1 s (about 70 % fewer numbers).
     compiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, e.y, e.z, skillRgb(e.slot), e.beastTier, 0.15, e.role === "finisher" || e.power >= 0.9, e.slot === "k7");
     if (e.role === "finisher") compiler.finisher(attackOf[e.slot] ?? 0);
@@ -1527,7 +1534,7 @@ void (async () => {
         else if (f.tier[i]! >= 4) crits += 1;
         else victims += 1;
       }
-      return { shown: compiler.shown, totalOnly: compiler.totalOnly, clusters: compiler.clusters, live: numbers.live, headlines, victims, crits, dropped: f.dropped };
+      return { shown: compiler.shown, totalOnly: compiler.totalOnly, clusters: compiler.clusters, live: numbers.live, headlines, victims, crits, dropped: f.dropped, castK7: castDamage.k7 ?? 0, castK5: castDamage.k5 ?? 0, hitsK7: castHits.k7 ?? 0, hitsK5: castHits.k5 ?? 0 };
     },
     victims: () => victims.report(),
     beast(i) {

@@ -33,7 +33,8 @@
 import * as THREE from "three";
 import { BladeSet, guardBand, loadBladeGeometry, loadWeaponModel } from "./blades";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
-import { GraphicSwords, SWORD_SPINE } from "./sword-grammar";
+import { GraphicSwords, SWORD_LEAD, SWORD_MID, SWORD_SPINE } from "./sword-grammar";
+import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate } from "./sword-rain";
 import type { TargetField } from "./targets";
 import { DEFAULT_WEAPON, glowOf, rimOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
@@ -228,6 +229,45 @@ const K5_ARM_T0 = 0.05;
 const K5_ARM_T1 = 4.85;
 /** Before the blades dive, the halo of swords behind the caster spins on and shrinks away over this time (s). */
 const K5_HALO_OUT_S = 0.3;
+/**
+ * Thiên Hà Kiếm Vũ's sword rain (round 3b; sword-rain.ts), seconds from its release (after the cut-in): the gate
+ * opens (0–0.35), four columns link it to the ground (0.1–0.31), six lead swords drop on the gravest prey
+ * (0.36–0.95), three dense waves rain over the field (0.62–1.35), the heaven sword falls from the gate (1.29) and
+ * lands at the climax (1.55); the planted swords and the rift hold the aftermath until RAIN_END_AT.
+ */
+const RAIN_GATE_Y = 24;
+const RAIN_GATE_OPEN_S = 0.35;
+const RAIN_GATE_CLOSE_AT = 2.4;
+const RAIN_COLUMN_X = [-0.95, -0.33, 0.33, 0.95] as const;
+const RAIN_LEADS = 6;
+const RAIN_LEAD_AT = 0.36;
+const RAIN_LEAD_GAP = 0.07;
+const RAIN_LEAD_FALL_S = 0.24;
+const RAIN_WAVES = [0.62, 0.86, 1.1] as const;
+const RAIN_PER_WAVE = 48;
+const RAIN_WAVE_SPREAD_S = 0.22;
+const RAIN_CLIMAX_AT = 1.55;
+const RAIN_COLOSSUS_FALL_S = 0.26;
+const RAIN_COLOSSUS_M = 20;
+const RAIN_RIFT_M = 22;
+const RAIN_END_AT = 3.9;
+const RAIN_PLANT_CAP = 16;
+/** The rain's footprint (m): the whole beast field, flanks and the king included. */
+const RAIN_FIELD = { x0: -18, x1: 18, z0: -18, z1: -1 } as const;
+
+interface RainDrop {
+  active: boolean;
+  kind: number;
+  x: number;
+  z: number;
+  t0: number;
+  dur: number;
+  y0: number;
+  target: number;
+  wave: number;
+  landed: boolean;
+  lean: number;
+}
 /** Lạc Kiếm Trận cast again while it holds: the old array's light fades over this time (s). */
 const K4_OLD_S = 0.3;
 
@@ -684,6 +724,21 @@ export class KiemFx {
   /** An array cast over while it held: its held light fades out over K4_OLD_S where it stood (t < 0: none). */
   private k4Old = { t: -1, x: 0, z: 0, hold: 0, dark: 0 };
   private k5 = { active: false, t: 0, x: 0, z: 0, wave: 0, done: false, dissolved: false, acc: 0, glow0: 0 };
+  /** The sword rain's drawing (round 3b): the gate, its swords, light strips and ground marks. */
+  private readonly gate = new SkyGate(2);
+  private readonly rainSwords = new GraphicSwords(260, 17);
+  private readonly rainStrips = new LightStrips(160, 15);
+  private readonly rainMarks = new GroundMarks(80, 4);
+  private readonly drops: RainDrop[] = Array.from({ length: 200 }, () => ({ active: false, kind: 0, x: 0, z: 0, t0: 0, dur: 0, y0: 0, target: -1, wave: 0, landed: false, lean: 0 }));
+  private readonly planted = Array.from({ length: RAIN_PLANT_CAP }, () => ({ active: false, kind: 0, x: 0, z: 0, lean: 0, t: 0 }));
+  private readonly marks = Array.from({ length: 72 }, () => ({ active: false, kind: 0, x: 0, z: 0, size: 0, t0: 0, life: 0, angle: 0, seed: 0 }));
+  private readonly columns = Array.from({ length: RAIN_COLUMN_X.length }, () => ({ gx: 0, gz: 0, rimA: 0, t0: 0 }));
+  private readonly rift = { t: -1, x: 0, z: 0, angle: 0, seed: 0 };
+  private readonly colossus = { active: false, done: false, t0: 0, sx: 0, sy: 0, sz: 0 };
+  private readonly rainWaveHit = new Uint8Array(RAIN_WAVES.length);
+  private rainNextLead = 0;
+  private plantedN = 0;
+  private rainEmberAcc = 0;
 
   constructor(
     private readonly host: KiemHost,
@@ -757,6 +812,7 @@ export class KiemFx {
     for (const s of this.sigils) L.add(s.mesh);
     for (const p of this.pools) L.add(p.mesh);
     L.add(this.blades.mesh, this.ribbons.mesh, this.beams.mesh, this.spines.mesh);
+    L.add(this.gate.mesh, this.rainSwords.mesh, this.rainStrips.mesh, this.rainMarks.mesh);
     for (let i = 0; i < 24; i += 1) {
       this.flights.push({ active: false, blade: 0, ribbon: 0, silk: -1, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, big: false, hit: -1, sx: 0, sy: 0, sz: 0, acc: 0, d0x: 0, d0y: 0, d0z: 0, turn: FLIGHT_TURN_S, ldx: 0, ldy: 0, ldz: 1, slot: "auto" });
     }
@@ -945,7 +1001,12 @@ export class KiemFx {
       this.reveal[k] = 0;
       this.chargeAge[k] = 0;
     }
-    this.k5DiveSet.fill(0);
+    for (const d of this.drops) d.active = false;
+    for (const q of this.planted) q.active = false;
+    for (const m of this.marks) m.active = false;
+    this.rift.t = -1;
+    this.colossus.active = this.colossus.done = false;
+    this.gate.hide();
     this.haloN = 0;
     this.haloAng = 0;
     this.haloK = 1;
@@ -1552,10 +1613,6 @@ export class KiemFx {
   private castK5(tx: number, tz: number): void {
     this.host.play("ult");
     const k = this.k5;
-    // Cast again while it runs: the old belts' blades fade out where they stand before the new belts reuse
-    // them (they jumped 3.5 m and turned 75° in one frame).
-    const was = k.active;
-    for (let i = 0; i < this.poolN; i += 1) this.k5Old[i] = was && this.bPres[POOL0 + i]! > 0 ? 1 : 0;
     k.active = true;
     k.t = 0;
     k.acc = 0;
@@ -1564,44 +1621,32 @@ export class KiemFx {
     k.dissolved = false;
     k.x = tx;
     k.z = tz;
-    this.k5DiveSet.fill(0);
-    k.glow0 = this.sigSpiral.mesh.visible ? this.sigSpiral.uniforms.uGlow.value : 0;
-    this.sigSpiral.place(tx, tz, 0);
-    this.releaseFlash(1.1, 8, 3.2, 5);
-    // The vortex draws the beasts in the zone toward its heart until just after the last wave (the field eases them).
-    this.host.pull?.(tx, tz, 6.2, T_K5_HITS[2] + 0.5);
-    this.host.impulse(2, tx - this.c.x, tz - this.c.z);
-    // Heaven opens over the array: a tall pillar of light and a shock across the zone.
-    this.pillar(tx, tz, 13, 2.4, 0.55, 0.8);
-    this.groundShockAt(tx, tz, 0.8, 6.8, 0.55, 0.75);
-    this.shockAt(tx, 1.2, tz, 4.5, 0.4, 0.6);
-    // Streams of sword-light from the caster into the array.
-    this.host.hand(this.v);
-    for (let i = 0; i < this.n(16); i += 1) {
-      const ex = tx + this.rand.range(-3.5, 3.5) - this.v.x;
-      const ey = 2.8 + this.rand.range(-0.4, 0.8) - (this.v.y + 0.4);
-      const ez = tz + this.rand.range(-3, 3) - this.v.z;
-      const sp = this.rand.range(0.26, 0.4);
-      const l = Math.hypot(ex, ey, ez) || 1;
-      const b = this.beams.spec.reset();
-      b.x = this.v.x;
-      b.y = this.v.y + 0.4;
-      b.z = this.v.z;
-      b.vx = ex / sp;
-      b.vy = ey / sp;
-      b.vz = ez / sp;
-      b.dx = -ex / l;
-      b.dy = -ey / l;
-      b.dz = -ez / l;
-      b.len0 = 0.6;
-      b.len1 = 2.6;
-      b.w0 = b.w1 = 0.24;
-      b.life = sp;
-      this.beamCol(b, 1.0, 0.75);
-      b.fadeBase = 0.04;
-      b.fadeTip = 0.85;
-      this.beams.emit();
+    k.glow0 = this.sigSpiral.mesh.visible ? this.sigSpiral.uniforms.uFade.value : 0;
+    for (const d of this.drops) d.active = false;
+    for (const p of this.planted) p.active = false;
+    for (const m of this.marks) m.active = false;
+    this.plantedN = 0;
+    this.rainNextLead = 0;
+    this.rainWaveHit.fill(0);
+    this.rift.t = -1;
+    this.colossus.active = false;
+    // The gate opens over the far field, ~46 % of the view wide, high in the frame (f5), for this camera.
+    this.gate.place(this.host.camera as THREE.PerspectiveCamera, 0.74, RAIN_GATE_Y, 0.44);
+    // The columns hang from the gate's rim to four ground points across the field (left flank to right flank).
+    for (let i = 0; i < this.columns.length; i += 1) {
+      const c = this.columns[i]!;
+      const s = RAIN_COLUMN_X[i]!;
+      c.gx = s * 14;
+      c.gz = -14 + 5 * Math.abs(s) + this.rand.range(-1, 1);
+      c.rimA = Math.PI * (1.12 + 0.76 * (i / (this.columns.length - 1))) ;
+      c.t0 = 0.1 + 0.07 * i;
     }
+    this.releaseFlash(1.1, 8, 3.2, 5);
+    this.host.impulse(2, tx - this.c.x, tz - this.c.z);
+    // The caster's command: one column of light up from the hand into the sky.
+    this.host.hand(this.v);
+    this.beamAt(this.v.x, this.v.y + 0.2, this.v.z, 0, 1, 0, 26, 0.34, 0.5, 1.1, 0.85, 0.02, 0.9, 0.06);
+    this.groundShockAt(this.c.x, this.c.z, 0.4, 3.2, 0.4, 0.8);
   }
 
   // ── Shared pieces ────────────────────────────────────────────────────────
@@ -3958,163 +4003,356 @@ export class KiemFx {
     o.z = this.k5.z + Math.sin(psi) * r;
   }
 
+  /** A falling sword of the rain: lands at (x, z) at `t0 + dur`, from `y0` m above; kind 0 rain, 1 lead. */
+  private spawnDrop(kind: number, x: number, z: number, t0: number, dur: number, target: number, wave: number): void {
+    for (const d of this.drops) {
+      if (d.active) continue;
+      d.active = true;
+      d.kind = kind;
+      d.x = x;
+      d.z = z;
+      d.t0 = t0;
+      d.dur = dur;
+      d.y0 = kind === 1 ? 24 : this.rand.range(17, 23);
+      d.target = target;
+      d.wave = wave;
+      d.landed = false;
+      d.lean = this.rand.range(-0.12, 0.12);
+      return;
+    }
+  }
+
+  /** A sword stays planted where it landed (f6): up to RAIN_PLANT_CAP, the oldest small one gives way. */
+  private plant(kind: number, x: number, z: number, lean: number, t: number): void {
+    let slot = -1;
+    for (let i = 0; i < this.planted.length; i += 1) {
+      if (!this.planted[i]!.active) {
+        slot = i;
+        break;
+      }
+    }
+    if (slot < 0) return;
+    const p = this.planted[slot]!;
+    p.active = true;
+    p.kind = kind;
+    p.x = x;
+    p.z = z;
+    p.lean = lean;
+    p.t = t;
+    this.plantedN += 1;
+  }
+
+  private markAt(kind: number, x: number, z: number, size: number, t: number, life: number): void {
+    let best = this.marks[0]!;
+    for (const m of this.marks) {
+      if (!m.active) {
+        best = m;
+        break;
+      }
+      if (m.t0 < best.t0) best = m;
+    }
+    best.active = true;
+    best.kind = kind;
+    best.x = x;
+    best.z = z;
+    best.size = size;
+    best.t0 = t;
+    best.life = life;
+    best.angle = this.rand.range(0, Math.PI * 2);
+    best.seed = this.rand.range(0, 50);
+  }
+
+  /** A rain sword lands: a crack star, a short pillar, sparks, the beasts under it struck. */
+  private landDrop(d: RainDrop, t: number): void {
+    const T = this.host.targets;
+    const lead = d.kind === 1;
+    this.markAt(MARK_STAR, d.x, d.z, lead ? 3.6 : 1.7, t, lead ? 2.6 : 1.3);
+    this.sparkBurst(d.x, 0.3, d.z, this.n(lead ? 6 : 2), lead ? 1.1 : 0.6);
+    if (lead) {
+      this.groundShockAt(d.x, d.z, 0.3, 3.4, 0.35, 0.85);
+      this.twinkle(d.x, 0.6, d.z, 2.6, 0.14, 1);
+    } else if (this.rand.next() < 0.5 * this.dens) this.twinkle(d.x, 0.4, d.z, 1.2, 0.1, 1);
+    const n = T.inCircle(d.x, d.z, lead ? 2.6 : 1.9, this.hits);
+    for (let i = 0; i < n; i += 1) {
+      const h = this.hits[i]!;
+      if (lead && h === d.target) this.strike(h, this.c.x, this.c.z, 1, 1.3, true);
+      else this.strikeLight(h, d.x - 0.01, d.z - 0.3, lead ? 0.9 : 0.6);
+    }
+    // The first landing of each wave stops the world for its beat (one stop a wave, never one a blade).
+    if (!lead && this.rainWaveHit[d.wave] === 0) {
+      this.rainWaveHit[d.wave] = 1;
+      this.v.set(d.x, 1, d.z);
+      this.host.flash(this.v, this.pal.flash, 5);
+      this.host.hitStop(STOP_MS.k5);
+      this.host.shake?.(SHAKE_M.k5);
+    } else if (lead && d.wave === 0) {
+      this.v.set(d.x, 1, d.z);
+      this.host.flash(this.v, this.pal.flash, 7);
+      this.host.hitStop(STOP_MS.k5);
+    }
+    if (lead || this.rand.next() < 0.4) this.plant(lead ? 1 : 0, d.x, d.z, d.lean, t);
+  }
+
   private updateK5(dt: number): void {
     const k = this.k5;
+    const S = this.rainSwords;
+    const L = this.rainStrips;
+    const M = this.rainMarks;
+    S.begin();
+    L.begin();
+    M.begin();
     if (!k.active) {
+      this.gate.hide();
+      S.end();
+      L.end();
+      M.end();
       return;
     }
     k.t += dt;
+    const t = k.t;
     const T = this.host.targets;
-    const N = this.poolN;
-    // One phase, accumulated on the CPU (fxkit GroundSigil.spin): the drawn arms and the blade belts share it,
-    // and the speed change at the release no longer jumps the pattern (appendix B #3).
-    this.sigSpiral.spin = approach(this.sigSpiral.spin, K5_SPIN_LIVE, K5_SPIN_HALF_S, dt);
-    const phase = this.sigSpiral.phase;
-    const spin = this.sigSpiral.spin;
-    const lastHit = T_K5_HITS[2]!;
-    const end = 1 - smooth01((k.t - lastHit - 0.6) / 0.8);
-    // The sky dims over the array while it holds (a dark disc under the light).
-    // A typed word darkened the zone already; a cast with no word eases it in with the sigil (a 7.2 m one-frame
-    // card took no pool fade-in and popped on).
-    this.darkDisc(k.x, k.z, 7.2, 0.5 * end * smooth01((this.chargeAge.k5 + k.t) / SIGIL_IN_S), -1);
-    // Belts: blades ride the arms over the zone; one third of them dives at each hit tick as falling sword-light.
-    for (let i = 0; i < N; i += 1) {
-      const blade = POOL0 + i;
-      const belt = i % 3;
-      const phi = ((i * 0.61803) % 1 + 1) % 1;
-      const wave = Math.floor((i / N) * 3);
-      const hitT = T_K5_HITS[wave]!;
-      const appear = clamp01((k.t - phi * 0.25) / 0.2);
-      if (appear <= 0) continue;
-      if (this.k5Old[i] === 1) {
-        if (this.bPres[blade]! > 0) continue;
-        this.k5Old[i] = 0;
-      }
-      // Presence ramps too (show's scale-in): a blade freed late by the old cast starts small, not at `appear`.
-      const t0 = hitT - 0.16;
-      const dive = clamp01((k.t - t0) / 0.16);
-      let ph = phase;
-      if (dive > 0) {
-        if (this.k5DiveSet[wave] === 0) {
-          // The phase when this wave began to dive (back-dated to the exact tick).
-          this.k5DiveSet[wave] = 1;
-          this.k5PhaseAt[wave] = phase - spin * (k.t - t0);
-          this.k5SpinAt[wave] = spin;
-        }
-        // The belt's turn slows to a stop through the dive and stays fixed once planted (blades used to slide
-        // round the ring after they stuck, appendix B #1).
-        ph = this.k5PhaseAt[wave]! + this.k5SpinAt[wave]! * 0.16 * (dive - 0.5 * dive * dive);
-      }
-      this.k5Belt(phi, belt, ph);
-      const bx = this.belt.x;
-      const bz = this.belt.z;
-      const psi = this.belt.psi;
-      const by = 3.0 - 1.2 * phi + Math.sin(psi * 2 + k.t * 3) * 0.15;
-      // Tangent of the motion (ψ decreasing), nose slightly down.
-      const tx = Math.sin(psi);
-      const tz = -Math.cos(psi);
-      if (dive <= 0) {
-        this.show(blade, bx, by, bz, tx, -0.25, tz, K5_SWORD * appear, true, appear);
-        this.bladeTint(blade, 1.6);
-        continue;
-      }
-      // Diving to the ground under its belt point, then stuck in it.
-      const e = easeInCubic(dive);
-      const y = by + (0.35 - by) * e;
-      const out = 1 - clamp01((k.t - lastHit - 0.75) / 0.4);
-      if (out <= 0) {
-        this.drop(blade);
-        continue;
-      }
-      // The nose turns from the orbit's tangent to straight down (smoothstep, ≤ ~14°/frame) and keeps a 2 % lean
-      // along the tangent, so its roll stays defined (an exact −Y flipped the roll and flashed the steel, appendix B #13).
-      const sd = smooth01(dive);
-      const ddx = tx * (1 - 0.98 * sd);
-      const ddy = -0.25 - 0.75 * sd;
-      const ddz = tz * (1 - 0.98 * sd);
-      this.show(blade, bx, y, bz, ddx, ddy, ddz, K5_SWORD * out * appear, true, out * appear);
-      this.bladeTint(blade, 1.4 + 1.6 * pulse(clamp01((k.t - hitT) / 0.25)));
-      if (dive < 1) {
-        // The falling streak dims through the dive instead of vanishing on the planting frame (~100 at once).
-        const sk = 1 - smooth01(dive);
-        this.beamAt(bx, y, bz, 0, 1, 0, 0.8 + 3.2 * (1 - e) + 1.2 * e, 0.26, -1, 0.6 * sk, 0.65 * sk, 0.04, 0.85, 0);
-      }
+    // The typed ground spiral gives way to the sky (round 3a's floor decal is gone).
+    const sp = this.sigSpiral;
+    if (sp.mesh.visible) {
+      sp.uniforms.uFade.value = k.glow0 * (1 - smooth01(t / 0.3));
+      if (t > 0.3) sp.hide();
     }
-    // Twinkles across the belts while the sky of swords turns.
-    if (k.t < lastHit) {
-      k.acc += K5_TWINKLE_RATE * this.dens * dt;
-      while (k.acc >= 1) {
-        k.acc -= 1;
-        const phi = this.rand.next();
-        this.k5Belt(phi, Math.floor(this.rand.next() * 3), phase);
-        this.twinkle(this.belt.x, 2.6 - phi, this.belt.z, 0.7, 0.2, 0.8);
-      }
+    // The gate: opens over 0.35 s, flares at the climax, closes after the aftermath's first second.
+    const open = easeOutCubic(clamp01(t / RAIN_GATE_OPEN_S));
+    const close = smooth01((t - RAIN_GATE_CLOSE_AT) / 0.5);
+    const flare = Math.max(0, 1 - Math.abs(t - RAIN_CLIMAX_AT) / 0.25) + 0.25 * pulse(clamp01((t - 0.35) / 0.4));
+    this.gate.set(open * (1 - 0.35 * close), smooth01(t / 0.12) * (1 - close), Math.min(1, flare), t * 0.35, this.time);
+    // Columns: grow from the gate's rim to the ground, segments running down, gone after the climax.
+    for (const c of this.columns) {
+      const age = t - c.t0;
+      if (age <= 0) continue;
+      const grow = easeOutCubic(clamp01(age / 0.18));
+      const fade = 1 - smooth01((t - RAIN_CLIMAX_AT - 0.3) / 0.5);
+      if (fade <= 0) continue;
+      // A vertical column from the ground into the sky (it reaches the top of the frame, under the gate's rim).
+      const top = RAIN_GATE_Y + 8;
+      this.w.set(c.gx, top, c.gz);
+      const gx = c.gx;
+      const gy = top * (1 - grow);
+      const gz = c.gz;
+      const beat = 1 + 0.6 * Math.max(0, 1 - Math.abs(t - RAIN_CLIMAX_AT) / 0.2);
+      L.push(gx, gy, gz, this.w.x, this.w.y, this.w.z, 15 * beat, 0.16, fade * smooth01(age / 0.08), 4.5 * beat, -t * 2.2 + c.rimA, 0.04);
     }
-    // Waves.
-    while (k.wave < 3 && k.t >= T_K5_HITS[k.wave]!) {
+    // Lead swords: six giants drop one by one on the gravest prey (the king, elites, then the biggest beasts).
+    while (this.rainNextLead < RAIN_LEADS && t >= RAIN_LEAD_AT + this.rainNextLead * RAIN_LEAD_GAP) {
+      const i = this.rainNextLead;
+      this.rainNextLead += 1;
+      const prey = this.gravest(i);
+      const px = prey >= 0 ? T.x(prey) : RAIN_FIELD.x0 + (RAIN_FIELD.x1 - RAIN_FIELD.x0) * this.rand.next();
+      const pz = prey >= 0 ? T.z(prey) : RAIN_FIELD.z0 + (RAIN_FIELD.z1 - RAIN_FIELD.z0) * this.rand.next();
+      this.spawnDrop(1, px, pz, t, RAIN_LEAD_FALL_S, prey, 0);
+    }
+    // The rain: three dense waves over ≥ 70 % of the field; half the blades fall on beasts, half on a jittered grid.
+    while (k.wave < RAIN_WAVES.length && t >= RAIN_WAVES[k.wave]!) {
       const w = k.wave;
-      const last = w === 2;
       k.wave += 1;
-      // Where this wave's blades planted: the phase their dive froze at.
-      const planted = this.k5DiveSet[w] === 1 ? this.k5PhaseAt[w]! + this.k5SpinAt[w]! * 0.08 : phase;
-      // Batched ground strikes on the belts: a glint, a small shock ring and two sparks each.
-      const strikes = this.n(18);
-      for (let s = 0; s < strikes; s += 1) {
-        const phi = this.rand.next();
-        this.k5Belt(phi, s % 3, planted);
-        const gx = this.belt.x;
-        const gz = this.belt.z;
-        this.twinkle(gx, 0.4, gz, 1.3, 0.12, 1);
-        this.groundShockAt(gx, gz, 0.1, 0.9, 0.25, 0.6);
-        this.sparkBurst(gx, 0.35, gz, this.n(2), 0.6);
-      }
-      const n = T.inCircle(k.x, k.z, 6, this.hits);
-      for (let i = 0; i < n; i += 1) this.strikeLight(this.hits[i]!, k.x, k.z, last ? 1 : 0.5);
-      // The vortex core burst eases in over ≥ 3 frames, still from the wave's tick (round 2: it blazed on in one).
-      this.riseS = SOFT_RISE_S;
-      this.burstAt(k.x, 1.2, k.z, n, last ? 1.6 : 1.1);
-      this.ring(k.x, k.z, 0.8, last ? 7 : 5.5, last ? 0.5 : 0.36, last ? 0.85 : 0.6);
-      this.groundShockAt(k.x, k.z, 0.6, last ? 7.2 : 5.8, last ? 0.55 : 0.4, last ? 0.85 : 0.65);
-      this.shockAt(k.x, 1.2, k.z, last ? 5.5 : 3.2, last ? 0.4 : 0.26, 0.7);
-      this.pillar(k.x, k.z, last ? 15 : 8.5, last ? 3.0 : 1.5, last ? 0.65 : 0.4, last ? 1 : 0.8);
-      if (last) {
-        this.flareAt(k.x, 1.0, k.z, 0.14, 3.2, 4.2);
-        this.rays(k.x, 0.8, k.z, this.n(18), 6, 0.4, 0.3, 0.3);
-      }
-      this.riseS = 0;
-      this.v.set(k.x, 1.2, k.z);
-      this.host.flash(this.v, this.pal.flash, last ? 12 : 6);
-      this.host.impulse(last ? 4 : 1.5, 0, -1);
-      // Weight: every wave stops the world (4, then 5 frames) and shakes the camera; the ground cracks wider each wave.
-      this.host.hitStop(last ? STOP_MS.k5Last : STOP_MS.k5);
-      this.host.shake?.(last ? SHAKE_M.k5Last : SHAKE_M.k5);
-      this.startCrack(this.crack, k.x, k.z, w === 0 ? 0.55 : w === 1 ? 0.8 : 1, last ? 1.8 : 1.3, CRACK_LIFE_K5 + (last ? 0 : T_K5_HITS[2]! - T_K5_HITS[w]!));
-      if (last) this.aftermath(k.x, k.z, 5.5, 1.6, 60);
-    }
-    // The belts on the ground glow with each wave and end as a dark ink tri-spiral.
-    this.sigSpiral.uniforms.uReveal.value = this.revealAfterCast("k5", dt);
-    // The belts' glow takes over from the typed sigil's over 0.1 s, then beats with the waves.
-    const live = k.t < lastHit ? 1.0 + 0.7 * pulse(((k.t + 0.1) % 0.75) / 0.75) : 1.4 * (1 - clamp01((k.t - lastHit) / 0.5));
-    this.sigSpiral.uniforms.uGlow.value = k.glow0 + (live - k.glow0) * smooth01(k.t / 0.1);
-    this.sigSpiral.uniforms.uInk.value = 0.6 + 0.4 * clamp01((k.t - lastHit) / 0.3);
-    // It fades out over SIGIL_OUT_S from lastHit + 1.05 s, eased in alpha, swelling a little (round 2: linear, 0.5 s).
-    const out = smooth01((k.t - lastHit - 1.05) / SIGIL_OUT_S);
-    this.sigSpiral.uniforms.uFade.value = smooth01((this.chargeAge.k5 + k.t) / SIGIL_IN_S) * (1 - out);
-    this.sigSpiral.mesh.scale.set(1 + 0.05 * out, 1 + 0.05 * out, 1);
-    if (!k.dissolved && k.t > lastHit + 0.75) {
-      // The stuck blades break into light.
-      k.dissolved = true;
-      for (let i = 0; i < N; i += 12) {
-        if (!this.blades.isVisible(POOL0 + i)) continue;
-        this.w.set(this.blades.cx[POOL0 + i]!, 0.5, this.blades.cz[POOL0 + i]!);
-        this.burstMotes(this.w, this.n(3), 0.9);
+      const count = this.n(RAIN_PER_WAVE);
+      let m = 0;
+      const live = T.size;
+      for (let j = 0; j < count; j += 1) {
+        let x: number;
+        let z: number;
+        let prey = -1;
+        if (j % 2 === 0 && live > 0) {
+          // A live beast (scan from a random start).
+          const s0 = Math.floor(this.rand.next() * live);
+          for (let q = 0; q < live; q += 1) {
+            const b = (s0 + q) % live;
+            if (T.alive(b)) {
+              prey = b;
+              break;
+            }
+          }
+        }
+        if (prey >= 0) {
+          x = T.x(prey) + this.rand.range(-0.4, 0.4);
+          z = T.z(prey) + this.rand.range(-0.4, 0.4);
+        } else {
+          const gxN = 9;
+          const cell = (m + w * 3) % (gxN * 5);
+          m += 1;
+          x = RAIN_FIELD.x0 + ((cell % gxN) + this.rand.next()) * ((RAIN_FIELD.x1 - RAIN_FIELD.x0) / gxN);
+          z = RAIN_FIELD.z0 + (Math.floor(cell / gxN) + this.rand.next()) * ((RAIN_FIELD.z1 - RAIN_FIELD.z0) / 5);
+        }
+        this.spawnDrop(0, x, z, t + this.rand.range(0, RAIN_WAVE_SPREAD_S), this.rand.range(0.15, 0.2), prey, w);
       }
     }
-    if (k.t > lastHit + 1.45) {
+    // The colossus: one heaven sword falls from the gate's heart on the zone (the climax, its own shape).
+    const col = this.colossus;
+    if (!col.active && !col.done && t >= RAIN_CLIMAX_AT - RAIN_COLOSSUS_FALL_S) {
+      col.active = true;
+      col.done = false;
+      col.t0 = t;
+      col.sx = this.gate.centre.x;
+      col.sy = this.gate.centre.y;
+      col.sz = this.gate.centre.z;
+    }
+    if (col.active) {
+      const u = clamp01((t - col.t0) / RAIN_COLOSSUS_FALL_S);
+      const e = easeInCubic(u);
+      // From the gate's heart down to the zone, turning tip-down as it comes.
+      const tipX = col.sx + (k.x - col.sx) * e;
+      const tipY = col.sy + (-1.2 - col.sy) * e;
+      const tipZ = col.sz + (k.z - col.sz) * e;
+      const out = 1 - smooth01((t - RAIN_END_AT + 0.6) / 0.5);
+      if (out > 0) S.push(tipX, tipY + RAIN_COLOSSUS_M, tipZ, tipX, tipY, tipZ, 0.62, SWORD_LEAD, out * smooth01(u / 0.15 + (u >= 1 ? 1 : 0)), 7, u < 1 ? 1.2 : 0, 16);
+      if (u < 1) L.push(tipX, tipY, tipZ, col.sx, col.sy, col.sz, 22, 0.2, 0.8 * smooth01(u / 0.2), 5, -t * 3, 0.02);
+      else if (out > 0) L.push(k.x, 0, k.z, k.x, 5, k.z, 34, 0.18, 0.75 * out * (0.6 + 0.4 * Math.exp(-(t - RAIN_CLIMAX_AT) * 2)), 4.5, t, 0.02);
+      if (u >= 1 && !col.done) {
+        col.done = true;
+        this.climaxK5(t);
+      }
+    }
+    // Falling and landed blades.
+    for (const d of this.drops) {
+      if (!d.active) continue;
+      const u = (t - d.t0) / d.dur;
+      if (u < 0) continue;
+      if (u >= 1) {
+        if (!d.landed) {
+          d.landed = true;
+          this.landDrop(d, t);
+        }
+        // A landing pillar for 0.25 s, then the drop is free.
+        const age = t - d.t0 - d.dur;
+        const pl = 1 - smooth01(age / (d.kind === 1 ? 0.4 : 0.25));
+        if (pl <= 0) {
+          d.active = false;
+          continue;
+        }
+        const h = d.kind === 1 ? 9 : 4;
+        L.push(d.x, 0, d.z, d.x, h * (0.6 + 0.4 * pl), d.z, d.kind === 1 ? 16 : 8, 0.22, pl, d.kind === 1 ? 6 : 4, 0, 0.02);
+        continue;
+      }
+      const e = easeInCubic(u * 0.6 + 0.4 * u * u);
+      const y = d.y0 * (1 - e);
+      const len = d.kind === 1 ? 5.2 : 3.1;
+      const fade = smooth01(u / 0.12);
+      if (d.kind === 1) S.push(d.x + d.lean, y + len, d.z, d.x, y, d.z, 0.26, SWORD_LEAD, fade, 6.5, 1.4, 6);
+      else S.push(d.x, y + len, d.z, d.x, y, d.z, 0.15, SWORD_MID, fade, 4.6, 1.8, 3.5);
+    }
+    // Planted swords (f6): blades stuck in the ground with a lit base, fading with the aftermath.
+    const end = 1 - smooth01((t - (RAIN_END_AT - 0.7)) / 0.6);
+    for (const p of this.planted) {
+      if (!p.active) continue;
+      const age = t - p.t;
+      const lead = p.kind === 1;
+      const len = lead ? 5.2 : 3.1;
+      const above = len * 0.72;
+      const glow = (0.55 + 0.45 * Math.exp(-age * 3)) * end;
+      if (end <= 0) {
+        p.active = false;
+        continue;
+      }
+      S.push(p.x + p.lean * above, above, p.z, p.x, above - len, p.z, lead ? 0.26 : 0.15, lead ? SWORD_LEAD : SWORD_MID, end, (lead ? 4 : 3) * (0.6 + 0.4 * glow), 0, lead ? 6 : 3.5);
+      L.push(p.x, 0, p.z, p.x, lead ? 1.8 : 1.0, p.z, lead ? 12 : 7, 0.18, 0.7 * glow, 3.2, age, 0.02);
+    }
+    // The rift and its embers (f6).
+    const rf = this.rift;
+    if (rf.t >= 0) {
+      rf.t += dt;
+      const rev = easeOutCubic(clamp01(rf.t / 0.22));
+      const heat = 1 - smooth01((rf.t - 0.2) / 1.6);
+      const fadeR = 1 - smooth01((t - (RAIN_END_AT - 0.6)) / 0.6);
+      M.push(MARK_RIFT, rf.x, rf.z, rf.angle, RAIN_RIFT_M, RAIN_RIFT_M * 0.4, rf.seed, rev, fadeR, 3.2 + 2.8 * heat, 0.9, 0.75 + 0.25 * heat);
+      this.rainEmberAcc += 60 * this.dens * dt * fadeR;
+      while (this.rainEmberAcc >= 1) {
+        this.rainEmberAcc -= 1;
+        const s = this.rand.range(-0.45, 0.45) * RAIN_RIFT_M * rev;
+        this.riseMote(rf.x + Math.cos(rf.angle) * s, 0.1, rf.z + Math.sin(rf.angle) * s, 0.4, 0.07);
+      }
+    }
+    // Crack stars.
+    for (const m of this.marks) {
+      if (!m.active || m.size <= 0) continue;
+      const age = t - m.t0;
+      if (age > m.life) {
+        m.active = false;
+        continue;
+      }
+      const a = smooth01(age / 0.05) * (1 - smooth01((age - m.life * 0.6) / (m.life * 0.4)));
+      const heat = 2.6 * Math.exp(-age * 4) + 0.8;
+      M.push(MARK_STAR, m.x, m.z, m.angle, m.size, m.size, m.seed, 1, a, heat, 0.75, 0.8);
+    }
+    S.end();
+    L.end();
+    M.end();
+    if (t > RAIN_END_AT) {
       k.active = false;
-      for (let i = 0; i < N; i += 1) this.drop(POOL0 + i);
-      this.sigSpiral.hide();
-      this.sigSpiral.spin = 0;
+      this.gate.hide();
+      for (const d of this.drops) d.active = false;
+      for (const p of this.planted) p.active = false;
+      this.rift.t = -1;
+      this.colossus.active = false;
+      this.colossus.done = false;
+      S.begin();
+      L.begin();
+      M.begin();
+      S.end();
+      L.end();
+      M.end();
     }
+  }
+
+  /** The `i`-th gravest live beast: the king first, then elites and the biggest, spread over the field. */
+  private gravest(i: number): number {
+    const T = this.host.targets;
+    let best = -1;
+    let bestScore = -1;
+    for (let b = 0; b < T.size; b += 1) {
+      if (!T.alive(b)) continue;
+      let taken = false;
+      for (const d of this.drops) if (d.active && d.kind === 1 && d.target === b) taken = true;
+      if (taken) continue;
+      // Size first, then spread (far from the other leads' landings), plus a seeded jitter.
+      let near = 99;
+      for (const d of this.drops) if (d.active && d.kind === 1) near = Math.min(near, Math.hypot(d.x - T.x(b), d.z - T.z(b)));
+      const score = T.tier(b) * 10 + Math.min(near, 12) * 0.8 + this.rand.next() + (i === 0 && T.tier(b) >= 4 ? 100 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  /** The heaven sword lands: every beast on the field is struck, the rift opens, the gate flares. */
+  private climaxK5(t: number): void {
+    const k = this.k5;
+    const T = this.host.targets;
+    // Every live beast on the field (the zone's heart takes the full blow, the rest the shock).
+    let n = 0;
+    for (let b = 0; b < T.size && n < this.hits.length; b += 1) if (T.alive(b)) this.hits[n++] = b;
+    for (let i = 0; i < n; i += 1) {
+      const h = this.hits[i]!;
+      if (T.tier(h) >= 3) this.strike(h, k.x, k.z, 1, 1.4, true);
+      else this.strikeLight(h, k.x, k.z, 1);
+    }
+    this.rift.t = 0;
+    this.rift.x = k.x;
+    this.rift.z = k.z + 1.5;
+    this.rift.angle = -0.38 + this.rand.range(-0.1, 0.1);
+    this.rift.seed = this.rand.range(0, 40);
+    this.riseS = 0;
+    this.flareAt(k.x, 1.2, k.z, 0.16, 4.2, 6.4);
+    this.groundShockAt(k.x, k.z, 0.8, 11, 0.6, 0.9);
+    this.shockAt(k.x, 1.2, k.z, 7, 0.45, 0.75);
+    this.markAt(MARK_STAR, k.x, k.z, 7.5, t, 3.2);
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2 + this.rand.range(-0.3, 0.3);
+      this.markAt(MARK_STAR, k.x + Math.cos(a) * 6.5, k.z + Math.sin(a) * 4.5, 2.6, t, 2.6);
+    }
+    this.sparkBurst(k.x, 0.6, k.z, this.n(20), 1.6);
+    this.v.set(k.x, 1.2, k.z);
+    this.host.flash(this.v, this.pal.flash, 14);
+    this.host.impulse(5, 0, -1);
+    // The climax's stop (≥ 80 ms: the host plays it as the finisher with K5's own graphic frames).
+    this.host.hitStop(STOP_MS.k5Last);
+    this.host.shake?.(SHAKE_M.k5Last);
   }
 }
