@@ -147,6 +147,9 @@ void main() {
 
 /** The post pass: reads its buffer's size for the split's pixel offset. */
 class ScreenPass extends ShaderPass {
+  /** The edge split this frame in px at 1080p (the buffer's own px are set at draw: its pixel ratio floats, D57). */
+  splitPx = 0;
+
   constructor() {
     super(SCREEN_SHADER);
   }
@@ -155,6 +158,7 @@ class ScreenPass extends ShaderPass {
     const u = this.uniforms as typeof SCREEN_SHADER.uniforms;
     u.uTexel.value.set(1 / Math.max(1, readBuffer.width), 1 / Math.max(1, readBuffer.height));
     u.uAspect.value = readBuffer.width / Math.max(1, readBuffer.height);
+    u.uSplit.value = (this.splitPx * readBuffer.height) / 1080;
     super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
   }
 }
@@ -438,10 +442,11 @@ export class ScreenFx {
   /**
    * Steps every effect on real time (they play through a hit-stop and a
    * cut-in pause) and writes the camera offset for `camera` (metres along its
-   * own axes; px at 1080p turned into metres at the ground point it looks at)
-   * and the pass uniforms. `heightPx`: the view's CSS height.
+   * own axes; px at 1080p, a share of the view's height, turned into metres at
+   * the ground point it looks at, so it reads the same at any view size) and
+   * the pass uniforms.
    */
-  update(dt: number, camera: THREE.PerspectiveCamera, heightPx: number): void {
+  update(dt: number, camera: THREE.PerspectiveCamera): void {
     this.time += dt;
     const k = clamp01(this.intensity);
     this.trauma = Math.max(0, this.trauma - this.traumaRate * dt);
@@ -457,14 +462,13 @@ export class ScreenFx {
     const ny = vnoise(t, 17) * 0.7 + vnoise(t * 2.3, 19) * 0.3;
     const nr = vnoise(t * 0.8, 23);
     camera.getWorldDirection(this.fwd);
-    // Metres per px at the ground point on the view axis (the field's middle at the play camera).
+    // Metres per 1080p px at the ground point on the view axis (the field's middle at the play camera).
     const toGround = this.fwd.y < -0.05 ? camera.position.y / -this.fwd.y : 30;
     const mPerPx = (2 * toGround * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / 1080;
-    const scalePx = (px * Math.max(1, heightPx)) / 1080;
     this.right.setFromMatrixColumn(camera.matrixWorld, 0);
     this.up.setFromMatrixColumn(camera.matrixWorld, 1);
-    const ox = nx * scalePx * mPerPx;
-    const oy = ny * scalePx * mPerPx;
+    const ox = nx * px * mPerPx;
+    const oy = ny * px * mPerPx;
     this.offset.set(this.right.x * ox + this.up.x * oy, this.right.y * ox + this.up.y * oy, this.right.z * ox + this.up.z * oy);
     this.roll = THREE.MathUtils.degToRad(this.rollPeak) * tt * nr * k;
     this.punchAge += dt;
@@ -482,8 +486,8 @@ export class ScreenFx {
     u.uDark.value = dark;
     u.uFlash.value = flash;
     u.uFlashColor.value.copy(this.flashColor);
-    // px at 1080p into the buffer's px (the shader multiplies by its texel size).
-    u.uSplit.value = (split * Math.max(1, heightPx)) / 1080;
+    // px at 1080p; the pass turns them into its buffer's px when it draws.
+    this.pass.splitPx = split;
     const active = dark > 0.002 || flash > 0.002 || split > 0.05;
     const viaComposer = this.host.composerOn();
     this.pass.enabled = active && viaComposer;

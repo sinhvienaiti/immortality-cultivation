@@ -79,14 +79,14 @@ describe("screen effects by tier (power pass)", () => {
     cam.updateMatrixWorld(true);
     const fx = new ScreenFx(host());
     fx.impact("basic", "primary");
-    fx.update(1 / 60, cam, 1080);
+    fx.update(1 / 60, cam);
     expect(fx.shown.shakePx).toBeGreaterThan(0.5);
-    for (let i = 0; i < 6; i += 1) fx.update(1 / 60, cam, 1080);
+    for (let i = 0; i < 6; i += 1) fx.update(1 / 60, cam);
     expect(fx.shown.shakePx).toBe(0);
     fx.intensity = 0;
     fx.impact("ultimate", "finisher");
     fx.darken(0.28, 0.45);
-    fx.update(1 / 60, cam, 1080);
+    fx.update(1 / 60, cam);
     expect(fx.shown.shakePx).toBe(0);
     expect(fx.shown.dark).toBe(0);
     expect(fx.shown.flash).toBe(0);
@@ -96,7 +96,7 @@ describe("screen effects by tier (power pass)", () => {
     const cam = new THREE.PerspectiveCamera(28, 16 / 9, 1, 400);
     const fx = new ScreenFx(host());
     fx.impact("ultimate", "finisher");
-    fx.update(0.05, cam, 1080);
+    fx.update(0.05, cam);
     fx.applyCamera(cam);
     expect(cam.fov).toBeLessThan(28);
     // The host refits the camera (a resize) before the next frame.

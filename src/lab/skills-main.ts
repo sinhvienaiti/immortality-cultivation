@@ -808,7 +808,7 @@ function frame(dt: number): void {
     camBase.copy(view.camera.position);
   } else if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
   kick.update(dt);
-  screen.update(dt, view.camera, innerHeight);
+  screen.update(dt, view.camera);
   lights.update(dt);
   const so = screen.offset;
   view.camera.position.set(camBase.x + kick.x + so.x, camBase.y + so.y, camBase.z + kick.z + so.z);
