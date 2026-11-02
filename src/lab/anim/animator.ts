@@ -172,6 +172,13 @@ export class Animator {
   readonly keyPoses: KeyPoser;
   /** The key poses' last stance request handed to the feet. */
   private keyStanceSeq = 0;
+  /**
+   * The play camera's heading on the ground (rad, the Animator's yaw convention), set by the caster from the frame
+   * drawn last; null until known. A key-pose skill with a directional cheat reads it (round 4b).
+   */
+  viewYaw: number | null = null;
+  /** The key-pose skill's true target (the lead hand and head stay on it), and whether one is set. */
+  readonly poseTarget = { x: 0, z: 0, on: false };
   readonly keys: ClipKey[] = [];
   readonly actions: THREE.AnimationAction[] = [];
   private readonly loops: boolean[] = [];
@@ -567,7 +574,21 @@ export class Animator {
     this.leaveDash();
     if (this.state !== "pose") this.enterPose();
     this.keyPoses.charge(move, p, keysLeft);
-    this.castFace(tx, tz);
+    this.poseTarget.x = tx;
+    this.poseTarget.z = tz;
+    this.poseTarget.on = true;
+    // Directional cheat (round 4b): an attack towards the camera loads with the body turned to its left (the sword
+    // arm on the near side), up to cheatDeg straight at the camera; the release turns it back onto the target.
+    const dx = tx - this.loco.showX;
+    const dz = tz - this.loco.showZ;
+    const cheat = this.keyPoses.cheatDeg(move) * DEG;
+    let yaw = Math.atan2(dx, dz);
+    if (cheat > 0 && this.viewYaw !== null) {
+      const off = Math.abs(wrapPi(yaw - this.viewYaw));
+      const k = clamp((off - Math.PI / 2) / (Math.PI / 2), 0, 1);
+      yaw += cheat * Math.pow(k, 0.7);
+    }
+    this.castFace(this.loco.showX + Math.sin(yaw) * 6, this.loco.showZ + Math.cos(yaw) * 6);
     this.layers.breathWeight = 0.2;
   }
 
@@ -578,7 +599,12 @@ export class Animator {
     if (this.state !== "pose") this.enterPose();
     this.keyPoses.release(move);
     this.layers.breathWeight = 0.1;
-    if (hasTarget) this.castFace(tx, tz);
+    if (hasTarget) {
+      this.castFace(tx, tz);
+      this.poseTarget.x = tx;
+      this.poseTarget.z = tz;
+      this.poseTarget.on = true;
+    }
     this.onClip?.("idle");
   }
 
@@ -725,8 +751,12 @@ export class Animator {
     this.layers.applyWorld(fx, fz, act);
     act.applyArms(fx, fz);
     act.limitArms();
-    // Authored key poses over everything above (a blow still shows through: the stagger takes part of the weight).
-    this.keyPoses.apply(dt, 1 - 0.7 * act.hitEnvelope);
+    // Authored key poses over everything above (a blow still shows through: the stagger takes part of the weight); the
+    // lead hand and head stay on the true target while the body is cheated or still turning to it.
+    const kp = this.keyPoses;
+    kp.aimErr = kp.active && this.poseTarget.on ? clamp(wrapPi(Math.atan2(this.poseTarget.x - this.loco.showX, this.poseTarget.z - this.loco.showZ) - this.loco.yaw), -1.6, 1.6) : 0;
+    if (!kp.active) this.poseTarget.on = false;
+    kp.apply(dt, 1 - 0.7 * act.hitEnvelope);
     if (this.settleIn >= 0) {
       this.settleIn -= dt;
       // The settle step after a stop: the feet that stand off their place under the body step to it.
@@ -734,7 +764,6 @@ export class Animator {
     }
     if (this.feet) {
       // The gesture's stance: offsets per foot, anchored where the logical body stands unless a blow moves the body.
-      const kp = this.keyPoses;
       if (kp.active || kp.stanceSeq !== this.keyStanceSeq) {
         // A key-pose skill's feet (back under the body once its recovery asks for no stance).
         const ks = kp.stance;

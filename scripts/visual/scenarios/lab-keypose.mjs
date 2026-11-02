@@ -256,12 +256,22 @@ export default async function (page) {
       const H0 = sz0.heightPx;
       const side = view === "field" ? Math.min(page.height, Math.round(H0 * 14.5)) : view === "play" ? Math.round(H0 * 4.5) : Math.min(page.height, Math.round(H0 * 2.6));
       await page.eval("window.__lab.type('k4')");
+      // Round 4b: which VFX frames hide the pose: the share of the hero's box covered by HDR pixels (the bloom
+      // pass's bright buffer, luminance > 1) on each frame round the release.
+      const occl = [];
+      let relF = -1;
       for (let f = 0; f < 170; f += 1) {
         await page.eval("window.__lab.tick(1/60)");
         const s = await page.eval("window.__labPose.sample()");
         if (!c) c = view === "field" ? [s.cx - H0 * 2.6, s.cy - H0 * 4.3] : [s.cx, s.cy - (view === "play" ? H0 * 0.6 : 0)];
+        if (relF < 0 && s.stage === "release") relF = f;
+        if (view !== "field" && relF >= 0 && f - relF <= 30) {
+          const b = await page.eval("(() => { const z = window.__labPose.size().box; return window.__lab.bright(z[0] / innerWidth, z[1] / innerHeight, z[2] / innerWidth, z[3] / innerHeight); })()");
+          occl.push({ F: f - relF, stage: s.stage, share: Math.round(b.share * 1000) / 1000, max: Math.round(b.max * 100) / 100 });
+        }
         files.push({ f, stage: s.stage, file: await crop(c[0], c[1], side, `judge-${view}`) });
       }
+      if (occl.length > 0) writeFileSync(join(out, `occlusion-${view}.json`), JSON.stringify(occl));
       // Real-speed clip and a 12-frame sheet (no numbers, phase words only).
       const lf = join(raw, `judge-${view}.txt`);
       writeFileSync(lf, files.map((r) => `file '${r.file}'\nduration ${1 / 60}`).join("\n"));

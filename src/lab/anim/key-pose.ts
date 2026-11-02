@@ -76,7 +76,35 @@ export interface KeyPoseSkill {
   /** The bone the circulating hold turns as the sword arm, and the hand its wrist tremor shakes. */
   readonly armBone: string;
   readonly wristBone: string;
+  /**
+   * Round 4b, the release spacing chart (ChatGPT approach 2 §1): per body group, its progress at release frames F0,
+   * F1, … (60 Hz; F0 is the last key's frame): 0 the maximum coil, 1 the release pose, 2 the overshoot pose. The
+   * weapon leads, the chest and pelvis lag. After its last entry a group eases to `recoverTo` over 7 frames (a curved
+   * recovery), then the weight hands back to Idle over `fadeS`. Without it the release runs on releaseS/holdS/….
+   */
+  readonly spacing?: { readonly weapon: readonly number[]; readonly lead: readonly number[]; readonly chest: readonly number[]; readonly pelvis: readonly number[] };
+  readonly recoverTo?: number;
+  readonly fadeS?: number;
+  /**
+   * Round 4b, directional cheat: when the attack comes towards the camera, the body loads turned this far to its
+   * left (deg, at an attack straight at the camera; less towards the sides), so the sword arm loads on the near side;
+   * the lead hand and the head stay on the target. The release turns the body back onto the target.
+   */
+  readonly cheatDeg?: number;
 }
+
+/** Body groups of the release spacing: weapon arm, lead (off) arm, chest and head, pelvis. */
+const G_WEAPON = 0;
+const G_LEAD = 1;
+const G_CHEST = 2;
+const G_PELVIS = 3;
+function groupOf(name: string): number {
+  if (name === "pelvis" || name === "spine_01") return G_PELVIS;
+  if (name === "spine_02" || name === "spine_03" || name === "neck_01" || name === "head") return G_CHEST;
+  return name.endsWith("_r") ? G_WEAPON : G_LEAD;
+}
+/** Frames a group takes from the end of its spacing to `recoverTo`. */
+const RECOVER_F = 7;
 
 /** Key-pose skills by id (HeroProfile.keyPoses maps slots to these). */
 export const KEY_POSE_SKILLS: Record<string, KeyPoseSkill> = { fanSweep: FAN_SWEEP };
@@ -181,6 +209,17 @@ export class KeyPoser {
   private stanceAt = -1;
   /** Keys typed into key-pose skills so far (the probe marks each). */
   keyCount = 0;
+  /** Per bone slot: its spacing group. Per group: the pose phase now (0–5) under a spacing chart. */
+  private readonly group: Uint8Array;
+  readonly groupPhase = new Float64Array(4);
+  private spaced = false;
+  /**
+   * Signed angle (rad, + to the left) from the facing to the true target, set by the Animator each frame: the lead
+   * arm and the head turn by it, so they stay on the target while the body loads cheated or comes round.
+   */
+  aimErr = 0;
+  /** The blade smear's strength this frame (0–1; F1–F2 of a spaced release). */
+  smear = 0;
   /** Frames since the last key (for the probe): the release started on frame `releaseFrame` of `frames`. */
   frames = 0;
   releaseFrame = -1;
@@ -193,6 +232,7 @@ export class KeyPoser {
     this.lastQ = new Float32Array(this.names.length * 4);
     this.fromQ = new Float32Array(this.names.length * 4);
     this.bones = this.names.map((n) => rig.bone(n));
+    this.group = Uint8Array.from(this.names.map((n) => groupOf(n)));
     this.pelvis = rig.bone("pelvis");
     this.restParent = this.names.map(() => new THREE.Quaternion());
     this.restDir = this.names.map(() => new THREE.Vector3(1, 0, 0));
@@ -261,6 +301,9 @@ export class KeyPoser {
     this.saved = false;
     this.xfade = -1;
     this.circleK = 0;
+    this.spaced = false;
+    this.smear = 0;
+    this.aimErr = 0;
   }
 
   /** Authored skill `skill` on slot `slot` (baked for this rig now). */
@@ -303,6 +346,11 @@ export class KeyPoser {
 
   has(slot: string): boolean {
     return this.bySlot.has(slot);
+  }
+
+  /** The directional cheat of the skill on `slot` (deg; 0 none). */
+  cheatDeg(slot: string): number {
+    return this.bySlot.get(slot)?.skill.cheatDeg ?? 0;
   }
 
   get active(): boolean {
@@ -382,6 +430,9 @@ export class KeyPoser {
     this.stage = "release";
     this.releaseAge = 0;
     this.releaseFrame = this.frames;
+    this.spaced = this.cur!.skill.spacing !== undefined;
+    this.relFromSp = instant ? 3 : this.phaseS[0]!;
+    if (this.spaced) for (let g = 0; g < 4; g += 1) this.groupPhase[g] = this.relFromSp;
     // An instant cast (no typed coil): from the base pose straight into the release as the weight comes in.
     this.relFrom = instant ? 3 : this.phaseS[0]!;
     this.relW0 = instant ? 0 : this.w[0]!;
@@ -439,6 +490,10 @@ export class KeyPoser {
       case "hold":
       case "follow":
       case "settle": {
+        if (this.spaced) {
+          this.updateSpaced(sk, dt);
+          break;
+        }
         this.releaseAge += dt;
         const a = this.releaseAge;
         const r = sk.releaseS;
@@ -491,7 +546,60 @@ export class KeyPoser {
       }
     }
     if (this.stage !== "recover" && this.stage !== "off") this.updateStance(sk);
+    if (this.stage === "charge" || this.stage === "off") this.smear = 0;
   }
+
+  /**
+   * A release on the spacing chart: each group reads its progress at the frame (F0 on the last key's frame), eases
+   * to `recoverTo` over RECOVER_F frames after its last entry; once the slowest group is home, the recovery fades
+   * the weight to Idle. Stages for the probe: release F0–F3, hold F4–F7 (peak, overshoot, accent), follow (the
+   * curved recovery), recover (the fade).
+   */
+  private updateSpaced(sk: KeyPoseSkill, dt: number): void {
+    const sp = sk.spacing!;
+    const f = this.releaseAge * 60;
+    const tables = [sp.weapon, sp.lead, sp.chest, sp.pelvis];
+    const to = 3 + (sk.recoverTo ?? 1.3);
+    const from = this.relFromSp;
+    let home = true;
+    for (let g = 0; g < 4; g += 1) {
+      const t = tables[g]!;
+      const last = t.length - 1;
+      let v: number;
+      if (f <= last) {
+        const i = Math.floor(f);
+        const u = f - i;
+        const a = t[i]!;
+        const b = t[Math.min(last, i + 1)]!;
+        const p = a + (b - a) * u;
+        // A short coil (fewer keys than poses): the way to the release pose starts from where the coil was.
+        v = p <= 1 ? from + (4 - from) * p : 3 + p;
+        home = false;
+      } else {
+        const u = clamp((f - last) / RECOVER_F, 0, 1);
+        const end = 3 + t[last]!;
+        v = end + (to - end) * smoothstep(0, 1, u);
+        if (u < 1) home = false;
+      }
+      this.groupPhase[g] = v;
+    }
+    this.phaseS[0] = this.groupPhase[G_WEAPON]!;
+    this.phaseS[1] = 0;
+    this.w[1] = 0;
+    // The weight: an instant cast fades in over the first frames; else full until the recovery fade.
+    this.w[0] = this.relW0 + (1 - this.relW0) * clamp(f / 4, 0, 1);
+    this.smear = f >= 0.5 && f < 2.5 ? 1 : 0;
+    this.stage = f < 4 ? "release" : f < 8 ? "hold" : home ? "recover" : "follow";
+    if (this.stage === "recover") {
+      this.recoverFrom = this.w[0]!;
+      this.recoverT = 0;
+      this.recoverLen = sk.fadeS ?? 0.38;
+      this.setStance(null);
+    }
+    this.circleK = f < 8 ? 0.15 : 0.1;
+    this.releaseAge += dt;
+  }
+  private relFromSp = 3;
 
   /** Feet: the stance of the latest pose passed that names one (asked once per pose). */
   private updateStance(sk: KeyPoseSkill): void {
@@ -517,9 +625,10 @@ export class KeyPoser {
     }
     const n = this.names.length;
     const ph = clamp(this.phaseS[0]!, 0, 5);
-    const k0 = Math.min(4, Math.floor(ph));
-    const u = ph - k0;
+    let k0 = Math.min(4, Math.floor(ph));
+    let u = ph - k0;
     const sk = cur.skill;
+    const spaced = this.spaced && this.stage !== "charge" && this.frozen < 0;
     // A restart over a pose still shown (a new word on top) cross-fades from what was shown.
     const x = this.xfade >= 0 ? smoothstep(0, 1, this.xfade / XFADE_S) : 1;
     if (this.xfade >= 0) {
@@ -535,6 +644,11 @@ export class KeyPoser {
     for (let i = 0; i < n; i += 1) {
       const b = this.bones[i];
       if (!b) continue;
+      if (spaced) {
+        const gp = clamp(this.groupPhase[this.group[i]!]!, 0, 5);
+        k0 = Math.min(4, Math.floor(gp));
+        u = gp - k0;
+      }
       _a.fromArray(cur.q, (k0 * n + i) * 4);
       _b.fromArray(cur.q, ((k0 + 1) * n + i) * 4);
       _a.slerp(_b, u);
@@ -548,6 +662,11 @@ export class KeyPoser {
         else if (nm === this.foreBone) this.cone(i, sk.circle.arm * 0.8 * c, Math.sin(wt * 0.63 + 1.7), Math.cos(wt * 0.63 + 1.7));
         else if (nm === sk.wristBone) _a.premultiply(_c.setFromAxisAngle(_Z, tremor * DEG));
       }
+      // The lead arm and the head stay on the true target while the body is cheated or still coming round.
+      if (this.aimErr !== 0 && (nm === "clavicle_l" || nm === "neck_01" || nm === "head")) {
+        const k = nm === "clavicle_l" ? 1 : nm === "neck_01" ? 0.45 : 0.55;
+        _a.premultiply(_c.setFromAxisAngle(_Y, this.aimErr * k));
+      }
       // L = P⁻¹ · d · P · L_rest, blended over the base's local rotation.
       const P = this.restParent[i]!;
       _q.copy(P).invert().multiply(_a).multiply(P).multiply(this.restLocal[i]!);
@@ -558,6 +677,11 @@ export class KeyPoser {
     // Pelvis offset (down, forward, right) in the facing frame, into the pelvis parent's frame.
     const pelvis = this.pelvis;
     if (pelvis && pelvis.parent) {
+      if (spaced) {
+        const gp = clamp(this.groupPhase[G_PELVIS]!, 0, 5);
+        k0 = Math.min(4, Math.floor(gp));
+        u = gp - k0;
+      }
       const h0 = k0 * 3;
       const h1 = (k0 + 1) * 3;
       let down = (cur.hips[h0]! + (cur.hips[h1]! - cur.hips[h0]!) * u) * w;

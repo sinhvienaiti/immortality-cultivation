@@ -41,6 +41,14 @@ interface Sample {
   tipSepPx: number;
   hipDropM: number;
   coilDeg: number;
+  /** Round 4b: pelvis and chest turn against the facing (deg, + left); sword hand along D and T and elbow clearance (H). */
+  pelvisDeg: number;
+  chestDeg: number;
+  handD: number;
+  handT: number;
+  elbowH: number;
+  /** The spacing groups' pose phases (weapon, lead, chest, pelvis). */
+  groups: number[];
 }
 
 const _v = new THREE.Vector3();
@@ -170,6 +178,20 @@ export class PoseProbe {
     return best;
   }
 
+  /** The projected torso's centroid (px), from the last projectBody(). */
+  private torsoCentroid(): [number, number] {
+    let x = 0;
+    let y = 0;
+    let n = 0;
+    for (let i = 0; i < this.part.length; i += 1) {
+      if (this.part[i] !== 0) continue;
+      x += this.proj[i * 2]!;
+      y += this.proj[i * 2 + 1]!;
+      n += 1;
+    }
+    return n > 0 ? [x / n, y / n] : [0, 0];
+  }
+
   /** Projects the body; returns [width, height] px and fills `proj`. */
   private projectBody(): [number, number] {
     const mesh = this.mesh;
@@ -233,6 +255,15 @@ export class PoseProbe {
 
   private lastKeyCount = -1;
 
+  /** The play camera's heading on the ground (rad, atan2(x, z) of its forward), null until a frame was drawn. */
+  viewYaw(): number | null {
+    if (!this.haveCam) return null;
+    const e = this.cam.matrixWorld.elements;
+    const fx = -e[8]!;
+    const fz = -e[10]!;
+    return Math.hypot(fx, fz) > 1e-6 ? Math.atan2(fx, fz) : null;
+  }
+
   /** Screen direction (deg, 0 up, 90 right) from the caster's feet to the ground point (x, z) at the play camera. */
   screenDir(x: number, z: number): number {
     const a = [0, 0];
@@ -273,6 +304,49 @@ export class PoseProbe {
     const pelvis = this.bones.get("pelvis");
     const hip = pelvis ? pelvis.getWorldPosition(_a).y : this.idleHip;
     const coil = wrapDeg(((this.heading("upperarm_l", "upperarm_r") - this.heading("thigh_l", "thigh_r")) * 180) / Math.PI);
+    // Round 4b: turns against the facing, and the sword hand in the screen frame of the attack (origin: the torso's
+    // projected centroid; D towards the target, T across it towards the sword side).
+    const right = Math.atan2(-this.caster.fz, this.caster.fx);
+    const pelvisDeg = wrapDeg(((this.heading("thigh_l", "thigh_r") - right) * 180) / Math.PI);
+    const chestDeg = wrapDeg(((this.heading("upperarm_l", "upperarm_r") - right) * 180) / Math.PI);
+    let handD = 0;
+    let handT = 0;
+    let elbowH = 0;
+    const tgt = this.caster.anim?.poseTarget;
+    const H = this.idleHeight > 0 ? this.idleHeight : h;
+    if (tgt && tgt.on && H > 0) {
+      const o = this.torsoCentroid();
+      const f0 = [0, 0];
+      const f1 = [0, 0];
+      this.project(_a.set(this.caster.x, 0, this.caster.z), f0, 0);
+      this.project(_a.set(tgt.x, 0, tgt.z), f1, 0);
+      let dx = f1[0]! - f0[0]!;
+      let dy = f1[1]! - f0[1]!;
+      const l = Math.hypot(dx, dy) || 1;
+      dx /= l;
+      dy /= l;
+      // T: across D, signed so + is the side the sword hand loads to (the character's right on screen).
+      let tx = -dy;
+      let ty = dx;
+      const sh = [0, 0];
+      const sl = [0, 0];
+      this.bones.get("upperarm_r")?.getWorldPosition(_a);
+      this.project(_a, sh, 0);
+      this.bones.get("upperarm_l")?.getWorldPosition(_a);
+      this.project(_a, sl, 0);
+      if ((sh[0]! - sl[0]!) * tx + (sh[1]! - sl[1]!) * ty < 0) {
+        tx = -tx;
+        ty = -ty;
+      }
+      const hx = pts[pts.length - 2]! - o[0]!;
+      const hy = pts[pts.length - 1]! - o[1]!;
+      handD = (hx * dx + hy * dy) / H;
+      handT = (hx * tx + hy * ty) / H;
+      this.bones.get("lowerarm_r")?.getWorldPosition(_a);
+      const el = [0, 0];
+      this.project(_a, el, 0);
+      elbowH = this.torsoDistance(el[0]!, el[1]!) / H;
+    }
     const kp = this.poser;
     const s: Sample = {
       f: this.f,
@@ -287,6 +361,12 @@ export class PoseProbe {
       tipSepPx,
       hipDropM: this.idleHip - hip,
       coilDeg: coil,
+      pelvisDeg,
+      chestDeg,
+      handD,
+      handT,
+      elbowH,
+      groups: kp ? Array.from(kp.groupPhase) : [0, 0, 0, 0],
     };
     this.samples.push(s);
     this.f += 1;
@@ -356,6 +436,9 @@ export class PoseProbe {
         maxCoil: lastCharge ? { hand: [at(lastCharge.handSepPx, 30), at(lastCharge.handSepPx, 50), at(lastCharge.handSepPx, 70)], handL: [at(lastCharge.handLSepPx, 30), at(lastCharge.handLSepPx, 50), at(lastCharge.handLSepPx, 70)], tip: [at(lastCharge.tipSepPx, 30), at(lastCharge.tipSepPx, 50), at(lastCharge.tipSepPx, 70)] } : null,
         release: hold ? { hand: [at(hold.handSepPx, 30), at(hold.handSepPx, 50), at(hold.handSepPx, 70)], handL: [at(hold.handLSepPx, 30), at(hold.handLSepPx, 50), at(hold.handLSepPx, 70)], tip: [at(hold.tipSepPx, 30), at(hold.tipSepPx, 50), at(hold.tipSepPx, 70)] } : null,
       },
+      // Round 4b: the loaded pose and the release spacing as measured.
+      loaded: lastCharge ? { handD: round(lastCharge.handD, 2), handT: round(lastCharge.handT, 2), elbowH: round(lastCharge.elbowH, 2), pelvisDeg: round(lastCharge.pelvisDeg), chestDeg: round(lastCharge.chestDeg), separationDeg: round(lastCharge.chestDeg - lastCharge.pelvisDeg) } : null,
+      spacing: first >= 0 ? { weapon: S.slice(first, first + 12).map((s) => round(s.groups[0]! - 3, 2)), chest: S.slice(first, first + 12).map((s) => round(s.groups[2]! - 3, 2)), pelvis: S.slice(first, first + 12).map((s) => round(s.groups[3]! - 3, 2)) } : null,
       staticLongestMs: round((longest * 1000) / 60),
       staticFrom: longestAt,
       keyFrames: this.keyFrames,
@@ -393,7 +476,8 @@ export class PoseProbe {
   bodyOnly(on: boolean): void {
     const layer = this.caster.root.parent;
     if (!layer) return;
-    for (const c of layer.children) if (c !== this.caster.root && c.name !== "tassel") c.visible = !on;
+    // The blade smear is the weapon's own motion (round 4b), not an effect: it stays.
+    for (const c of layer.children) if (c !== this.caster.root && c.name !== "tassel" && c.name !== "bladeSmear") c.visible = !on;
   }
 }
 

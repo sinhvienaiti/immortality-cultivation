@@ -45,6 +45,7 @@ import { resampleClip } from "./anim/resample";
 import { retargetClip } from "./anim/retarget";
 import { KEY_POSE_SKILLS } from "./anim/key-pose";
 import { ClipSampler, Rig } from "./anim/rig";
+import { BladeSmear } from "./blade-smear";
 import { HERO } from "./hero-select";
 import { LAB_ASSETS } from "./look";
 import { PoseProbe } from "./pose-probe";
@@ -128,6 +129,8 @@ export class LabCaster {
   readonly heightM = HERO.heightM;
   /** Screen-space pose metrics and authoring hooks (__labPose, motion round 4). */
   poseProbe: PoseProbe | null = null;
+  /** The blade-only smear of a key-pose release (round 4b). */
+  private smear: BladeSmear | null = null;
   /** The skinned model (the mixer root), once loaded. */
   model: THREE.Object3D | null = null;
   /** The loaded clips as parallel lists (plain loops for the probe, no iterator per frame). */
@@ -268,6 +271,7 @@ export class LabCaster {
     this.after = new AfterImages(model, this.root, hero.colour);
     this.ring = new HitRing(model, this.root);
     this.poseProbe = new PoseProbe(this);
+    if (this.root.parent) this.smear = new BladeSmear(model, this.root.parent);
     // Console access for tuning (the lab is dev-only and never built).
     (window as unknown as Record<string, unknown>).__labCaster = this;
     (window as unknown as Record<string, unknown>).__labPose = this.poseProbe;
@@ -508,7 +512,12 @@ export class LabCaster {
     if (!anim) return;
     this.lastDt = dt;
     this.updatePrime(dt);
+    // The play camera's heading (from the frame drawn last) for a key-pose skill's directional cheat; the blade as it
+    // was drawn, before the bones move (the smear's trailing edge).
+    anim.viewYaw = this.poseProbe ? this.poseProbe.viewYaw() : null;
+    this.smear?.capture();
     anim.update(dt);
+    if (this.smear) this.smear.strength = anim.keyPoses.smear;
     this.updateRim(dt);
     // After-images while the dash glides fast (posed as drawn, after the Animator); the chest ring of a blow.
     const sx = this.x;
