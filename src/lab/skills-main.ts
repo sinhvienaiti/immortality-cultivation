@@ -40,6 +40,9 @@ import { CameraKick, FlashLights, smooth01 } from "./feel";
 import { ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
+import { createSkillNumbers } from "../view/hitfx";
+import { DamageCompiler } from "../view/damage-compile";
+import { Rand } from "../view/skills/fxkit";
 import { CasterPresence } from "./presence";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
@@ -54,6 +57,9 @@ const probe = new MotionProbe();
 const host = document.getElementById("ic-lab");
 if (host === null) throw new Error("lab host missing");
 const view = createRenderer(host, quality);
+// ?dpr=1 pins the pixel ratio (captures and perf runs; otherwise D57's dynamic resolution floats it).
+const pinDpr = Number(params.get("dpr") ?? "");
+if (pinDpr > 0) view.pinPixelRatio(pinDpr);
 const look = applyLook(view, { exposure: Number(params.get("exposure") ?? "0.72"), bloom: Number(params.get("bloom") ?? "0.45") });
 // Mid-dark paving, as the map concept asks for the Kết Giới (word tags and skills read on it).
 buildField(view, { tint: params.get("ground") ?? "#7c848b", repeat: 6 });
@@ -257,6 +263,53 @@ function gripFromParams(): GripPose {
   return { tiltDeg: pick(0, d.tiltDeg), rollDeg: pick(1, d.rollDeg), yawDeg: pick(2, d.yawDeg), x: pick(3, d.x), y: pick(4, d.y), z: pick(5, d.z) };
 }
 void ribbonNoise;
+// Damage numbers (canon D58 (5)): compiled per target over 150 ms (key 7: 500 ms), a cluster total for 5+ small
+// beasts together, gold-edged crits, the skill's colour on the lower stroke. Lab hits are stand-ins: each skill's
+// damage comes from canon §12.1 in W (1 W = 90 × g(K), g = 1.12^K; ?realm=K, default 0) with a seeded 15 % crit.
+const numbers = createSkillNumbers(view, 140);
+const compiler = new DamageCompiler(numbers);
+const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 0));
+const W_HP = 90 * realmG;
+/** Canon §12.1 per blow, in W (key 7 is not in the canon yet: a stand-in). */
+const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 0.8, k7: 0.35 };
+const critRand = new Rand(1503);
+const dmgRand = new Rand(907);
+/** Releases so far (an attack id each) and the latest attack of each skill; K2's hits so far in its attack (−15 % each). */
+let attacks = 0;
+const attackOf: Record<string, number> = {};
+const hitsOf: Record<string, number> = {};
+/** The skill's colour for its numbers (sRGB hex of its halo), cached per weapon. */
+const numberRgb: Record<string, number> = {};
+const tmpColour = new THREE.Color();
+/** Key 7's number tint (linear): Clear Wind's jade-cyan. */
+const VAN_KIEM_TINT = [0.3, 0.86, 0.74] as const;
+function skillRgb(slot: string): number {
+  const key = fx.weapon + ":" + slot;
+  let v = numberRgb[key];
+  if (v === undefined) {
+    const h = slot === "k7" ? VAN_KIEM_TINT : fx.paletteOf(slot as KiemSlot).halo;
+    v = tmpColour.setRGB(h[0], h[1], h[2]).getHex(THREE.SRGBColorSpace);
+    numberRgb[key] = v;
+  }
+  return v;
+}
+bus.on((e) => {
+  if (e.kind === "release") {
+    attacks += 1;
+    attackOf[e.slot] = attacks;
+    hitsOf[e.slot] = 0;
+  } else if (e.kind === "impact") {
+    const n = hitsOf[e.slot] ?? 0;
+    hitsOf[e.slot] = n + 1;
+    let w = SKILL_W[e.slot] ?? 0.3;
+    if (e.slot === "k2") w *= Math.max(0.4, 1 - 0.15 * n);
+    if (e.role === "finisher" && e.slot === "k7") w = 1.5;
+    if (e.role === "secondary" && e.slot !== "k4" && e.slot !== "k7") w *= 0.6;
+    const crit = critRand.next() < 0.15;
+    const dmg = w * W_HP * dmgRand.range(0.92, 1.08) * (crit ? 1.5 : 1);
+    compiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, e.y, e.z, skillRgb(e.slot), e.beastTier, e.slot === "k7" ? 0.5 : 0.15, e.role === "finisher" || e.power >= 0.9);
+  }
+});
 // Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.
 const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow }, quality === "low");
 bus.on((e) => {
@@ -444,6 +497,7 @@ function reset(): void {
   kick.reset();
   presence.reset();
   deathFx.reset();
+  compiler.reset();
   lights.reset();
   probe.reset();
   bus.resetCounts();
@@ -571,6 +625,9 @@ function frame(dt: number): void {
   handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);
   deathFx.update(world);
+  // Numbers are UI: they compile and float on real time (through a hit-stop or the cut-in).
+  compiler.update(dt);
+  numbers.update(dt);
   enemyBolt.update(world);
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
   // The base pose: the whole-field fit blended toward the close view on Lam (zoom 0 is exactly the fit, so a resize

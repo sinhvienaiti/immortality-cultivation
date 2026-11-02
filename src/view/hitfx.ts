@@ -525,12 +525,18 @@ const NUMBER_VERTEX = /* glsl */ `
 attribute vec4 iRect;
 attribute vec4 iUv;
 attribute vec4 iColor;
+attribute vec4 iTint;
 uniform vec2 uScreen;
 varying vec2 vUv;
 varying vec4 vColor;
+varying vec4 vTint;
+varying float vY;
 void main() {
   vUv = mix(iUv.xy, iUv.zw, uv);
   vColor = iColor;
+  vTint = iTint;
+  // Screen y grows down: position.y 1 is the glyph's bottom.
+  vY = position.y;
   vec2 p = iRect.xy + position.xy * iRect.zw;
   gl_Position = vec4(p.x / uScreen.x * 2.0 - 1.0, 1.0 - p.y / uScreen.y * 2.0, 0.0, 1.0);
 }`;
@@ -538,13 +544,41 @@ const NUMBER_FRAGMENT = /* glsl */ `
 uniform sampler2D uAtlas;
 varying vec2 vUv;
 varying vec4 vColor;
+varying vec4 vTint;
+varying float vY;
 void main() {
   vec4 texel = texture2D(uAtlas, vUv);
-  gl_FragColor = vec4(texel.rgb * vColor.rgb, texel.a * vColor.a);
+  // The skill's colour on the lower stroke (power pass: "ivory with a pale-cyan lower stroke"); k 0 for the game's numbers.
+  vec3 fill = mix(vColor.rgb, vTint.rgb, smoothstep(0.42, 0.8, vY) * vTint.a);
+  gl_FragColor = vec4(texel.rgb * fill, texel.a * vColor.a);
 }`;
 
 const GLYPHS = NUMBER_ATLAS.glyphs;
 const MAX_QUADS = 200 * 8;
+
+/**
+ * How an atlas is painted (power pass): the glyph set, the digit font, and a
+ * second digit row with a gold edge for crits (atlas rows 64–128, free in the
+ * kit's layout). The default is the kit's look, unchanged.
+ */
+export interface NumberLook {
+  readonly glyphs: string;
+  readonly digitFont: string;
+  readonly goldRow: boolean;
+}
+export const DEFAULT_NUMBER_LOOK: NumberLook = { glyphs: GLYPHS, digitFont: NUMBER_ATLAS.digitFont, goldRow: false };
+/** The gold-edge row's top (atlas px). */
+const GOLD_ROW = 64;
+
+/** A field that colours each number itself (SkillNumberField): the lower-stroke tint and the crit's gold edge. */
+export interface NumberPaint {
+  /** 0xRRGGBB of number `i`'s lower stroke and its share (0 none). */
+  tintOf(i: number): number;
+  tintK: number;
+  /** Number `i` draws from the gold-edge row. */
+  goldOf(i: number): boolean;
+}
+const isPaint = (field: NumberField): field is NumberField & NumberPaint => (field as Partial<NumberPaint>).goldOf !== undefined;
 
 /**
  * The kit's NumberSprites (one instanced draw in screen space over the frame,
@@ -559,9 +593,17 @@ export class IcNumberSprites {
   private readonly rect = new Float32Array(MAX_QUADS * 4);
   private readonly uv = new Float32Array(MAX_QUADS * 4);
   private readonly color = new Float32Array(MAX_QUADS * 4);
+  private readonly tint = new Float32Array(MAX_QUADS * 4);
   private readonly rectAttr: THREE.InstancedBufferAttribute;
   private readonly uvAttr: THREE.InstancedBufferAttribute;
   private readonly colorAttr: THREE.InstancedBufferAttribute;
+  private readonly tintAttr: THREE.InstancedBufferAttribute;
+  private readonly glyphs: string;
+  /** The tint of the next quads (set per number in write). */
+  private tr = 0.5;
+  private tg = 0.5;
+  private tb = 0.5;
+  private tk = 0.5;
   private readonly screen = new THREE.Vector2(1, 1);
   readonly cellWidth: number;
   private readonly labelWidth: number;
@@ -578,7 +620,11 @@ export class IcNumberSprites {
   private v1 = 0.5;
   private qa = 0.5;
 
-  constructor(readonly profile: FeedbackProfile) {
+  constructor(
+    readonly profile: FeedbackProfile,
+    look: NumberLook = DEFAULT_NUMBER_LOOK,
+  ) {
+    this.glyphs = look.glyphs;
     const { colors, label, labelColor } = profile.numbers;
     this.colors = colors.map((color) => new THREE.Color(color));
     this.labelColor = new THREE.Color(labelColor);
@@ -592,7 +638,7 @@ export class IcNumberSprites {
       paint.textAlign = "center";
       paint.textBaseline = "middle";
       paint.lineJoin = "round";
-      paint.font = A.digitFont;
+      paint.font = look.digitFont;
       const glyph = (text: string, x: number, y: number, outline: number): void => {
         paint.lineWidth = outline;
         paint.strokeStyle = "rgba(6,8,22,0.93)";
@@ -600,8 +646,33 @@ export class IcNumberSprites {
         paint.fillStyle = "#ffffff";
         paint.fillText(text, x, y);
       };
-      cellWidth = digitCellWidth((char) => paint.measureText(char));
-      [...GLYPHS].forEach((char, index) => glyph(char, index * cellWidth + cellWidth / 2, A.digitMidY, A.digitOutline));
+      if (look.glyphs === GLYPHS) cellWidth = digitCellWidth((char) => paint.measureText(char));
+      else {
+        // The kit's rule for another glyph set: every glyph's ink in its own even-width cell, inside the atlas.
+        let half = 0;
+        for (const char of look.glyphs) {
+          const m = paint.measureText(char);
+          const h = Number.isFinite(m.actualBoundingBoxLeft) && Number.isFinite(m.actualBoundingBoxRight) ? Math.max(m.actualBoundingBoxLeft, m.actualBoundingBoxRight) : m.width * 0.75;
+          half = Math.max(half, h + A.digitOutline / 2 + A.edgePx);
+        }
+        cellWidth = Math.min(Math.floor(A.width / look.glyphs.length / 2) * 2, Math.max(A.minCellW, Math.ceil(half) * 2));
+      }
+      [...look.glyphs].forEach((char, index) => glyph(char, index * cellWidth + cellWidth / 2, A.digitMidY, A.digitOutline));
+      if (look.goldRow) {
+        // Crits: a gold edge between the dark outline and the ivory fill.
+        [...look.glyphs].forEach((char, index) => {
+          const x = index * cellWidth + cellWidth / 2;
+          const y = GOLD_ROW + A.digitMidY;
+          paint.lineWidth = A.digitOutline;
+          paint.strokeStyle = "rgba(6,8,22,0.93)";
+          paint.strokeText(char, x, y);
+          paint.lineWidth = A.digitOutline * 0.5;
+          paint.strokeStyle = "#f2c35a";
+          paint.strokeText(char, x, y);
+          paint.fillStyle = "#ffffff";
+          paint.fillText(char, x, y);
+        });
+      }
       paint.font = A.labelFont;
       const metrics = paint.measureText(label);
       const inked = Number.isFinite(metrics.actualBoundingBoxLeft) && Number.isFinite(metrics.actualBoundingBoxRight) ? metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight : 0;
@@ -623,9 +694,11 @@ export class IcNumberSprites {
     this.rectAttr = new THREE.InstancedBufferAttribute(this.rect, 4).setUsage(THREE.DynamicDrawUsage);
     this.uvAttr = new THREE.InstancedBufferAttribute(this.uv, 4).setUsage(THREE.DynamicDrawUsage);
     this.colorAttr = new THREE.InstancedBufferAttribute(this.color, 4).setUsage(THREE.DynamicDrawUsage);
+    this.tintAttr = new THREE.InstancedBufferAttribute(this.tint, 4).setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute("iRect", this.rectAttr);
     geometry.setAttribute("iUv", this.uvAttr);
     geometry.setAttribute("iColor", this.colorAttr);
+    geometry.setAttribute("iTint", this.tintAttr);
     geometry.instanceCount = 0;
     const material = new THREE.ShaderMaterial({
       uniforms: { uAtlas: { value: atlas }, uScreen: { value: this.screen } },
@@ -657,6 +730,10 @@ export class IcNumberSprites {
     this.color[o + 1] = color.g;
     this.color[o + 2] = color.b;
     this.color[o + 3] = this.qa;
+    this.tint[o] = this.tr;
+    this.tint[o + 1] = this.tg;
+    this.tint[o + 2] = this.tb;
+    this.tint[o + 3] = this.tk;
     return n + 1;
   }
 
@@ -669,10 +746,22 @@ export class IcNumberSprites {
     const cell = this.cellWidth;
     const cellScale = cell / A.refCellW;
     const labelRows = A.labelRowH / A.cellH;
+    const paint = isPaint(field) ? field : null;
+    const glyphs = this.glyphs;
     let n = 0;
     for (let i = 0; i < field.alive.length; i += 1) {
       if (field.alive[i] === 0) continue;
       const text = field.text(i);
+      let row = 0;
+      this.tk = 0;
+      if (paint !== null) {
+        const rgb = paint.tintOf(i);
+        this.tr = ((rgb >> 16) & 255) / 255;
+        this.tg = ((rgb >> 8) & 255) / 255;
+        this.tb = (rgb & 255) / 255;
+        this.tk = paint.tintK;
+        if (paint.goldOf(i)) row = GOLD_ROW;
+      }
       const style = field.style[i]!;
       const k = field.age[i]! / field.life[i]!;
       this.qa = Math.min(1, (1 - k) * 3.5);
@@ -684,7 +773,7 @@ export class IcNumberSprites {
       const y = field.y[i]! - px / 2;
       const times = text.indexOf("×");
       for (let c = 0; c < text.length; c += 1) {
-        const g = GLYPHS.indexOf(text.charAt(c));
+        const g = glyphs.indexOf(text.charAt(c));
         const s = times >= 0 && c >= times ? 0.68 : 1;
         const middle = x - advance * 0.2 + (advance * A.glyphQuadW * s) / 2;
         const w = advance * A.glyphQuadW * s * cellScale;
@@ -693,9 +782,9 @@ export class IcNumberSprites {
         this.qw = w;
         this.qh = px * A.glyphQuadH * s;
         this.u0 = (g * cell) / W;
-        this.v0 = 0;
+        this.v0 = row / H;
         this.u1 = ((g + 1) * cell) / W;
-        this.v1 = A.cellH / H;
+        this.v1 = (row + A.cellH) / H;
         n = this.quad(n, color);
         x += advance * s;
       }
@@ -711,6 +800,7 @@ export class IcNumberSprites {
         this.v0 = A.labelTop / H;
         this.u1 = this.labelWidth / W;
         this.v1 = (A.labelTop + A.labelRowH) / H;
+        this.tk = 0;
         n = this.quad(n, this.labelColor);
       }
     }
@@ -718,6 +808,7 @@ export class IcNumberSprites {
     this.rectAttr.needsUpdate = true;
     this.uvAttr.needsUpdate = true;
     this.colorAttr.needsUpdate = true;
+    this.tintAttr.needsUpdate = true;
   }
 
   render(renderer: THREE.WebGLRenderer): void {
@@ -811,6 +902,149 @@ class DamageNumbersImpl implements DamageNumbers, Overlay {
 /** Damage numbers over the frame: at most `capacity` live (rules.ts TT_BUDGETS numbers: 50 / 100 / 160). */
 export function createDamageNumbers(renderer: Renderer3D, capacity: number): DamageNumbers {
   return new DamageNumbersImpl(renderer, capacity);
+}
+
+// ── Skill numbers (power pass, canon D58 (5), POWER_RESEARCH §5) ────────────
+
+/** Short labels need K, M and a point (12.8K); "×" shows the hits compiled into one number. */
+export const SKILL_GLYPHS = "0123456789×K.M";
+/**
+ * The skill numbers' profile: ivory numbers, the crit fill a warmer ivory (its
+ * gold is the atlas edge), compiled per target over 150 ms; numbers of one
+ * style never melt into each other within 0.12 s (a cluster has its own).
+ */
+export const IC_SKILL_NUMBERS: FeedbackProfile = {
+  ...IC_NUMBERS,
+  numbers: { ...IC_NUMBERS.numbers, mergeS: 0.15, crowdMergeS: 0.12, colors: ["#fff4e2", "#fff0d2", "#f2fffd", "#f5e6c8"] },
+};
+
+/** "860", "1.2K", "12.8K", "128K", "1.3M". */
+export function compactNumber(value: number): string {
+  const v = Math.max(0, Math.round(value));
+  if (v < 1000) return String(v);
+  if (v < 100_000) return (Math.round(v / 100) / 10).toFixed(1).replace(/\.0$/, "") + "K";
+  if (v < 1_000_000) return String(Math.round(v / 1000)) + "K";
+  return (Math.round(v / 100_000) / 10).toFixed(1).replace(/\.0$/, "") + "M";
+}
+
+/**
+ * The kit field with compiled labels ("12.8K×6": the value compact, the hits
+ * after ×), a lower-stroke tint per number (the skill's colour) and the crit's
+ * gold-edge row. Labels are rebuilt only when a number's value or count changes.
+ */
+export class SkillNumberField extends DrawnNumberField implements NumberPaint {
+  readonly rgb = new Int32Array(this.alive.length);
+  readonly gold = new Uint8Array(this.alive.length);
+  tintK = 0.75;
+  private readonly shownValue = new Float64Array(this.alive.length).fill(-1);
+  private readonly shownCount = new Int32Array(this.alive.length);
+  private readonly labelText: string[] = new Array<string>(this.alive.length).fill("");
+
+  override text(i: number): string {
+    const v = this.value[i]!;
+    const c = this.count[i]!;
+    if (v !== this.shownValue[i] || c !== this.shownCount[i]) {
+      this.shownValue[i] = v;
+      this.shownCount[i] = c;
+      this.labelText[i] = c > 1 ? compactNumber(v) + "×" + c : compactNumber(v);
+    }
+    return this.labelText[i]!;
+  }
+
+  tintOf(i: number): number {
+    return this.rgb[i]!;
+  }
+
+  goldOf(i: number): boolean {
+    return this.gold[i] === 1;
+  }
+}
+
+export interface SkillNumbers {
+  /**
+   * A compiled packet: `value` over `hits` blows on `key` (a target, or a
+   * cluster's own key) at a world point (m). `crit`: 120–135 % and the gold
+   * edge; `rgb`: the skill's colour on the lower stroke; `tier`: the kit's
+   * size and life row (2 a blow, 3 a big one or a cluster total, 4 a finisher).
+   */
+  show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX?: number): void;
+  readonly field: SkillNumberField;
+  readonly live: number;
+  update(dt: number): void;
+  dispose(): void;
+}
+
+/** Crits are this much bigger (POWER_RESEARCH: 120–135 %). */
+const CRIT_SIZE = 1.28;
+
+class SkillNumbersImpl implements SkillNumbers, Overlay {
+  readonly field: SkillNumberField;
+  private sprites: IcNumberSprites | null = null;
+  private readonly screen: ScreenPoint = { x: 0, y: 0, visible: false };
+  private now = 0.5;
+  private width = 1600;
+  private height = 900;
+  private readonly removeOverlay: () => void;
+
+  constructor(
+    private readonly renderer: Renderer3D,
+    capacity: number,
+    private readonly look: NumberLook,
+  ) {
+    this.field = new SkillNumberField(IC_SKILL_NUMBERS);
+    this.field.limit = Math.max(1, Math.floor(capacity));
+    this.removeOverlay = renderer.addOverlay(this);
+  }
+
+  get live(): number {
+    return this.field.live;
+  }
+
+  show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX = 0): void {
+    const row = tierRow(tier, this.field.profile.tiers);
+    if (row.number === null || value <= 0) return;
+    // Below-right of the beast: the word tags own the zone above its head (POWER_RESEARCH §7).
+    this.renderer.project(x, y + 0.2, z, this.screen);
+    if (!this.screen.visible) return;
+    const size = row.number.size * (crit ? CRIT_SIZE : 1);
+    const at = this.field.spawn(key, this.screen.x + 14, this.screen.y + 6, value, crit ? STYLE.crit : STYLE.normal, tier, size, row.number.life * (crit ? 1.2 : 1), dirX, -1, this.now);
+    if (at < 0) return;
+    // The kit merged it into a live number of this key: its hits are this packet's too.
+    this.field.count[at] = this.field.count[at]! + (hits - 1);
+    this.field.rgb[at] = rgb;
+    if (crit) this.field.gold[at] = 1;
+    else if (this.field.count[at] === hits) this.field.gold[at] = 0;
+  }
+
+  update(dt: number): void {
+    this.now += Math.max(0, dt);
+    const fontPx = 20 * Math.max(0.8, Math.min(1.2, Math.min(this.width / 1600, this.height / 900)));
+    if (fontPx !== this.field.fontPx) this.field.fontPx = fontPx;
+    this.field.update(dt);
+  }
+
+  draw(gl: THREE.WebGLRenderer, width: number, height: number): void {
+    this.width = width;
+    this.height = height;
+    if (this.field.live === 0) return;
+    this.sprites ??= new IcNumberSprites(IC_SKILL_NUMBERS, this.look);
+    this.sprites.write(this.field, width, height);
+    this.sprites.render(gl);
+  }
+
+  dispose(): void {
+    this.removeOverlay();
+    this.sprites?.dispose();
+  }
+}
+
+/**
+ * Damage numbers for skills (the lab now, the game later): compiled packets
+ * with short labels, the skill's colour, gold-edged crits. `digitFont` should
+ * be loaded before the first number is drawn (the atlas is painted once).
+ */
+export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont = NUMBER_ATLAS.digitFont): SkillNumbers {
+  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true });
 }
 
 // ── Ink smoke ───────────────────────────────────────────────────────────────
