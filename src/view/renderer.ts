@@ -1,6 +1,8 @@
 /**
  * The one renderer (canon §20, §21.1, PB-35): kit Stage3D with rules.ts
- * TT_TIERS (4 keys, ultra = high at MVP); NeutralToneMapping set on
+ * TT_TIERS (4 keys, ultra = high at MVP) and TT_MSAA (canon D57: MSAA on the
+ * post chain's targets, set here because the kit's composer has none);
+ * NeutralToneMapping set on
  * `stage.renderer` right after construction (the kit fixes ACES; OutputPass
  * reads the renderer's value); a fixed 3/4 camera (tilt 50–55°, FOV 25–30°)
  * fitted so the whole 40 × 26 m field shows at any aspect, 16:9 included; a
@@ -14,7 +16,7 @@
 import * as THREE from "three";
 import { Stage3D, type StageLights } from "../kit/three/stage";
 import type { Projector, Quality, ScreenPoint } from "../app/contracts";
-import { CAMERA, FIELD, TT_TIERS } from "../content/rules";
+import { CAMERA, FIELD, TT_MSAA, TT_TIERS } from "../content/rules";
 
 export interface RenderInfo {
   readonly drawCalls: number;
@@ -45,6 +47,8 @@ export interface Renderer3D {
   readonly stage: Stage3D;
   readonly canvas: HTMLCanvasElement;
   readonly layers: RenderLayers;
+  /** The whole-field fit of the last resize or inset change (canon D57: zoom blends from it toward the hero). */
+  readonly fit: CameraFit;
   /** The last frame's counts; the same object every call (read it, do not keep it). */
   info(): RenderInfo;
   /** Camera before DOM projection (M0A_PLAN §6.9 frame order), then draw. */
@@ -232,6 +236,17 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
   });
   // PB-35: the kit fixes ACES; Neutral keeps the paper and ink tones. Set before the first compile.
   stage.renderer.toneMapping = THREE.NeutralToneMapping;
+  // canon D57: MSAA on the composer's two targets (RenderPass draws into them; bloom and OutputPass read the
+  // resolved texture). A change of sample count reallocates the targets on their next use.
+  const applyMsaa = (q: Quality): void => {
+    const samples = TT_MSAA[q];
+    for (const target of [stage.composer.renderTarget1, stage.composer.renderTarget2]) {
+      if (target.samples === samples) continue;
+      target.samples = samples;
+      target.dispose();
+    }
+  };
+  applyMsaa(quality);
   const fog = new THREE.Fog(BACKGROUND, 60, 200);
   stage.scene.fog = fog;
   const layers: RenderLayers = { ground: new THREE.Group(), actors: new THREE.Group(), fx: new THREE.Group() };
@@ -247,12 +262,14 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
   let width = 1;
   let height = 1;
   let insets: ViewInsets = { top: 0, bottom: 0 };
+  let lastFit: CameraFit = { tiltDeg: VIEW.tiltDeg, fovDeg: VIEW.fovDeg, distanceM: 1, targetZ: 0 };
 
   const refit = (): void => {
     const fit = fitCamera(stage.camera, width / height, { insetTop: insets.top / height, insetBottom: insets.bottom / height });
     // Mist from just past the target to well beyond the far edge.
     fog.near = fit.distanceM + 6;
     fog.far = fit.distanceM + 140;
+    lastFit = fit;
     stage.emitPointScale();
   };
   const resize = (): void => {
@@ -277,6 +294,9 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     stage,
     canvas,
     layers,
+    get fit() {
+      return lastFit;
+    },
     info: () => {
       // The kit resets renderer.info once per frame, so these include the post passes.
       counts.drawCalls = stage.renderer.info.render.calls;
@@ -298,6 +318,7 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     },
     resize,
     setQuality: (next) => {
+      applyMsaa(next);
       stage.setQuality(next);
       resize();
     },

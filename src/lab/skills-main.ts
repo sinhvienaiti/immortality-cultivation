@@ -24,6 +24,7 @@
  */
 import * as THREE from "three";
 import type { Quality } from "../content/types";
+import { CameraZoom } from "../view/camera-zoom";
 import { createRenderer, placeCamera } from "../view/renderer";
 import { K5_MAX, KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
 import { loadBladeGeometry, loadWeaponModel, standInBlade } from "../view/skills/blades";
@@ -88,6 +89,10 @@ view.layers.actors.add(herd.group, caster.root);
 
 // Camera kick, hit stop and impact lights, owned by the lab (the game has its own in feedback-profile.ts): feel.ts.
 const camBase = new THREE.Vector3();
+// Player zoom (canon D57): the whole field by default, wheel or = / - toward a close view on Lam, Z toggles.
+const zoom = new CameraZoom();
+/** A fixed camera set by __lab.camera (not "play"): the zoom leaves it alone until "play" again. */
+let customCamera = false;
 const kick = new CameraKick();
 // Camera shake on strikes (round 2 "weight"): 0.1–0.2 m dying in ~120 ms, halved at Low, × 0.75 at Medium.
 const shake = new CameraShake(quality === "low" ? 0.5 : quality === "medium" ? 0.75 : 1);
@@ -340,7 +345,20 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "b" || e.key === "B") enemyShot();
   else if (e.key === "r" || e.key === "R") reset();
   else if (e.key === "w" || e.key === "W") cycleWeapon();
+  else if (e.key === "=" || e.key === "+") zoom.zoomIn();
+  else if (e.key === "-" || e.key === "_") zoom.zoomOut();
+  else if (e.key === "z" || e.key === "Z") zoom.toggle();
 });
+window.addEventListener(
+  "wheel",
+  (e) => {
+    // The panel scrolls normally; the field zooms.
+    if (e.target instanceof Element && e.target.closest("button, input, select, label") !== null) return;
+    e.preventDefault();
+    zoom.wheel(e.deltaY, e.deltaMode);
+  },
+  { passive: false },
+);
 
 // Panel.
 if (params.get("ui") !== "0") {
@@ -357,6 +375,7 @@ if (params.get("ui") !== "0") {
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
+    ["Z", "Zoom: close view / whole field (wheel, = and - too)"],
   ];
   for (const [key, name] of names) {
     const b = document.createElement("button");
@@ -411,7 +430,12 @@ function frame(dt: number): void {
   presence.update(world, dt, caster.x, caster.z, fx);
   enemyBolt.update(world);
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
-  if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
+  // The base pose: the whole-field fit blended toward the close view on Lam (zoom 0 is exactly the fit, so a resize
+  // refits too). On real time: zooming stays smooth through a hit-stop.
+  if (!customCamera && !followShown) {
+    zoom.update(view.camera, view.fit, 0, caster.x, caster.z, dt);
+    camBase.copy(view.camera.position);
+  } else if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
   kick.update(dt);
   shake.update(dt, view.camera);
   lights.update(dt);
@@ -512,6 +536,8 @@ declare global {
       weapon(): string;
       /** "play" (the game's fixed camera) or "close" on (x, z) at 55° from `distanceM`. */
       camera(mode: "play" | "close", x?: number, z?: number, distanceM?: number): void;
+      /** Canon D57 zoom: with a value 0 (whole field) to 1 (close view on Lam) jumps there; returns the shown zoom. */
+      zoom(value?: number): number;
       /** The hand prop's state (loaded, dissolve, jade and core levels, length, triangles) and its grip. */
       hand(): Record<string, unknown>;
       /** Tunes the grip (degrees, metres in the hand's frame); missing fields keep theirs. */
@@ -625,7 +651,17 @@ void (async () => {
     boltActive: () => bolt.active,
     setWeapon,
     weapon: () => fx.weapon,
+    zoom(value) {
+      if (value !== undefined) {
+        customCamera = false;
+        zoom.set(value);
+        frame(0);
+      }
+      return zoom.value;
+    },
     camera(mode, x = 0, z = -6, distanceM = 15) {
+      customCamera = mode !== "play";
+      zoom.set(0);
       if (mode === "play") view.resize();
       else placeCamera(view.camera, 55, distanceM, x, z);
       camBase.copy(view.camera.position);

@@ -682,16 +682,28 @@ export interface TierRow {
 }
 
 /**
- * canon §20.2, PB-35: the Stage3D tier table, 4 keys (ultra = high at MVP).
- * DPR 1 and particles from the canon; bloom on from Medium and the kit's
- * tipsPerSide and trail are this round's proposal (Lane 1 confirms in HN0).
+ * canon §20.2, PB-35: the Stage3D tier table, 4 keys (ultra = high at MVP but for its DPR, D57).
+ * Particles from the canon; bloom on from Medium and the kit's tipsPerSide
+ * and trail are this round's proposal (Lane 1 confirms in HN0). DPR (canon
+ * D57, 03/11/2026): Ultra draws at the display's pixel ratio up to 2 (the
+ * owner found DPR 1 blurry on a Retina screen). High stays at 1 for now: on the
+ * M4 at 1920 × 1080, DPR 1.5 already put the K5 peak at p95 16–17 ms against
+ * 12 (tmp/shots/d57/perf); a dynamic resolution step comes next.
  */
 export const TT_TIERS: Readonly<Record<Quality, TierRow>> = {
   low: { dpr: 1, particles: 600, bloom: false, tipsPerSide: 1, trail: 12 },
   medium: { dpr: 1, particles: 1500, bloom: true, tipsPerSide: 2, trail: 18 },
   high: { dpr: 1, particles: 3000, bloom: true, tipsPerSide: 3, trail: 30 },
-  ultra: { dpr: 1, particles: 3000, bloom: true, tipsPerSide: 3, trail: 30 },
+  ultra: { dpr: 2, particles: 3000, bloom: true, tipsPerSide: 3, trail: 30 },
 };
+
+/**
+ * canon D57: MSAA samples of the post chain's render targets per tier (the
+ * kit's composer has none, so every edge stair-stepped through bloom). Low
+ * draws straight to the canvas without the composer. Measured on the M4 at
+ * 1920 × 1080: MSAA 4 adds about 3 ms at DPR 1, so only Ultra has it.
+ */
+export const TT_MSAA: Readonly<Record<Quality, number>> = { low: 0, medium: 0, high: 0, ultra: 4 };
 
 export interface TierBudget {
   readonly width: number;

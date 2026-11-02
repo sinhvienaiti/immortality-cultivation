@@ -24,9 +24,14 @@ Dev port 3008, host `tutien.typing-game.local`; `gameId` `immortality-cultivatio
   6 done, Lane 1b in progress; integration done (`src/app/app.ts startApp`,
   the game plays at `/`, `docs/changelog/2026-10-25-m0a-integration.md`);
   Lane 7's gates and scenarios come next (they read `window.__ic`, LANES.md).
-- Camera (canon §21.1, D48): fixed 3/4, the whole field, both gates, the sky
-  route and every beast in frame, no zoom; tilt 55° (`rules.ts`
-  `CAMERA.defaultTiltDeg`, read by `src/view/renderer.ts` `VIEW`), FOV 28°.
+- Camera (canon §21.1, D48 amended by D57 on 03/11/2026): the default frame is
+  fixed 3/4 with the whole field, both gates, the sky route and every beast in
+  frame; tilt 55° (`rules.ts` `CAMERA.defaultTiltDeg`, read by
+  `src/view/renderer.ts` `VIEW`), FOV 28°. The player may zoom (wheel or keys)
+  smoothly toward a close view that follows the hero and return to the whole
+  field in one action; off-screen beasts are flagged at the screen edge while
+  zoomed. High and Ultra render at the display's pixel ratio (up to 2) with
+  anti-aliasing in the post chain.
 - Never judge a shared gate (`docs/games/BALANCE.md`) by a game-only band
   (canon D15): print the shared band, which is the gate of record.
 - Rule numbers live in `src/content/rules.ts`, each pointing to its canon

@@ -1,18 +1,19 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { CAMERA, FIELD, TT_BUDGETS, TT_LIMITS, TT_TIERS } from "../../src/content/rules";
+import { CAMERA, FIELD, TT_BUDGETS, TT_LIMITS, TT_MSAA, TT_TIERS } from "../../src/content/rules";
 import type { ScreenPoint } from "../../src/app/contracts";
 import { FIELD_M, VIEW, fitCamera, placeCamera, projectPoint } from "../../src/view/renderer";
 
 const QUALITIES = ["low", "medium", "high", "ultra"] as const;
 
 describe("tier table (canon §20.2, PB-35)", () => {
-  it("TT_TIERS has the 4 keys in StageTier shape, ultra = high at MVP", () => {
+  it("TT_TIERS has the 4 keys in StageTier shape, ultra = high but for its DPR (D57)", () => {
     expect(Object.keys(TT_TIERS).sort()).toEqual([...QUALITIES].sort());
     for (const q of QUALITIES) expect(Object.keys(TT_TIERS[q]).sort()).toEqual(["bloom", "dpr", "particles", "tipsPerSide", "trail"]);
-    expect(TT_TIERS.ultra).toEqual(TT_TIERS.high);
-    // Measured at DPR 1 (canon §20.2 "Độ phân giải đo (DPR 1)").
-    for (const q of QUALITIES) expect(TT_TIERS[q].dpr).toBe(1);
+    expect({ ...TT_TIERS.ultra, dpr: 1 }).toEqual(TT_TIERS.high);
+    // canon D57 (03/11/2026): Ultra at the display's pixel ratio up to 2 with MSAA 4; the rest at DPR 1 (M4 budget).
+    expect(QUALITIES.map((q) => TT_TIERS[q].dpr)).toEqual([1, 1, 1, 2]);
+    expect(QUALITIES.map((q) => TT_MSAA[q])).toEqual([0, 0, 0, 4]);
   });
 
   it("particles of the StageTier row match the budget table", () => {
