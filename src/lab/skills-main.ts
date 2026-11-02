@@ -615,8 +615,9 @@ function type(slot: LabSlot): void {
     typing = null;
     probe.lastKey("k7");
     screen.cut();
-    // The body takes Ngự Kiếm's quick command (its release lands inside the 50 ms gate); the eight blades leave the hand.
-    caster.release("k1", 0, -8);
+    // The body takes key 7's own release (the motion lane's sky edict, round 3: two fingers up and forward); the
+    // eight blades leave the hand.
+    caster.release("k7", 0, -8);
     emitRelease("k7", 0, -8);
     bigSkillBeat();
     pendingVan = true;
