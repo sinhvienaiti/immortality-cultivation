@@ -358,6 +358,8 @@ bus.on((e) => {
     attacks += 1;
     attackOf[e.slot] = attacks;
     hitsOf[e.slot] = 0;
+    // A field-wide skill and the ultimate show one running headline total at the top of the view.
+    if (e.slot === "k7" || e.slot === "k5") compiler.headline(attacks);
   } else if (e.kind === "impact") {
     const n = hitsOf[e.slot] ?? 0;
     hitsOf[e.slot] = n + 1;
@@ -367,7 +369,9 @@ bus.on((e) => {
     if (e.role === "secondary" && e.slot !== "k4" && e.slot !== "k7") w *= 0.6;
     const crit = critRand.next() < 0.15;
     const dmg = w * W_HP * dmgRand.range(0.92, 1.08) * (crit ? 1.5 : 1);
-    compiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, e.y, e.z, skillRgb(e.slot), e.beastTier, e.slot === "k7" ? 0.5 : 0.15, e.role === "finisher" || e.power >= 0.9);
+    // Key 7 is an area attack: its blows on small beasts add up per 8 m cell over 1 s (about 70 % fewer numbers).
+    compiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, e.y, e.z, skillRgb(e.slot), e.beastTier, 0.15, e.role === "finisher" || e.power >= 0.9, e.slot === "k7");
+    if (e.role === "finisher") compiler.finisher(attackOf[e.slot] ?? 0);
   }
 });
 // Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.

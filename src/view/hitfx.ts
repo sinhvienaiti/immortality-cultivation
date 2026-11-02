@@ -567,6 +567,9 @@ export interface NumberLook {
   readonly goldRow: boolean;
   /** Glyph advance × this (a narrow serif face sets tighter than the kit's wide italic sans). */
   readonly advance: number;
+  /** The dark outline's width (atlas px; default the kit's) and a soft dark shadow under it (skill numbers over bright VFX). */
+  readonly outline?: number;
+  readonly shadow?: boolean;
 }
 export const DEFAULT_NUMBER_LOOK: NumberLook = { glyphs: GLYPHS, digitFont: NUMBER_ATLAS.digitFont, goldRow: false, advance: 1 };
 /** The gold-edge row's top (atlas px). */
@@ -643,9 +646,20 @@ export class IcNumberSprites {
       paint.textBaseline = "middle";
       paint.lineJoin = "round";
       paint.font = look.digitFont;
+      const digitOutline = look.outline ?? A.digitOutline;
       const glyph = (text: string, x: number, y: number, outline: number): void => {
+        if (look.shadow === true) {
+          // A soft dark halo first: no number reads as thin white over bright sword light.
+          paint.shadowColor = "rgba(0,4,10,0.9)";
+          paint.shadowBlur = 7;
+          paint.lineWidth = outline + 2;
+          paint.strokeStyle = "rgba(2,6,14,0.85)";
+          paint.strokeText(text, x, y);
+          paint.shadowBlur = 0;
+          paint.shadowColor = "rgba(0,0,0,0)";
+        }
         paint.lineWidth = outline;
-        paint.strokeStyle = "rgba(6,8,22,0.93)";
+        paint.strokeStyle = look.shadow === true ? "rgba(6,8,22,0.95)" : "rgba(6,8,22,0.93)";
         paint.strokeText(text, x, y);
         paint.fillStyle = "#ffffff";
         paint.fillText(text, x, y);
@@ -657,20 +671,29 @@ export class IcNumberSprites {
         for (const char of look.glyphs) {
           const m = paint.measureText(char);
           const h = Number.isFinite(m.actualBoundingBoxLeft) && Number.isFinite(m.actualBoundingBoxRight) ? Math.max(m.actualBoundingBoxLeft, m.actualBoundingBoxRight) : m.width * 0.75;
-          half = Math.max(half, h + A.digitOutline / 2 + A.edgePx);
+          half = Math.max(half, h + digitOutline / 2 + A.edgePx + (look.shadow === true ? 4 : 0));
         }
         cellWidth = Math.min(Math.floor(A.width / look.glyphs.length / 2) * 2, Math.max(A.minCellW, Math.ceil(half) * 2));
       }
-      [...look.glyphs].forEach((char, index) => glyph(char, index * cellWidth + cellWidth / 2, A.digitMidY, A.digitOutline));
+      [...look.glyphs].forEach((char, index) => glyph(char, index * cellWidth + cellWidth / 2, A.digitMidY, digitOutline));
       if (look.goldRow) {
         // Crits: a gold edge between the dark outline and the ivory fill.
         [...look.glyphs].forEach((char, index) => {
           const x = index * cellWidth + cellWidth / 2;
           const y = GOLD_ROW + A.digitMidY;
-          paint.lineWidth = A.digitOutline;
-          paint.strokeStyle = "rgba(6,8,22,0.93)";
+          if (look.shadow === true) {
+            paint.shadowColor = "rgba(0,4,10,0.9)";
+            paint.shadowBlur = 7;
+            paint.lineWidth = digitOutline + 2;
+            paint.strokeStyle = "rgba(2,6,14,0.85)";
+            paint.strokeText(char, x, y);
+            paint.shadowBlur = 0;
+            paint.shadowColor = "rgba(0,0,0,0)";
+          }
+          paint.lineWidth = digitOutline;
+          paint.strokeStyle = "rgba(6,8,22,0.95)";
           paint.strokeText(char, x, y);
-          paint.lineWidth = A.digitOutline * 0.5;
+          paint.lineWidth = digitOutline * 0.45;
           paint.strokeStyle = "#f2c35a";
           paint.strokeText(char, x, y);
           paint.fillStyle = "#ffffff";
@@ -916,12 +939,24 @@ export function createDamageNumbers(renderer: Renderer3D, capacity: number): Dam
 /** Short labels need K, M and a point (12.8K); "×" shows the hits compiled into one number. */
 export const SKILL_GLYPHS = "0123456789×K.M";
 /**
+ * The skill numbers' size rows (power pass round 2: "a hierarchy, not 35
+ * numbers at mixed sizes"): T1 a small hit, small and short-lived; T2 a
+ * compiled packet; T3 a cluster or a cell total; T4 a big hit, a crit or a
+ * finisher, 2–3× a small one with a strong scale pop; T5 a skill's headline
+ * total. Rows 0 and the rest of each row are the kit's.
+ */
+export const SKILL_NUMBER_TIERS: readonly TierProfile[] = TIERS.map((row, id) => ({
+  ...row,
+  number: id === 0 ? null : ([null, { size: 0.85, life: 0.45, pop: 1.1 }, { size: 1.15, life: 0.7, pop: 1.25 }, { size: 1.9, life: 0.95, pop: 1.45 }, { size: 2.5, life: 1.1, pop: 1.7 }, { size: 4.2, life: 1.6, pop: 1.45 }] as const)[id]!,
+}));
+/**
  * The skill numbers' profile: ivory numbers, the crit fill a warmer ivory (its
  * gold is the atlas edge), compiled per target over 150 ms; numbers of one
  * style never melt into each other within 0.12 s (a cluster has its own).
  */
 export const IC_SKILL_NUMBERS: FeedbackProfile = {
   ...IC_NUMBERS,
+  tiers: SKILL_NUMBER_TIERS,
   numbers: { ...IC_NUMBERS.numbers, mergeS: 0.15, crowdMergeS: 0.12, colors: ["#fff4e2", "#fff0d2", "#f2fffd", "#f5e6c8"] },
 };
 
@@ -942,6 +977,10 @@ export function compactNumber(value: number): string {
 export class SkillNumberField extends DrawnNumberField implements NumberPaint {
   readonly rgb = new Int32Array(this.alive.length);
   readonly gold = new Uint8Array(this.alive.length);
+  /** The highest a number may float (screen px): the field's far edge above its point; its side edges at that depth. */
+  readonly minY = new Float32Array(this.alive.length);
+  readonly minX = new Float32Array(this.alive.length);
+  readonly maxX = new Float32Array(this.alive.length).fill(1e5);
   tintK = 0.75;
   private readonly shownValue = new Float64Array(this.alive.length).fill(-1);
   private readonly shownCount = new Int32Array(this.alive.length);
@@ -971,10 +1010,16 @@ export interface SkillNumbers {
   /**
    * A compiled packet: `value` over `hits` blows on `key` (a target, or a
    * cluster's own key) at a world point (m). `crit`: 120–135 % and the gold
-   * edge; `rgb`: the skill's colour on the lower stroke; `tier`: the kit's
-   * size and life row (2 a blow, 3 a big one or a cluster total, 4 a finisher).
+   * edge; `rgb`: the skill's colour on the lower stroke; `tier`: the size and
+   * life row (SKILL_NUMBER_TIERS: 1 a small hit, 2 a packet, 3 a cluster, 4 a
+   * big hit or crit, 5 a headline).
    */
   show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX?: number): void;
+  /**
+   * A big skill's one headline total (a running total that counts up while it lands, at the top of the view,
+   * still): `pop` scales it on the finisher. Ends `fadeS` s after the last call.
+   */
+  headline(value: number, hits: number, rgb: number, pop: boolean, fadeS?: number): void;
   readonly field: SkillNumberField;
   readonly live: number;
   update(dt: number): void;
@@ -986,10 +1031,21 @@ export interface SkillNumbers {
 /** Crits are this much bigger (POWER_RESEARCH: 120–135 %). */
 const CRIT_SIZE = 1.28;
 
+/** The headline's key (above every target and cluster key) and its place (shares of the view: top middle). */
+const HEADLINE_KEY = (1 << 21) + 7;
+const HEADLINE_X = 0.5;
+const HEADLINE_Y = 0.055;
+/** The play field's far edge and side edges (m): numbers never float off it on screen. */
+const FIELD_FAR_Z = -18;
+const FIELD_HALF_X = 20;
+
 class SkillNumbersImpl implements SkillNumbers, Overlay {
   readonly field: SkillNumberField;
   private sprites: IcNumberSprites | null = null;
   private readonly screen: ScreenPoint = { x: 0, y: 0, visible: false };
+  private readonly edge: ScreenPoint = { x: 0, y: 0, visible: false };
+  private readonly box: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
+  private headlineAt = -1;
   private now = 0.5;
   private width = 1600;
   private height = 900;
@@ -1015,14 +1071,54 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     // Below-right of the beast: the word tags own the zone above its head (POWER_RESEARCH §7).
     this.renderer.project(x, y + 0.2, z, this.screen);
     if (!this.screen.visible) return;
+    // Never above the field's far edge over this point (numbers spilled off the board in round 1).
+    this.renderer.project(x, 0, FIELD_FAR_Z, this.edge);
+    const top = this.edge.visible ? this.edge.y + 10 : 0;
+    // And inside the field's side edges at the beast's depth.
+    this.renderer.project(-FIELD_HALF_X, 0, z, this.edge);
+    const left = this.edge.visible ? Math.max(8, this.edge.x) : 8;
+    this.renderer.project(FIELD_HALF_X, 0, z, this.edge);
+    const right = this.edge.visible ? Math.min(this.width - 8, this.edge.x) : this.width - 8;
     const size = row.number.size * (crit ? CRIT_SIZE : 1);
-    const at = this.field.spawn(key, this.screen.x + 14, this.screen.y + 6, value, crit ? STYLE.crit : STYLE.normal, tier, size, row.number.life * (crit ? 1.2 : 1), dirX, -1, this.now);
+    const sx = Math.min(right - 16, Math.max(left + 16, this.screen.x + 14));
+    const sy = Math.min(this.height - 24, Math.max(top + 20, this.screen.y + 6));
+    const at = this.field.spawn(key, sx, sy, value, crit ? STYLE.crit : STYLE.normal, tier, size, row.number.life * (crit ? 1.2 : 1), dirX, -1, this.now);
     if (at < 0) return;
     // The kit merged it into a live number of this key: its hits are this packet's too.
     this.field.count[at] = this.field.count[at]! + (hits - 1);
     this.field.rgb[at] = rgb;
+    this.field.minY[at] = top;
+    this.field.minX[at] = left;
+    this.field.maxX[at] = right;
     if (crit) this.field.gold[at] = 1;
     else if (this.field.count[at] === hits) this.field.gold[at] = 0;
+  }
+
+  headline(value: number, hits: number, rgb: number, pop: boolean, fadeS = 1.2): void {
+    if (value <= 0) return;
+    const f = this.field;
+    const row = tierRow(5, f.profile.tiers).number!;
+    // Its whole box inside the view (the kit drops a number whose box leaves the top).
+    const hy = Math.max(this.height * HEADLINE_Y, f.fontPx * row.size * row.pop * 0.6 + 12);
+    let i = this.headlineAt;
+    if (i < 0 || f.alive[i] === 0 || f.key[i] !== HEADLINE_KEY) {
+      i = f.spawn(HEADLINE_KEY, this.width * HEADLINE_X, hy + 16, value, STYLE.crit, 5, row.size, fadeS, 0, -1, this.now);
+      this.headlineAt = i;
+      if (i < 0) return;
+      f.gold[i] = 1;
+    }
+    // Still, at the top middle, counting up; alive for `fadeS` more.
+    f.value[i] = value;
+    f.count[i] = hits;
+    f.rgb[i] = rgb;
+    f.vx[i] = f.vy[i] = 0;
+    f.x[i] = this.width * HEADLINE_X;
+    f.y[i] = hy;
+    f.minY[i] = 0;
+    f.minX[i] = 0;
+    f.maxX[i] = this.width;
+    f.life[i] = Math.max(f.life[i]!, f.age[i]! + fadeS);
+    if (pop) f.pop[i] = 1;
   }
 
   update(dt: number): void {
@@ -1030,10 +1126,27 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     const fontPx = 20 * Math.max(0.8, Math.min(1.2, Math.min(this.width / 1600, this.height / 900)));
     if (fontPx !== this.field.fontPx) this.field.fontPx = fontPx;
     this.field.update(dt);
+    // Inside the view and under the field's far edge: a number floating or pushed past them stops there.
+    const f = this.field;
+    for (let i = 0; i < f.alive.length; i += 1) {
+      if (f.alive[i] === 0) continue;
+      f.box(i, this.box);
+      const hw = this.box.w / 2;
+      const lo = Math.max(8, f.minX[i]!);
+      const hi = Math.min(this.width - 8, f.maxX[i]!);
+      if (f.x[i]! - hw < lo) f.x[i] = Math.min(lo + hw, (lo + hi) / 2);
+      else if (f.x[i]! + hw > hi) f.x[i] = Math.max(hi - hw, (lo + hi) / 2);
+      const top = Math.max(8 + this.box.h / 2, f.minY[i]! + this.box.h / 2);
+      if (f.y[i]! < top) {
+        f.y[i] = top;
+        if (f.vy[i]! < 0) f.vy[i] = 0;
+      }
+    }
   }
 
   clear(): void {
     for (let i = 0; i < this.field.alive.length; i += 1) this.field.kill(i);
+    this.headlineAt = -1;
   }
 
   draw(gl: THREE.WebGLRenderer, width: number, height: number): void {
@@ -1057,7 +1170,8 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
  * be loaded before the first number is drawn (the atlas is painted once).
  */
 export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont: string = NUMBER_ATLAS.digitFont): SkillNumbers {
-  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true, advance: digitFont === NUMBER_ATLAS.digitFont ? 1 : 0.8 });
+  // A bold dark outline and a soft shadow: never thin white over bright VFX (round 2).
+  return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true, advance: digitFont === NUMBER_ATLAS.digitFont ? 1 : 0.8, outline: 15, shadow: true });
 }
 
 // ── Ink smoke ───────────────────────────────────────────────────────────────
