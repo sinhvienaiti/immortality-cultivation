@@ -11,6 +11,9 @@
  * scenario steps frames with __lab.step), ?ui=0 hides the panel,
  * ?weapon=<id> the equipped sword (D55, default clear-wind; weapons.ts): its
  * blade and element colours drive every skill. W cycles the four swords.
+ * ?probe=0 turns off the motion probe (motion-probe.ts, read by
+ * __lab.metrics(); MOTION_PLAN step 1). __lab.walkTo / walkPath / faceTo move
+ * and turn the caster for the movement sequence (lab-motion.mjs).
  */
 import * as THREE from "three";
 import type { Quality } from "../content/types";
@@ -18,14 +21,18 @@ import { createRenderer, placeCamera } from "../view/renderer";
 import { KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
 import { SpritePool } from "../view/skills/fxkit";
 import { DEFAULT_WEAPON, weaponById, weaponsOf, type WeaponId } from "../view/skills/weapons";
-import { LabCaster, type CasterClip } from "./caster";
+import { CLIP_RELEASE_S, LabCaster, type CasterClip } from "./caster";
 import { LabHerd, type HerdMode } from "./herd";
 import { applyLook, buildField, LAB_ASSETS } from "./look";
+import { collectLayerNames, MotionProbe } from "./motion-probe";
+import { CameraKick, FlashLights, HitStop, smooth01 } from "./feel";
 
 const params = new URLSearchParams(location.search);
 const quality = (["low", "medium", "high", "ultra"].includes(params.get("q") ?? "") ? params.get("q") : "high") as Quality;
 let wpm = Number(params.get("wpm") ?? "45");
 const fixed = params.get("fixed") === "1";
+const probeOn = params.get("probe") !== "0";
+const probe = new MotionProbe();
 
 const host = document.getElementById("ic-lab");
 if (host === null) throw new Error("lab host missing");
@@ -68,12 +75,16 @@ const herd = new LabHerd();
 const caster = new LabCaster();
 view.layers.actors.add(herd.group, caster.root);
 
-// Camera kick and hit stop, owned by the lab (the game has its own in feedback-profile.ts).
+// Camera kick, hit stop and impact lights, owned by the lab (the game has its own in feedback-profile.ts): feel.ts.
 const camBase = new THREE.Vector3();
-let camKick = 0;
-let kickX = 0;
-let kickZ = 0;
-let stopLeft = 0;
+const kick = new CameraKick();
+const stop = new HitStop();
+/** About 2 cm of kick per "px" a skill asks for (the old lab scale). */
+const KICK_M_PER_PX = 0.02;
+// The kit stage's one impact light jumps to each new flash at full strength: the lab lights its flashes itself.
+view.stage.impactLight.removeFromParent();
+const lights = new FlashLights(view.layers.fx, quality === "low" ? 1 : quality === "medium" ? 2 : 3);
+const boltHit = new THREE.Vector3();
 
 const hostApi: KiemHost = {
   layer: view.layers.fx,
@@ -89,16 +100,15 @@ const hostApi: KiemHost = {
     caster.hand(out);
   },
   flash(at, colour, intensity) {
-    view.stage.flash(at, colour, intensity);
+    probe.flash();
+    lights.flash(at, view.camera.position, colour, intensity);
   },
   impulse(px, dx, dz) {
     const l = Math.hypot(dx, dz) || 1;
-    camKick = Math.max(camKick, px);
-    kickX = dx / l;
-    kickZ = dz / l;
+    kick.impulse(px * KICK_M_PER_PX, dx / l, dz / l);
   },
   hitStop(ms) {
-    stopLeft = Math.max(stopLeft, ms / 1000);
+    stop.start(ms);
   },
   moveCaster(x, z) {
     caster.moveTo(x, z);
@@ -131,28 +141,54 @@ function cycleWeapon(): void {
 // An enemy blow for the guard demo: a red bolt (enemy colour, canon §21.1) from a beast to the caster.
 const enemyBolt = new SpritePool(8, textures.glow, "add", "camera", 16);
 view.layers.fx.add(enemyBolt.mesh);
-const bolt = { active: false, x: 0, z: 0, t: 0 };
+// The bolt sheds its light at a rate (60/s, the same at any frame rate), easing in over 0.1 s, and fades
+// where it struck for 0.1 s instead of vanishing (MOTION_PLAN step 3).
+const bolt = { active: false, x: 0, z: 0, t: 0, acc: 0, end: -1 };
 function enemyShot(): void {
   const b = herd.nearest(caster.x, caster.z - 6, 8);
   bolt.active = true;
   bolt.x = b >= 0 ? herd.x(b) : caster.x + 4;
   bolt.z = b >= 0 ? herd.z(b) : caster.z - 6;
   bolt.t = 0;
+  bolt.acc = 0;
+  bolt.end = -1;
 }
 function updateBolt(dt: number): void {
   if (!bolt.active) return;
-  const dx = caster.x - bolt.x;
-  const dz = caster.z - bolt.z;
-  const d = Math.hypot(dx, dz);
-  const step = 9 * dt;
-  if (d <= 2.1) {
-    bolt.active = false;
-    if (!fx.block(bolt.x, bolt.z)) view.stage.flash(new THREE.Vector3(caster.x, 1, caster.z), "#ff4a4a", 6);
-    return;
+  bolt.t += dt;
+  if (bolt.end < 0) {
+    const dx = caster.x - bolt.x;
+    const dz = caster.z - bolt.z;
+    const d = Math.hypot(dx, dz);
+    const step = 9 * dt;
+    if (d <= 2.1) {
+      bolt.end = 0;
+      if (!fx.block(bolt.x, bolt.z)) {
+        lights.flash(boltHit.set(caster.x, 1, caster.z), view.camera.position, "#ff4a4a", 6);
+        probe.event("hit");
+        caster.hit(bolt.x, bolt.z);
+      }
+    } else {
+      bolt.x += (dx / d) * step;
+      bolt.z += (dz / d) * step;
+    }
+  } else {
+    bolt.end += dt;
+    if (bolt.end >= 0.1) {
+      bolt.active = false;
+      return;
+    }
   }
-  bolt.x += (dx / d) * step;
-  bolt.z += (dz / d) * step;
+  const k = smooth01(bolt.t / 0.1) * (bolt.end < 0 ? 1 : 1 - smooth01(bolt.end / 0.1));
+  bolt.acc += 60 * dt;
+  while (bolt.acc >= 1) {
+    bolt.acc -= 1;
+    emitBolt(k);
+  }
+}
+function emitBolt(k: number): void {
   const s = enemyBolt.spec.reset();
+  s.a = k;
   s.x = bolt.x;
   s.y = 1.0;
   s.z = bolt.z;
@@ -180,12 +216,35 @@ const TARGET: Record<KiemSlot, [number, number]> = { auto: [0, -8], k1: [0, -8],
 
 function type(slot: KiemSlot): void {
   if (slot === "auto") {
-    fx.cast("auto", 0, 0);
+    probe.lastKey("auto");
+    caster.release("auto");
+    queueCast("auto", 0, 0);
     return;
   }
+  probe.event("type", slot);
   const [tx, tz] = TARGET[slot];
-  if (slot !== "guard" && slot !== "dash") caster.face(tx - caster.x, tz - caster.z);
+  // The body turns to the word's target while it is typed (the dash too: it leaves that way).
+  if (slot !== "guard") caster.face(tx - caster.x, tz - caster.z);
   typing = { slot, letters: WORD_LEN[slot], typed: 0, next: 0, tx, tz };
+}
+
+// Keys and casts reach the VFX after the caster's update, so they leave from the hand as drawn (MOTION_PLAN step 2.3).
+const pending = { charge: false, cast: false, slot: "auto" as KiemSlot, castSlot: "auto" as KiemSlot, p: 0, tx: 0, tz: 0, cx: 0, cz: 0 };
+function queueCast(slot: KiemSlot, tx: number, tz: number): void {
+  pending.cast = true;
+  pending.castSlot = slot;
+  pending.cx = tx;
+  pending.cz = tz;
+}
+function flushTyping(): void {
+  if (pending.charge) {
+    pending.charge = false;
+    fx.setCharge(pending.slot, pending.p, pending.tx, pending.tz);
+  }
+  if (pending.cast) {
+    pending.cast = false;
+    fx.cast(pending.castSlot, pending.cx, pending.cz);
+  }
 }
 
 function updateTyping(dt: number): void {
@@ -197,11 +256,18 @@ function updateTyping(dt: number): void {
     typing.next += perLetter;
     const p = typing.typed / typing.letters;
     if (typing.typed >= typing.letters) {
-      fx.cast(typing.slot, typing.tx, typing.tz);
+      probe.lastKey(typing.slot);
+      caster.release(typing.slot);
+      queueCast(typing.slot, typing.tx, typing.tz);
       typing = null;
       break;
     }
-    fx.setCharge(typing.slot, p, typing.tx, typing.tz);
+    caster.charge(typing.slot, p, typing.tx, typing.tz);
+    pending.charge = true;
+    pending.slot = typing.slot;
+    pending.p = p;
+    pending.tx = typing.tx;
+    pending.tz = typing.tz;
   }
 }
 
@@ -209,12 +275,14 @@ function reset(): void {
   typing = null;
   fx.reset();
   herd.respawnAll();
-  caster.moveTo(0, 3);
-  caster.face(0, -1);
+  caster.place(0, 3, 0, -1);
+  pending.charge = pending.cast = false;
   bolt.active = false;
   enemyBolt.clear();
-  stopLeft = 0;
-  camKick = 0;
+  stop.reset();
+  kick.reset();
+  lights.reset();
+  probe.reset();
 }
 
 const KEYS: Record<string, KiemSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5" };
@@ -282,25 +350,48 @@ if (params.get("ui") !== "0") {
 
 // Loop.
 function frame(dt: number): void {
-  let world = dt;
-  if (stopLeft > 0) {
-    stopLeft -= dt;
-    world = dt * 0.05;
-  }
+  // Hit-stop: part frames counted, an eased exit (feel.ts). The world runs on per-second rates and
+  // time-sampled trails, so a variable rAF step shows the same motion at 60 and 120 Hz (appendix C §2.7).
+  const world = stop.advance(dt);
   updateTyping(world);
   updateBolt(world);
   herd.update(world);
   caster.update(world);
+  flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   fx.update(world, dt);
   enemyBolt.update(world);
-  // Camera kick: a spring along the blow, in metres (~1 px ≈ 2 cm at this distance).
+  // Camera kick: a damped spring along the blow, in metres, on real time (it plays through a hit-stop).
   if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
-  camKick = Math.max(0, camKick - dt * 30);
-  const k = camKick * 0.02 * Math.sin(Math.min(1, camKick / 4) * Math.PI);
-  view.camera.position.set(camBase.x + kickX * k, camBase.y, camBase.z + kickZ * k);
+  kick.update(dt);
+  lights.update(dt);
+  view.camera.position.set(camBase.x + kick.x, camBase.y, camBase.z + kick.z);
   view.render(dt);
+  // After the draw: world matrices are fresh and the probe reads what was shown.
+  if (probeOn) probe.sample(dt);
 }
+
+// A second view of the same frame for captures: the caster close up at 55° (no time passes).
+const savedCamPos = new THREE.Vector3();
+const savedCamQuat = new THREE.Quaternion();
+let followShown = false;
+function showView(mode: "follow" | "play", distanceM: number): void {
+  if (mode === "follow") {
+    if (!followShown) {
+      savedCamPos.copy(view.camera.position);
+      savedCamQuat.copy(view.camera.quaternion);
+    }
+    followShown = true;
+    placeCamera(view.camera, 55, distanceM, caster.x, caster.z, 0.9);
+    view.render(0);
+  } else if (followShown) {
+    followShown = false;
+    view.camera.position.copy(savedCamPos);
+    view.camera.quaternion.copy(savedCamQuat);
+    view.camera.updateMatrixWorld(true);
+  }
+}
+const screenV = new THREE.Vector3();
 
 declare global {
   interface Window {
@@ -309,7 +400,25 @@ declare global {
       type(slot: KiemSlot): void;
       cast(slot: KiemSlot, tx: number, tz: number): void;
       enemyShot(): void;
-      step(frames: number): void;
+      /** Steps `frames` frames of `dt` seconds (default 1/60). */
+      step(frames: number, dt?: number): void;
+      /** One frame of `dt`; returns [probe frame, caster screen x, y (CSS px, chest height)]. */
+      tick(dt?: number): [number, number, number];
+      /** Walks through [x, z, speed m/s, …] (the Animator: speed springs, walk ↔ run, strafe with `keepFacing`). */
+      walkPath(points: number[], keepFacing?: boolean): void;
+      walkTo(x: number, z: number, speedMps: number, keepFacing?: boolean): void;
+      /** Turns to face the point (yaw spring; turn in place past 60°). */
+      faceTo(x: number, z: number): void;
+      moving(): boolean;
+      /** A scenario phase label in the probe's markers. */
+      mark(label: string): void;
+      /** The motion probe's report (MOTION_PLAN step 1). */
+      metrics(): Record<string, unknown>;
+      /** The Animator's state and its clip analysis (strike timings, gaits; MOTION_PLAN step 2). */
+      anim(): Record<string, unknown>;
+      /** Redraws the current frame from a close camera on the caster ("follow", 55°, `distanceM`) or puts the play camera back ("play"). */
+      view(mode: "follow" | "play", distanceM?: number): void;
+      caster(): { x: number; z: number; fx: number; fz: number };
       reset(): void;
       setHerd(mode: HerdMode): void;
       setWpm(v: number): void;
@@ -330,14 +439,47 @@ void (async () => {
   const wanted = params.get("weapon") ?? DEFAULT_WEAPON;
   const equipped = setWeapon(wanted).then((ok) => (ok ? true : setWeapon(DEFAULT_WEAPON)));
   await Promise.all([herd.load(), caster.load(), look.ready, equipped]);
+  if (caster.model !== null) {
+    const names = collectLayerNames(fx, new Map());
+    names.set(enemyBolt.mesh, "enemyBolt");
+    probe.attach({
+      root: caster.root,
+      model: caster.model,
+      heightM: caster.heightM,
+      clips: caster.clipKeys.map((key, i) => ({ key, action: caster.clipActions[i]!, loop: LabCaster.loops(key), releaseS: CLIP_RELEASE_S[key], refClip: caster.clipRefs[i] ?? undefined })),
+      fxLayer: view.layers.fx,
+      layerNames: names,
+      blades: fx.blades,
+      flashLayers: ["flare", "star", "glow", "spark", "motes", "shock", "groundShock", "groundRing", "beams", "slash"],
+    });
+  }
+  caster.onState = (kind, detail) => {
+    if (kind === "clip") probe.clip(detail);
+    else probe.event(kind, detail);
+  };
+  caster.start();
   window.__lab = {
     ready: true,
     type,
     cast: (slot, tx, tz) => fx.cast(slot, tx, tz),
     enemyShot,
-    step(frames: number) {
-      for (let i = 0; i < frames; i += 1) frame(1 / 60);
+    step(frames: number, dt = 1 / 60) {
+      for (let i = 0; i < frames; i += 1) frame(dt);
     },
+    tick(dt = 1 / 60) {
+      frame(dt);
+      screenV.set(caster.x, 0.9, caster.z).project(view.camera);
+      return [probe.lastFrame, Math.round((screenV.x * 0.5 + 0.5) * innerWidth), Math.round((-screenV.y * 0.5 + 0.5) * innerHeight)];
+    },
+    walkPath: (points, keepFacing = false) => caster.walkPath(points, keepFacing),
+    walkTo: (x, z, speedMps, keepFacing = false) => caster.walkTo(x, z, speedMps, keepFacing),
+    faceTo: (x, z) => caster.faceTo(x, z),
+    moving: () => caster.moving,
+    mark: (label) => probe.event("phase", label),
+    metrics: () => probe.metrics(),
+    anim: () => caster.debug(),
+    view: (mode, distanceM = 6) => showView(mode, distanceM),
+    caster: () => ({ x: caster.x, z: caster.z, fx: caster.fx, fz: caster.fz }),
     reset,
     setHerd: (mode) => herd.setMode(mode),
     setWpm: (v) => (wpm = v),

@@ -18,6 +18,27 @@ export const easeInCubic = (t: number): number => t * t * t;
 export const easeOutQuad = (t: number): number => 1 - (1 - t) * (1 - t);
 export const easeInOutSine = (t: number): number => 0.5 - 0.5 * Math.cos(Math.PI * t);
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+/** 3t² − 2t³ on [0, 1] (clamped): no velocity jump at either end. */
+export const smooth01 = (t: number): number => {
+  const x = t < 0 ? 0 : t > 1 ? 1 : t;
+  return x * x * (3 - 2 * x);
+};
+/**
+ * Life fade of a timed layer, 1 → 0 over t ∈ [0, 1]: (1 − t³)². Bright for
+ * most of the life like 1 − t³, but with zero slope at the end, so the last
+ * frame drawn before the layer dies is already dim (1 − t³ left ~40 % of a
+ * short flash on its last frame: a pop off, MOTION_PLAN step 3).
+ */
+export const lifeFade = (t: number): number => {
+  const x = t < 0 ? 0 : t > 1 ? 1 : t;
+  const k = 1 - x * x * x;
+  return k * k;
+};
+/** Moves `x` toward `goal` with a half-life (s): exact at any frame rate (Driscoll; `THREE.MathUtils.damp` with λ = ln2 / halfLife). */
+export function approach(x: number, goal: number, halfLife: number, dt: number): number {
+  if (halfLife <= 0) return goal;
+  return goal + (x - goal) * Math.pow(2, -dt / halfLife);
+}
 /** 0 → 1 → 0 over [0, 1] with a fast rise (`rise` share) and a smooth fall. */
 export function pulse(t: number, rise = 0.15): number {
   if (t <= 0 || t >= 1) return 0;
@@ -149,7 +170,7 @@ export class SpriteSpec {
   g = 1;
   b = 1;
   a = 1;
-  /** Seconds of fade-in at the start (0: full at age 0, the first frame is the brightest, VFX_STANDARD §3.1 rule 5). */
+  /** Seconds of smoothstep fade-in at the start (0: the pool's `fadeIn`, itself 0 for flashes: full at age 0, VFX_STANDARD §3.1 rule 5). */
   fadeIn = 0;
   /** Velocity damping per second. */
   drag = 0;
@@ -227,6 +248,13 @@ export interface SpritePoolOptions {
   cropFade?: number;
   /** Camera sprites: fade in over this many metres above the ground, so the floor never slices them (0: off). */
   groundFade?: number;
+  /**
+   * Smoothstep fade-in (s) for timed sprites that set none of their own
+   * (one-frame cards excluded): the pool's sprites never pop on (MOTION_PLAN
+   * step 3). For non-flash layers (dark discs, ink, smoke, ground glows):
+   * flashes stay full on their first frame (VFX_STANDARD §3.1 rule 5).
+   */
+  fadeIn?: number;
 }
 
 export class SpritePool {
@@ -239,6 +267,7 @@ export class SpritePool {
   private readonly vel: Float32Array;
   private readonly attrs: PrefixInstancedAttribute[];
   private readonly geometry: THREE.InstancedBufferGeometry;
+  private readonly minFadeIn: number;
   private live = 0;
 
   constructor(
@@ -249,6 +278,7 @@ export class SpritePool {
     renderOrder = 10,
     opts: SpritePoolOptions = {},
   ) {
+    this.minFadeIn = Math.max(0, opts.fadeIn ?? 0);
     const pull = opts.pull ?? 0.5;
     const crop = Math.min(1, Math.max(0.05, opts.crop ?? 1));
     const cropFade = Math.min(0.99, Math.max(0, opts.cropFade ?? 0.8));
@@ -352,7 +382,7 @@ export class SpritePool {
     st[o + 13] = s.g;
     st[o + 14] = s.b;
     st[o + 15] = s.a;
-    st[o + 16] = s.fadeIn;
+    st[o + 16] = s.fadeIn > 0 || s.life <= 0 ? s.fadeIn : this.minFadeIn;
     st[o + 17] = s.drag;
     st[o + 18] = s.gravity;
     st[o + 19] = s.stretch;
@@ -398,7 +428,8 @@ export class SpritePool {
       st[o + 6] = age;
       const drag = st[o + 17]!;
       if (drag > 0) {
-        const k = Math.max(0, 1 - drag * dt);
+        // Exact damping: the same path at any frame rate.
+        const k = Math.exp(-drag * dt);
         st[o + 3] = st[o + 3]! * k;
         st[o + 4] = st[o + 4]! * k;
         st[o + 5] = st[o + 5]! * k;
@@ -424,8 +455,8 @@ export class SpritePool {
     const once = life <= 0;
     const t = once ? 0 : age / life;
     const fadeIn = st[o + 16]!;
-    let alpha = !once && fadeIn > 0 && age < fadeIn ? age / fadeIn : 1;
-    alpha *= 1 - easeInCubic(t);
+    let alpha = !once && fadeIn > 0 && age < fadeIn ? smooth01(age / fadeIn) : 1;
+    alpha *= lifeFade(t);
     const size = lerp(st[o + 8]!, st[o + 9]!, easeOutCubic(t));
     const p = i * 4;
     this.pos[p] = st[o]!;
@@ -485,17 +516,50 @@ void main() {
   gl_FragColor = vec4(rgb * a, a);
 }`;
 
-/** Camera-facing ribbons fed head positions every frame (sword trails, dash streaks). */
+/** World seconds between two ribbon samples: a trail's shape follows time, not frames (the same at 60 and 120 Hz, frozen in a hit-stop). */
+const RIBBON_SAMPLE_S = 1 / 60;
+/**
+ * Smoothstep fade-in of a new ribbon (s), the default of `start` (MOTION_PLAN appendix C §2.8). A trail
+ * also grows from zero length with its head, so its light (alpha × length) rises as their product: the
+ * fade-in must suit the head's speed. A head that starts fast (Hộ thân blades dropping 4 m in 0.15 s)
+ * needs 0.1 s (0.05 s put 46 % of the light into one frame at 60 Hz); a 0.1 s flight needs ~0.05 s
+ * (0.1 s put 31 % into its last frame): `start`'s `fadeIn`.
+ */
+const RIBBON_FADE_IN_S = 0.1;
+
+/**
+ * Camera-facing ribbons (sword trails, dash streaks). The caller moves each
+ * ribbon's head every frame (`push`); the pool commits a sample every
+ * RIBBON_SAMPLE_S of world time, interpolated along the head's motion, and
+ * draws the head, the samples and a tail cut at a fixed age, so a trail's
+ * length is the same at any frame rate and stands still in a hit-stop.
+ * `stop` fades a ribbon out (its head holds, the tail retracts into it);
+ * `kill` drops it at once (resets only).
+ */
 export class RibbonPool {
   readonly mesh: THREE.Mesh;
   private readonly points: number;
-  private readonly hist: Float32Array; // capacity × points × 3 (ring)
+  /** Committed samples per ribbon (ring of `points`), positions and world times. */
+  private readonly hist: Float32Array;
+  private readonly histT: Float64Array;
   private readonly heads: Int32Array;
   private readonly filled: Int32Array;
+  /** The head now and at the last update (x y z per ribbon). */
+  private readonly live: Float32Array;
+  private readonly prevLive: Float32Array;
+  /** World time of the newest committed sample. */
+  private readonly lastT: Float64Array;
   private readonly widthM: Float32Array;
-  private readonly colour: Float32Array; // r g b a per ribbon
+  private readonly colour: Float32Array; // r g b a per ribbon (a: the caller's alpha)
   private readonly rimC: Float32Array; // r g b per ribbon (halo, ≤ 0.9)
-  private readonly active: Uint8Array;
+  /** 0 off, 1 live, 2 fading out. */
+  private readonly state: Uint8Array;
+  private readonly age: Float32Array;
+  private readonly fadeT: Float32Array;
+  private readonly fadeLen: Float32Array;
+  /** Fade-in time per ribbon (s). */
+  private readonly fadeIn: Float32Array;
+  private readonly scratch: Float32Array; // points × 4: x y z age of the drawn polyline
   private readonly positions: Float32Array;
   private readonly ts: Float32Array;
   private readonly cols: Float32Array;
@@ -510,23 +574,33 @@ export class RibbonPool {
   private time = 0;
 
   constructor(readonly capacity: number, points: number, texture: THREE.Texture, renderOrder = 12) {
-    this.points = points;
-    this.hist = new Float32Array(capacity * points * 3);
+    this.points = Math.max(4, points);
+    const n = this.points;
+    this.hist = new Float32Array(capacity * n * 3);
+    this.histT = new Float64Array(capacity * n);
     this.heads = new Int32Array(capacity);
     this.filled = new Int32Array(capacity);
+    this.live = new Float32Array(capacity * 3);
+    this.prevLive = new Float32Array(capacity * 3);
+    this.lastT = new Float64Array(capacity);
     this.widthM = new Float32Array(capacity);
     this.colour = new Float32Array(capacity * 4);
     this.rimC = new Float32Array(capacity * 3);
-    this.active = new Uint8Array(capacity);
-    const verts = capacity * points * 2;
+    this.state = new Uint8Array(capacity);
+    this.age = new Float32Array(capacity);
+    this.fadeT = new Float32Array(capacity);
+    this.fadeLen = new Float32Array(capacity);
+    this.fadeIn = new Float32Array(capacity);
+    this.scratch = new Float32Array(n * 4);
+    const verts = capacity * n * 2;
     this.positions = new Float32Array(verts * 3);
     this.ts = new Float32Array(verts);
     this.cols = new Float32Array(verts * 4);
     this.rims = new Float32Array(verts * 3);
     const index: number[] = [];
     for (let r = 0; r < capacity; r += 1) {
-      for (let p = 0; p < points - 1; p += 1) {
-        const a = (r * points + p) * 2;
+      for (let p = 0; p < n - 1; p += 1) {
+        const a = (r * n + p) * 2;
         index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
       }
     }
@@ -561,9 +635,12 @@ export class RibbonPool {
     this.mesh.visible = false;
   }
 
-  /** Starts ribbon `i` at a point with a width and an HDR colour. */
-  start(i: number, x: number, y: number, z: number, widthM: number, r: number, g: number, b: number, a: number): void {
-    this.active[i] = 1;
+  /** Starts ribbon `i` at a point with a width and an HDR colour; it eases in over `fadeIn` s (smoothstep). */
+  start(i: number, x: number, y: number, z: number, widthM: number, r: number, g: number, b: number, a: number, fadeIn = RIBBON_FADE_IN_S): void {
+    this.state[i] = 1;
+    this.age[i] = 0;
+    this.fadeIn[i] = Math.max(1e-3, fadeIn);
+    this.fadeT[i] = 0;
     this.heads[i] = 0;
     this.filled[i] = 1;
     this.widthM[i] = widthM;
@@ -577,12 +654,16 @@ export class RibbonPool {
     this.rimC[i * 3] = (r / m) * 0.85;
     this.rimC[i * 3 + 1] = (g / m) * 0.85;
     this.rimC[i * 3 + 2] = (b / m) * 0.85;
-    const base = i * this.points * 3;
-    for (let p = 0; p < this.points; p += 1) {
-      this.hist[base + p * 3] = x;
-      this.hist[base + p * 3 + 1] = y;
-      this.hist[base + p * 3 + 2] = z;
-    }
+    const base = i * this.points;
+    this.hist[base * 3] = x;
+    this.hist[base * 3 + 1] = y;
+    this.hist[base * 3 + 2] = z;
+    this.histT[base] = this.time;
+    this.lastT[i] = this.time;
+    const L = i * 3;
+    this.live[L] = this.prevLive[L] = x;
+    this.live[L + 1] = this.prevLive[L + 1] = y;
+    this.live[L + 2] = this.prevLive[L + 2] = z;
   }
 
   /** The halo colour of ribbon `i` (linear, keep each channel ≤ 0.9: it must not bloom). */
@@ -592,62 +673,176 @@ export class RibbonPool {
     this.rimC[i * 3 + 2] = b;
   }
 
-  /** The head of ribbon `i` this frame. */
+  /** The head of ribbon `i` this frame (ignored once it fades out: the head holds and the tail retracts into it). */
   push(i: number, x: number, y: number, z: number): void {
-    if (this.active[i] === 0) return;
-    const h = (this.heads[i]! + 1) % this.points;
-    this.heads[i] = h;
-    this.filled[i] = Math.min(this.points, this.filled[i]! + 1);
-    const o = (i * this.points + h) * 3;
-    this.hist[o] = x;
-    this.hist[o + 1] = y;
-    this.hist[o + 2] = z;
+    if (this.state[i] !== 1) return;
+    const L = i * 3;
+    this.live[L] = x;
+    this.live[L + 1] = y;
+    this.live[L + 2] = z;
   }
 
   setAlpha(i: number, a: number): void {
     this.colour[i * 4 + 3] = a;
   }
 
-  stop(i: number): void {
-    this.active[i] = 0;
+  /** Fades ribbon `i` out over `fade` s (smoothstep) while its tail retracts; 0 drops it at once. */
+  stop(i: number, fade = 0.18): void {
+    if (this.state[i] !== 1) return;
+    if (fade <= 0) {
+      this.state[i] = 0;
+      return;
+    }
+    this.state[i] = 2;
+    this.fadeT[i] = 0;
+    this.fadeLen[i] = fade;
+  }
+
+  /** Drops ribbon `i` at once (resets). */
+  kill(i: number): void {
+    this.state[i] = 0;
+  }
+
+  /** True while ribbon `i` is drawn (live or fading). */
+  isOn(i: number): boolean {
+    return this.state[i] !== 0;
   }
 
   update(dt: number, camera: THREE.Camera): void {
+    const t0 = this.time;
     this.time += dt;
     this.material.uniforms.uTime!.value = this.time;
     // Only ribbons below the highest live one are built, sent and drawn; none live: hidden, nothing sent.
     let hi = 0;
-    for (let r = 0; r < this.capacity; r += 1) if (this.active[r] !== 0) hi = r + 1;
+    for (let r = 0; r < this.capacity; r += 1) if (this.state[r] !== 0) hi = r + 1;
     this.mesh.visible = hi > 0;
     if (hi === 0) return;
     camera.getWorldPosition(this.camPos);
     const n = this.points;
+    const S = RIBBON_SAMPLE_S;
+    // Samples younger than W are drawn; the tail is cut at age W between the two samples around it.
+    const W = (n - 2) * S;
+    const sc = this.scratch;
     for (let r = 0; r < hi; r += 1) {
       const vbase = r * n * 2;
-      if (this.active[r] === 0) {
+      if (this.state[r] === 0) {
         for (let k = 0; k < n * 2; k += 1) this.cols[(vbase + k) * 4 + 3] = 0;
         continue;
       }
+      let fade = 1;
+      if (this.state[r] === 2) {
+        this.fadeT[r] = this.fadeT[r]! + dt;
+        const u = this.fadeT[r]! / this.fadeLen[r]!;
+        if (u >= 1) {
+          this.state[r] = 0;
+          for (let k = 0; k < n * 2; k += 1) this.cols[(vbase + k) * 4 + 3] = 0;
+          continue;
+        }
+        fade = 1 - smooth01(u);
+      }
+      this.age[r] = this.age[r]! + dt;
+      fade *= smooth01(this.age[r]! / this.fadeIn[r]!);
+      // Commit the samples due since the last update, placed along the head's motion over this frame.
+      const L = r * 3;
+      const hb = r * n;
+      while (this.time - this.lastT[r]! >= S - 1e-9) {
+        const ts = this.lastT[r]! + S;
+        const u = dt > 0 ? clamp01((ts - t0) / dt) : 1;
+        const h = (this.heads[r]! + 1) % n;
+        this.heads[r] = h;
+        this.filled[r] = Math.min(n, this.filled[r]! + 1);
+        const o = (hb + h) * 3;
+        this.hist[o] = lerp(this.prevLive[L]!, this.live[L]!, u);
+        this.hist[o + 1] = lerp(this.prevLive[L + 1]!, this.live[L + 1]!, u);
+        this.hist[o + 2] = lerp(this.prevLive[L + 2]!, this.live[L + 2]!, u);
+        this.histT[hb + h] = ts;
+        this.lastT[r] = ts;
+      }
+      this.prevLive[L] = this.live[L]!;
+      this.prevLive[L + 1] = this.live[L + 1]!;
+      this.prevLive[L + 2] = this.live[L + 2]!;
+      // The polyline: the head (age 0), the samples newest first, the tail at min(W, oldest sample's age).
       const filled = this.filled[r]!;
       const head = this.heads[r]!;
-      const base = r * n * 3;
+      const oldest = (head - (filled - 1) + n) % n;
+      const tailAge = Math.min(W, this.time - this.histT[hb + oldest]!);
+      sc[0] = this.live[L]!;
+      sc[1] = this.live[L + 1]!;
+      sc[2] = this.live[L + 2]!;
+      sc[3] = 0;
+      let m = 1;
+      for (let s = 0; s < filled && m < n; s += 1) {
+        const idx = (head - s + n) % n;
+        const o = (hb + idx) * 3;
+        const a = this.time - this.histT[hb + idx]!;
+        // A sample taken this instant sits on the head (every frame at a steady 60 Hz): skip it, a zero-length
+        // segment has no side direction (it twisted the head quad).
+        if (a < 1e-6) continue;
+        const q = (m - 1) * 4;
+        if (a >= tailAge) {
+          // Cut between the last point and this sample, at the tail's age.
+          const pa = sc[q + 3]!;
+          const u = a - pa > 1e-9 ? (tailAge - pa) / (a - pa) : 1;
+          sc[m * 4] = lerp(sc[q]!, this.hist[o]!, u);
+          sc[m * 4 + 1] = lerp(sc[q + 1]!, this.hist[o + 1]!, u);
+          sc[m * 4 + 2] = lerp(sc[q + 2]!, this.hist[o + 2]!, u);
+          sc[m * 4 + 3] = tailAge;
+          m += 1;
+          break;
+        }
+        sc[m * 4] = this.hist[o]!;
+        sc[m * 4 + 1] = this.hist[o + 1]!;
+        sc[m * 4 + 2] = this.hist[o + 2]!;
+        sc[m * 4 + 3] = a;
+        m += 1;
+      }
+      const norm = tailAge > 1e-6 ? 1 / tailAge : 0;
       const w0 = this.widthM[r]!;
       const c = r * 4;
+      const alpha = this.colour[c + 3]! * fade;
+      // Side direction per point from its neighbours (central difference); a degenerate one keeps the last good side.
+      let sideX = 0;
+      let sideY = 0;
+      let sideZ = 0;
+      let haveSide = false;
+      // Seed it from the first segment with a length (a held head sits on its newest sample: its own segment has none).
+      for (let i = 0; i + 1 < m; i += 1) {
+        const qi = i * 4;
+        this.tmpB.set(sc[qi + 4]! - sc[qi]!, sc[qi + 5]! - sc[qi + 1]!, sc[qi + 6]! - sc[qi + 2]!);
+        if (this.tmpB.lengthSq() < 1e-10) continue;
+        this.tmpC.set(this.camPos.x - sc[qi]!, this.camPos.y - sc[qi + 1]!, this.camPos.z - sc[qi + 2]!);
+        this.tmpB.cross(this.tmpC);
+        if (this.tmpB.lengthSq() <= 1e-12) continue;
+        this.tmpB.normalize();
+        sideX = this.tmpB.x;
+        sideY = this.tmpB.y;
+        sideZ = this.tmpB.z;
+        haveSide = true;
+        break;
+      }
       for (let k = 0; k < n; k += 1) {
-        // k = 0 the head, going back in time; clamp to what is filled.
-        const kk = Math.min(k, filled - 1);
-        const idx = (head - kk + n) % n;
-        const idx2 = (head - Math.min(kk + 1, filled - 1) + n) % n;
-        const o = base + idx * 3;
-        const o2 = base + idx2 * 3;
-        this.tmpA.set(this.hist[o]!, this.hist[o + 1]!, this.hist[o + 2]!);
-        this.tmpB.set(this.hist[o2]!, this.hist[o2 + 1]!, this.hist[o2 + 2]!);
-        this.tmpB.sub(this.tmpA);
-        if (this.tmpB.lengthSq() < 1e-8) this.tmpB.set(0, 0, 1);
+        // Past the polyline's end: collapsed onto its last point, transparent.
+        const kk = Math.min(k, m - 1);
+        const q = kk * 4;
+        const qa = Math.max(0, kk - 1) * 4;
+        const qb = Math.min(m - 1, kk + 1) * 4;
+        this.tmpA.set(sc[q]!, sc[q + 1]!, sc[q + 2]!);
+        this.tmpB.set(sc[qb]! - sc[qa]!, sc[qb + 1]! - sc[qa + 1]!, sc[qb + 2]! - sc[qa + 2]!);
         this.tmpC.subVectors(this.camPos, this.tmpA);
-        this.tmpB.cross(this.tmpC).normalize();
-        const t = k / (n - 1);
-        const w = w0 * (1 - t * 0.85);
+        this.tmpB.cross(this.tmpC);
+        if (this.tmpB.lengthSq() > 1e-12) {
+          this.tmpB.normalize();
+          sideX = this.tmpB.x;
+          sideY = this.tmpB.y;
+          sideZ = this.tmpB.z;
+          haveSide = true;
+        } else if (haveSide) {
+          this.tmpB.set(sideX, sideY, sideZ);
+        } else {
+          this.tmpB.set(0, 0, 1).cross(this.tmpC).normalize();
+        }
+        const tt = norm > 0 ? Math.min(1, sc[q + 3]! * norm) : k === 0 ? 0 : 1;
+        const w = w0 * (1 - tt * 0.85);
         const v = vbase + k * 2;
         this.positions[v * 3] = this.tmpA.x + this.tmpB.x * w;
         this.positions[v * 3 + 1] = this.tmpA.y + this.tmpB.y * w;
@@ -655,15 +850,15 @@ export class RibbonPool {
         this.positions[(v + 1) * 3] = this.tmpA.x - this.tmpB.x * w;
         this.positions[(v + 1) * 3 + 1] = this.tmpA.y - this.tmpB.y * w;
         this.positions[(v + 1) * 3 + 2] = this.tmpA.z - this.tmpB.z * w;
-        const tt = filled > 1 ? Math.min(1, kk / Math.max(1, filled - 1)) : 1;
         this.ts[v] = tt;
         this.ts[v + 1] = tt;
+        const va = k < m ? alpha : 0;
         for (let s = 0; s < 2; s += 1) {
-          const q = (v + s) * 4;
-          this.cols[q] = this.colour[c]!;
-          this.cols[q + 1] = this.colour[c + 1]!;
-          this.cols[q + 2] = this.colour[c + 2]!;
-          this.cols[q + 3] = this.colour[c + 3]!;
+          const qq = (v + s) * 4;
+          this.cols[qq] = this.colour[c]!;
+          this.cols[qq + 1] = this.colour[c + 1]!;
+          this.cols[qq + 2] = this.colour[c + 2]!;
+          this.cols[qq + 3] = va;
           const h = (v + s) * 3;
           this.rims[h] = this.rimC[r * 3]!;
           this.rims[h + 1] = this.rimC[r * 3 + 1]!;
@@ -939,7 +1134,7 @@ export class BeamPool {
     const sweep = grow > 0 ? easeOutCubic(clamp01(age / grow)) : 1;
     const len = lerp(st[o + 6]!, st[o + 7]!, easeOutCubic(t)) * sweep;
     const w = lerp(st[o + 9]!, st[o + 10]!, easeOutCubic(t));
-    const k = st[o + 22]! * (1 - easeInCubic(t));
+    const k = st[o + 22]! * lifeFade(t);
     const b = i * 4;
     this.base[b] = st[o]!;
     this.base[b + 1] = st[o + 1]!;
@@ -978,7 +1173,8 @@ uniform float uReveal;   // typing progress 0..1 (charge), 1 after release
 uniform float uGlow;     // 0..n brightness of the light layer (HDR above 1 blooms)
 uniform float uInk;      // 0..1 dark ink layer under the light
 uniform float uFade;     // 0..1 overall
-uniform float uCount;    // arcs left (Hộ thân charges), spiral rotation speed…
+uniform float uCount;    // arcs left (Hộ thân charges, fractional while one goes out)
+uniform float uPhase;    // spiral rotation (rad), accumulated on the CPU (GroundSigil.spin)
 uniform vec3 uColor;     // light, ≤ 0.64 per channel (× at most 1.4 below: ≤ 0.9, no bloom)
 uniform vec3 uCore;      // thin HDR line colour (unit max)
 varying vec2 vUv;
@@ -991,6 +1187,9 @@ float noise(vec2 p) {
 }
 float fbm(vec2 p) { return noise(p) * 0.55 + noise(p * 2.1 + 3.1) * 0.3 + noise(p * 4.3 + 7.7) * 0.15; }
 float band(float d, float w) { return 1.0 - smoothstep(0.0, w, abs(d)); }
+// Soft reveal: 1 where x is behind the reveal front, 0 ahead, a smooth edge of width w between
+// (no hard cut); fully open at r = 1 (the front goes past 1 by w).
+float revealSoft(float x, float r, float w) { float f = r * (1.0 + w); return 1.0 - smoothstep(f - w, f, x); }
 float sdHex(vec2 p, float r) {
   const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
   p = abs(p);
@@ -1028,7 +1227,7 @@ void main() {
   float core = 0.0;
   float ink = 0.0;
   float n = fbm(p * 6.0 + uTime * 0.15);
-  float revealArc = step(fract((ang + PI) / (2.0 * PI)), uReveal);
+  float revealArc = revealSoft(fract((ang + PI) / (2.0 * PI)), uReveal, 0.05);
 
 #if defined(HEX)
   // Six-sword array: a hexagon outline with six sockets at its corners, an inner hex, spokes to the centre,
@@ -1043,7 +1242,7 @@ void main() {
   for (int i = 0; i < 6; i++) {
     float th = float(i) * PI / 3.0 + PI / 6.0;
     vec2 c = vec2(cos(th), sin(th)) * 0.99;
-    float on = step(float(i) / 6.0, uReveal - 0.02);
+    float on = smoothstep(float(i) / 6.0, float(i) / 6.0 + 0.08, uReveal - 0.02);
     corner += on * (1.0 - smoothstep(0.04, 0.13, length(p - c)));
   }
   float heart = runes(ang, r, 0.3, 0.035, 24.0, uTime * 0.25) * uReveal;
@@ -1053,7 +1252,7 @@ void main() {
   ink = (1.0 - smoothstep(0.86, 1.0, r)) * 0.3 * (0.65 + 0.35 * n) + band(dOuter, 0.14) * 0.35 * revealArc + band(dInner, 0.1) * 0.22 * uReveal;
 #elif defined(SPIRAL)
   // Three galaxy belts around a dark core, a rune ring round the rim, dark shadows along the arms.
-  float rot = uTime * uCount;
+  float rot = uPhase;
   float arms = 0.0;
   float shade = 0.0;
   float spine = 0.0;
@@ -1063,7 +1262,7 @@ void main() {
     float target = 0.18 * exp(0.32 * mod(th + 2.0 * PI, 2.0 * PI));
     float d = abs(r - target);
     float along = mod(th + 2.0 * PI, 2.0 * PI) / (2.0 * PI);
-    float on = step(float(i) / 3.0, uReveal + 0.001);
+    float on = smoothstep(float(i) / 3.0 - 0.001, float(i) / 3.0 + 0.1, uReveal);
     float span = smoothstep(0.08, 0.2, r) * (1.0 - smoothstep(0.86, 0.94, r));
     arms += on * band(d, 0.05 + 0.07 * along) * span;
     spine += on * band(d, 0.006 + 0.008 * along) * span;
@@ -1080,9 +1279,9 @@ void main() {
   float seg = fract((ang + PI) / (2.0 * PI) * 3.0);
   float idx = floor((ang + PI) / (2.0 * PI) * 3.0);
   float gap = smoothstep(0.0, 0.06, seg) * (1.0 - smoothstep(0.86, 0.92, seg));
-  float lit = step(idx, uCount - 0.5);
+  float lit = clamp(uCount - idx, 0.0, 1.0);
   float ring = band(r - 0.86, 0.075);
-  float drawn = smoothstep(0.0, 0.02, uReveal * 1.02 - (idx / 3.0 + seg / 3.0) + 0.02);
+  float drawn = smoothstep(0.0, 0.05, uReveal * 1.05 - (idx / 3.0 + seg / 3.0) + 0.0);
   float rune = runes(ang, r, 0.7, 0.03, 30.0, uTime * 0.5) * drawn * (0.4 + 0.6 * lit);
   light = (ring * gap * (0.25 + 0.75 * lit) + rune * 0.8) * drawn;
   core = band(r - 0.86, 0.025) * gap * lit * 0.9 * drawn;
@@ -1091,16 +1290,17 @@ void main() {
   // A straight cut along x: uv.x -1 (caster) .. 1 (far end).
   float along = (p.x + 1.0) * 0.5;
   float w = abs(p.y);
-  float reveal = step(along, uReveal);
+  float reveal = revealSoft(along, uReveal, 0.04);
   light = (1.0 - smoothstep(0.0, 0.5, w)) * reveal * (0.7 + 0.3 * n);
   core = (1.0 - smoothstep(0.0, 0.12, w)) * reveal;
   ink = (1.0 - smoothstep(0.1, 0.9, w + n * 0.25)) * reveal * smoothstep(0.0, 0.05, along) * smoothstep(1.0, 0.92, along);
 #elif defined(ARROW)
   float along = (p.x + 1.0) * 0.5;
   float w = abs(p.y);
-  light = (1.0 - smoothstep(0.0, 0.4, w)) * step(along, uReveal) * 0.8;
-  core = (1.0 - smoothstep(0.0, 0.1, w)) * step(along, uReveal);
-  ink = (1.0 - smoothstep(0.0, 0.8, w + n * 0.3)) * step(along, uReveal) * 0.6;
+  float reveal = revealSoft(along, uReveal, 0.06);
+  light = (1.0 - smoothstep(0.0, 0.4, w)) * reveal * 0.8;
+  core = (1.0 - smoothstep(0.0, 0.1, w)) * reveal;
+  ink = (1.0 - smoothstep(0.0, 0.8, w + n * 0.3)) * reveal * 0.6;
 #elif defined(SEAL)
   // The caster's seal: two rings drawn round with the word, a band of runes, a hexagram of two
   // counter-turning triangles, a soft heart; a dark disc under it so it glows on pale stone.
@@ -1145,9 +1345,16 @@ export class GroundSigil {
     uInk: { value: number };
     uFade: { value: number };
     uCount: { value: number };
+    uPhase: { value: number };
     uColor: { value: THREE.Color };
     uCore: { value: THREE.Color };
   };
+  /**
+   * Spiral rotation speed (rad/s), integrated into uPhase by `tick`: a speed
+   * change never jumps the pattern (the old uTime × speed did, MOTION_PLAN
+   * step 3), and blades riding the pattern read the same phase.
+   */
+  spin = 0;
 
   constructor(kind: SigilKind, sizeX: number, sizeZ: number, colour: string, core: string) {
     this.uniforms = {
@@ -1157,6 +1364,7 @@ export class GroundSigil {
       uInk: { value: 0 },
       uFade: { value: 0 },
       uCount: { value: 3 },
+      uPhase: { value: 0 },
       uColor: { value: new THREE.Color(colour) },
       uCore: { value: new THREE.Color(core) },
     };
@@ -1197,5 +1405,11 @@ export class GroundSigil {
 
   tick(dt: number): void {
     this.uniforms.uTime.value += dt;
+    this.uniforms.uPhase.value += this.spin * dt;
+  }
+
+  /** The spiral's phase (rad) this frame. */
+  get phase(): number {
+    return this.uniforms.uPhase.value;
   }
 }

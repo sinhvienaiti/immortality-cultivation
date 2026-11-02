@@ -51,6 +51,21 @@ Các làn ghi thêm dòng khi chép (canon §17.1, D35, D44; M0A_PLAN §10):
 - `src/sim/fixed.ts` (Làn 2): `mulDiv` làm tròn nửa lên bằng phép nguyên chính xác ở mọi bước (canon §7.2, D38), Rồng dùng `Math.round` trên thương số thực; di chuyển dùng `mulDivSym` (nửa xa số 0).
 - `src/app/input-router.ts` (bước 0): không có phím camera, Alt, Shift+Enter của Rồng; phím chữ bị bỏ ngoài lúc Bàn Quyết sống.
 
+## Chỗ kit còn thiếu, giữ cục bộ (D44)
+
+- `src/lab/motion-probe.ts` (lab kỹ năng, MOTION_PLAN bước 1, 02/11): bộ đo chuyển động của nhân vật và VFX. Đo vận tốc góc xương so với đỉnh clip, khoảng cách tới tư thế bind, tốc độ và tốc xoay của gốc, trượt chân khi chạm, xuyên đất, lớp VFX bật tắt, kiếm bật hay giật hướng, và các mốc phím cuối, nhả VFX, nhả thân. Kit chưa có phần đo của Animation Lab (CHARACTER_ANIMATION §5.10, §5.11). Khi kit có `anim/` thì đưa bộ đo lên đó, giữ tên số đo và ngưỡng `MOTION_GATES`.
+- `src/lab/feel.ts` (lab kỹ năng, MOTION_PLAN bước 3 mục 11, 02/11): rung camera bằng lò xo tắt hãm nhận xung vận tốc (ω 35, ζ 0,35), hit-stop đếm cả phần khung rồi thoát bằng smoothstep 30 ms, và 1–3 đèn chớp va chạm tự quản theo mức chất lượng. Kit `three/stage.ts` chỉ có một `impactLight`; mỗi lần chớp đèn dời ngay sang chỗ mới ở cường độ lớn nhất, nên vùng sáng nhảy. Lab tháo đèn đó ra (`removeFromParent`) chứ không sửa kit. Khi kit có phần cảm giác đòn cho view 3D thì đưa ba lớp này lên đó.
+- `src/view/skills/fxkit.ts` (mã của game, không phải bản chép kit; MOTION_PLAN bước 3, 02/11): ribbon lấy mẫu theo thời gian thế giới và tắt bằng fade, có fade-in riêng từng ribbon; pool sprite có `fadeIn` mặc định cho lớp không phải lóe; trận đồ xoắn ốc cộng dồn pha trên CPU (`uPhase`, `GroundSigil.spin`). Kit `three/` chưa có pool VFX nào; khi kit có pool VFX thì giữ các luật này: không lớp nào đổi quá 30 % trong 1 khung, trừ lóe.
+- `src/lab/caster.ts`: đi theo điểm (`walkPath`, `walkTo`) và xoay tức thì (`faceTo`) là móc tạm để ghi mốc. Bước 2 thay bằng Animator cục bộ ở `src/lab/anim/`, tương ứng `anim/inertial.ts` và `anim/charge.ts` mà kit còn thiếu (CHARACTER_ANIMATION §5.5, §5.6).
+- `src/lab/anim/` (lab kỹ năng, MOTION_PLAN bước 2, 02/11): Animator cục bộ cho nhân vật tầng H. Kit chưa có `anim/` (CHARACTER_ANIMATION §5.5–5.8), nên toàn bộ là mã riêng của lab, không chép từ game nào. Khi kit có `anim/` thì đưa lên, giữ API và các số dưới đây:
+  - `animator.ts`: máy trạng thái (Idle + Fidget, đi ↔ chạy theo tốc độ, đi ngang, lùi, xoay tại chỗ, gồng, nhả, thu, dash, Hit cộng). Clip lấy mẫu thẳng từ track (`ClipSampler`) và ghi mọi xương mỗi khung; `AnimationMixer` chỉ còn để bộ đo đọc clip nào đang chạy. Lý do: `PropertyMixer` của three 0.170 chỉ ghi xương khi giá trị trộn đổi so với lần trước, nên track hằng và clip đang dừng giữ lại IK và các lớp của khung trước (lỗi đo được: `ball_l` lệch 171°). Kit `anim/` cần giữ cách này hoặc một cách tương đương.
+  - `inertial.ts`: chuyển tiếp quán tính từng xương (Holden), half-life theo MOTION_PLAN 2.2.
+  - `resample.ts`, `retarget.ts`: lấy mẫu lại 24 → 60 fps (squad, Catmull-Rom); chuyển clip Mesh2Motion sang xương Lam trong bộ nhớ, khép vòng lặp hở (strafe hở 3 cm).
+  - `gait.ts`: đo tốc mặt đất của clip tại chỗ và làm phẳng tốc chân trụ (dời pelvis vài cm trong chu kỳ, Run của Lam dời tối đa 12 cm). Thiếu bước này thì clip tại chỗ luôn trượt chân dù khớp nhịp bước.
+  - `foot-ik.ts`: khóa chân hai đốt, xoay quanh gót hay mũi, bước đặt lại chân khi đứng, xoay tại chỗ theo chân (thân không xoay quá chân trụ lạc hậu nhất 70°).
+  - `springs.ts`: chuỗi lò xo cho đuôi, tai, túi, viết riêng. Không dùng `@pixiv/three-vrm-springbone` vì `tests/boundary.test.ts` chỉ cho `three` và `@fontsource` (D44). Bước cố định 60 Hz, giới hạn góc và tốc xoay trong khung xương.
+  - `layers.ts`: thở, cuộn thân lúc gồng, giật lùi, Hit, nghiêng, khom, nhìn theo.
+
 ## Sửa đang mở ở Rồng Giữ Ải lúc chép (`06cd4e6`, changelog 25/10)
 
 - B1, B7 trượt Nhàn I (cả dải chung và dải D27).
