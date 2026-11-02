@@ -47,6 +47,20 @@ describe("screen effects by tier (power pass)", () => {
     expect(fx.advance(1 / 60)).toBeCloseTo(1 / 60, 6);
   });
 
+  it("never flashes or shakes a finisher past its tier's row of the table", () => {
+    const cam = new THREE.PerspectiveCamera(28, 16 / 9, 1, 400);
+    cam.position.set(0, 40, 30);
+    cam.lookAt(0, 0, 0);
+    cam.updateMatrixWorld(true);
+    for (const tier of ["skill", "ultimate"] as const) {
+      const fx = new ScreenFx(host());
+      fx.impact(tier, "finisher");
+      fx.update(1e-6, cam);
+      expect(fx.shown.flash).toBeLessThanOrEqual(SCREEN_TIERS[tier].flash + 1e-6);
+      expect(fx.shown.shakePx).toBeLessThanOrEqual(SCREEN_TIERS[tier].shakePx + 1e-6);
+    }
+  });
+
   it("never lets an older blow stop or slow the world in the 50 ms after a release", () => {
     const fx = new ScreenFx(host());
     // The key: a release cuts. An older skill's finisher lands on the next frame and must not hold the release.

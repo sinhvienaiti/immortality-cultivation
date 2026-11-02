@@ -275,7 +275,10 @@ export class ScreenFx {
     if (tier === "ultimate") this.punch(t.punch * 0.5, t.punchS);
   }
 
-  /** A blow of `tier` landing: shake, hit-stop, flash; a finisher adds slow motion, the punch and the edge split. */
+  /**
+   * A blow of `tier` landing: shake, hit-stop, flash; a finisher adds slow motion, the punch and the edge split.
+   * Shake and flash are the tier's (the table has one row per tier; a finisher over it broke the flash cap).
+   */
   impact(tier: ScreenTier, role: ImpactRole): void {
     const t = SCREEN_TIERS[tier];
     if (role === "secondary") {
@@ -283,10 +286,10 @@ export class ScreenFx {
       return;
     }
     const fin = role === "finisher";
-    this.shake(fin ? t.shakePx * 1.25 : t.shakePx, fin ? t.shakeS * 1.3 : t.shakeS, t.rollDeg);
+    this.shake(t.shakePx, t.shakeS, t.rollDeg);
     // The basic blow's stop is local to its target (the field holds that beast): no world stop here.
     if (tier !== "basic") this.hitStop(fin ? t.finisherStopMs : t.stopMs);
-    this.flash(fin ? t.flash * 1.2 : t.flash, t.flashS);
+    this.flash(t.flash, t.flashS);
     if (fin) {
       if (t.slow < 1) this.slow(t.slow, t.slowS);
       if (t.punch > 0) this.punch(t.punch, t.punchS);
