@@ -28,16 +28,24 @@ const HIT_OUT = 0.25;
 const LOOK_MAX = 20 * DEG;
 const LOOK_SPINE_MAX = 15 * DEG;
 /** The Hit clip under the acting's directional stagger (round 2: the stagger reads, the clip adds texture). */
-const HIT_WEIGHT = 0.3;
+const HIT_WEIGHT = 0.15;
 /** Hip hinge per metre of pelvis drop (deg/m): a 5 cm crouch tips the pelvis 6° forward. */
 const HINGE_DEG_PER_M = 120;
 /** Share of the acting lean taken at the hips (the rest bends the spine). */
 const LEAN_HIP = 0.35;
 /** Turn lead: share of the turn still to come taken by the torso and by the head (on top of it), their limits, half-life. */
-const LEAD_TORSO = 0.3;
-const LEAD_TORSO_MAX = 18 * DEG;
-const LEAD_HEAD = 0.15;
-const LEAD_HEAD_MAX = 9 * DEG;
+const LEAD_TORSO = 0.22;
+const LEAD_TORSO_MAX = 13 * DEG;
+const LEAD_HEAD = 0.3;
+const LEAD_HEAD_MAX = 18 * DEG;
+/**
+ * Walking (round-3 judge: "almost no arm swing, the tail hangs straight"): each upper arm swings against its own leg,
+ * by the clip's stride (deg per metre of front-minus-back foot, capped), and the tail base sways side to side with it.
+ */
+const ARM_SWING_DEG_PER_M = 130;
+const ARM_SWING_MAX = 24;
+const TAIL_SWAY_DEG_PER_M = 70;
+const TAIL_SWAY_MAX = 16;
 const LEAD_HL = 0.05;
 /** The chest's heading speed limit (rad/s). */
 export const CHEST_CAP = 720 * DEG;
@@ -45,6 +53,7 @@ export const CHEST_CAP = 720 * DEG;
 /** The acting's body pose this frame (acting.ts outputs). */
 export interface ActBody {
   crouchM: number;
+  square: number;
   shiftFM: number;
   shiftRM: number;
   twistDeg: number;
@@ -96,6 +105,13 @@ export class Layers {
   lookWeightGoal = 0;
   /** Pelvis drop (m) the crouch applied this frame. */
   pelvisDrop = 0;
+  /** The clip's stride this frame (right foot minus left foot along the facing, m) and the arm swing's share (0–1). */
+  stride = 0;
+  strideArms = 0;
+  private readonly swing = new Float64Array(4);
+  private readonly upperArmL: THREE.Bone | null;
+  private readonly upperArmR: THREE.Bone | null;
+  private readonly tail1: THREE.Bone | null;
   /** Turn lead springs (rad): torso, head (value, velocity each). */
   private readonly lead = new Float64Array(4);
   /** Chest heading follower (rad, unwrapped; value, velocity) and whether it holds a value. */
@@ -109,8 +125,9 @@ export class Layers {
   private headOn = false;
   private readonly headFwd = new THREE.Vector3();
   private headCal = false;
-  /** The chest heading correction applied this frame (rad), for checks. */
+  /** The chest and head heading corrections applied this frame (rad), for checks. */
   chestHeld = 0;
+  headHeld = 0;
 
   constructor(
     private readonly rig: Rig,
@@ -124,6 +141,9 @@ export class Layers {
     this.head = rig.bone("head");
     this.clavL = rig.bone("clavicle_l");
     this.clavR = rig.bone("clavicle_r");
+    this.upperArmL = rig.bone("upperarm_l");
+    this.upperArmR = rig.bone("upperarm_r");
+    this.tail1 = rig.bone("tail_01");
     const n = rig.count;
     this.hitRef = new Float32Array(n * 4);
     this.hitQ = new Float32Array(n * 4);
@@ -152,6 +172,8 @@ export class Layers {
     this.breathW[1] = 0;
     this.pelvisDrop = 0;
     this.lead.fill(0);
+    this.swing.fill(0);
+    this.stride = this.strideArms = 0;
     this.chestS.fill(0);
     this.chestOn = false;
     this.headS.fill(0);
@@ -238,6 +260,9 @@ export class Layers {
       }
       pelvis.updateMatrixWorld(true);
     }
+    // Square the torso: a share of the clip's own torso yaw against the facing comes out (spine_01–03), so the
+    // gesture's twist is what shows.
+    if (act.square > 1e-3) this.squareTorso(fx, fz, act.square);
     // Turn lead: the torso and the head turn into a turn still to come before the root does (springs on its share).
     const dtL = this.lastDt;
     const rest = this.turnHint;
@@ -278,6 +303,46 @@ export class Layers {
     }
     this.limitChest(fx, fz);
     this.limitHead(fx, fz);
+    this.applyStride(fx, fz);
+  }
+
+  /** Arm swing against the legs and the tail's side sway, from the clip's stride (a spring keeps them smooth). */
+  private applyStride(fx: number, fz: number): void {
+    const goal = clamp(this.stride * ARM_SWING_DEG_PER_M, -ARM_SWING_MAX, ARM_SWING_MAX) * this.strideArms;
+    criticalSpring(this.swing, 0, goal, 0.05, this.lastDt);
+    const a = this.swing[0]!;
+    if (Math.abs(a) > 0.05) {
+      // Right foot ahead (stride > 0): the left arm forward, the right arm back (+ about the right axis is forward).
+      this.tiltArm(this.upperArmL, fx, fz, a);
+      this.tiltArm(this.upperArmR, fx, fz, -a);
+    }
+    const swayGoal = clamp(this.stride * TAIL_SWAY_DEG_PER_M, -TAIL_SWAY_MAX, TAIL_SWAY_MAX) * Math.min(1, this.strideArms * 2);
+    criticalSpring(this.swing, 2, swayGoal, 0.08, this.lastDt);
+    const sway = this.swing[2]!;
+    if (this.tail1 && Math.abs(sway) > 0.05) this.turn(this.tail1, fx, fz, sway * DEG, 0);
+  }
+
+  /** Swings an upper arm forward (+deg) about the character's right axis, in world space. */
+  private tiltArm(bone: THREE.Bone | null, fx: number, fz: number, deg: number): void {
+    if (!bone || !bone.parent) return;
+    worldQuat(bone.parent, _p);
+    rotateBoneWorld(bone, _p, _d.setFromAxisAngle(_h.set(-fz, 0, fx), deg * DEG));
+    bone.updateMatrixWorld(true);
+  }
+
+  /** Turns the spine by −share × (chest heading − facing), spread over spine_01–03. */
+  private squareTorso(fx: number, fz: number, share: number): void {
+    const chest = this.spine3;
+    if (!chest || !this.chestCal) return;
+    worldQuat(chest, _q);
+    _v.copy(this.chestFwd).applyQuaternion(_q);
+    if (_v.x * _v.x + _v.z * _v.z < 1e-6) return;
+    const off = wrapPi(Math.atan2(_v.x, _v.z) - Math.atan2(fx, fz));
+    const c = -off * share;
+    if (Math.abs(c) < 1e-4) return;
+    this.turn(this.spine1, fx, fz, c * 0.25, 0);
+    this.turn(this.spine2, fx, fz, c * 0.35, 0);
+    this.turn(this.spine3, fx, fz, c * 0.4, 0);
   }
 
   /** The head's heading under the same soft cap (the look-at and the lead swing it on top of the chest); neck 0.4, head 0.6. */
@@ -303,6 +368,7 @@ export class Layers {
     const cap = CHEST_CAP * dt;
     this.headS[0] = before + cap * Math.tanh(gap / cap);
     const corr = wrapPi(this.headS[0]! - raw);
+    this.headHeld = corr;
     if (Math.abs(corr) < 1e-4) return;
     this.turn(this.neck, fx, fz, corr * 0.4, 0);
     this.turn(this.head, fx, fz, corr * 0.6, 0);

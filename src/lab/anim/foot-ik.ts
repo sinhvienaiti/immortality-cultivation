@@ -313,6 +313,14 @@ export class FootLock {
     }
   }
 
+  /** The clip's right foot minus its left foot along the facing (m), from the captured clip feet: the stride signal. */
+  clipStride(rootX: number, rootZ: number, fx: number, fz: number): number {
+    const l = this.legs[0];
+    const r = this.legs[1];
+    if (!l || !r) return 0;
+    return (r.a0.x - rootX) * fx + (r.a0.z - rootZ) * fz - ((l.a0.x - rootX) * fx + (l.a0.z - rootZ) * fz);
+  }
+
   /** The lowest captured clip foot's height over its standing height (m, ankle or ball): after `capture`. */
   clearance(): number {
     let c = Infinity;

@@ -64,10 +64,11 @@ export interface MoveDef {
   readonly releaseStance: Stance | null;
   readonly tailWhip: number;
   readonly faceTarget: boolean;
+  readonly square: number;
 }
 
 /** Deepest pelvis drop a gesture may ask for after the gain (m; Lam's legs are 0.37 m). */
-const CROUCH_MAX = 0.11;
+const CROUCH_MAX = 0.12;
 
 function gainPose(p: Pose, k: number): Pose {
   return {
@@ -115,6 +116,7 @@ export function moveDef(slot: MoveId): MoveDef {
     releaseStance: shareStance(g.releaseStance, share),
     tailWhip: g.tailWhip,
     faceTarget: g.faceTarget,
+    square: g.square,
   };
   defCache.set(slot, { use, def });
   return def;
@@ -146,24 +148,26 @@ const BRAKE_S = 0.28;
  * HIT_RISE_S, holds HIT_HOLD_S, then recovers on an underdamped spring (a small overshoot); the shown root steps back
  * over HIT_OUT_S, stays HIT_STAY_S, and comes back over HIT_BACK_S.
  */
-const HIT_RISE_S = 2 / 60;
-const HIT_HOLD_S = 3.5 / 60;
+const HIT_RISE_S = 3 / 60;
+const HIT_HOLD_S = 3 / 60;
 const HIT_OUT_S = 0.14;
 const HIT_STAY_S = 0.3;
 const HIT_BACK_S = 0.6;
 const OFF_MAX_M = 0.45;
 /** The stagger at its peak: lean and side lean along the push (deg), head snap (deg), knees buckling (m). */
-const HIT_LEAN = 15;
-const HIT_SIDE = 12;
-const HIT_HEAD = 20;
-const HIT_TWIST = 10;
-const HIT_CROUCH = 0.035;
+const HIT_LEAN = 12;
+const HIT_SIDE = 10;
+const HIT_HEAD = 12;
+const HIT_TWIST = 8;
+const HIT_CROUCH = 0.05;
+/** A blow flings both arms out (~30°) under the stagger. */
+const FLINCH: Pose = { crouch: 0, twist: 0, lean: 0, side: 0, r: { up: [-0.25, 0.72, -0.65], fore: [-0.1, 0.78, -0.62], w: 0.5 }, l: { up: [-0.25, -0.72, -0.65], fore: [-0.1, -0.78, -0.62], w: 0.5 } };
 
 type Phase = "idle" | "charge" | "strike" | "dash" | "land";
 /** Strike sub-phases, by age since the release. */
 export type StrikeStage = "snap" | "hold" | "sustain" | "settle" | "recover" | "done";
 
-// Channels: 0 crouch, 1 twist, 2 lean, 3 side, 4 shift forward, 5 shift right, 6 head pitch, 7 spare; then per arm
+// Channels: 0 crouch, 1 twist, 2 lean, 3 side, 4 shift forward, 5 shift right, 6 head pitch, 7 torso square; then per arm
 // (R at 8, L at 19): up xyz, fore xyz, weight, hand xyz, hand weight.
 const N = 30;
 const C_CROUCH = 0;
@@ -173,7 +177,8 @@ const C_SIDE = 3;
 const C_SHIFTF = 4;
 const C_SHIFTR = 5;
 const C_HEAD = 6;
-const N_BODY = 7;
+const C_SQUARE = 7;
+const N_BODY = 8;
 const ARM_R = 8;
 const ARM_L = 19;
 const A_W = 6;
@@ -248,6 +253,8 @@ export class Acting {
   sideDeg = 0;
   shiftFM = 0;
   shiftRM = 0;
+  /** Share of the base clip's torso yaw (against the facing) taken out this frame (0–1). */
+  square = 0;
   headPitchDeg = 0;
   headRollDeg = 0;
   /**
@@ -345,7 +352,7 @@ export class Acting {
     this.stanceFirst = -1;
     this.tailKick = 0;
     this.tuck = 0;
-    this.crouchM = this.twistDeg = this.leanDeg = this.sideDeg = this.shiftFM = this.shiftRM = this.headPitchDeg = this.headRollDeg = 0;
+    this.crouchM = this.twistDeg = this.leanDeg = this.sideDeg = this.shiftFM = this.shiftRM = this.headPitchDeg = this.headRollDeg = this.square = 0;
   }
 
   /** The strike stage now (the Animator holds or releases the base clip by it). */
@@ -382,8 +389,8 @@ export class Acting {
   private intendedNow(): boolean {
     if (this.phase !== "strike" || !this.def?.intended) return false;
     const st = this.stage;
-    // The arms come down from the salute over the first frames of the sustain.
-    return st === "snap" || st === "hold" || (st === "sustain" && this.age < SNAP_S + this.def.holdS + 0.2);
+    // Held through the sustain (the guard's raised block); K5's sustain lowers one arm, so the check sees it anyway.
+    return st === "snap" || st === "hold" || st === "sustain";
   }
 
   /** Seconds the arms still come down after an intended pose ended (a new word typed over it cuts the salute short). */
@@ -429,8 +436,9 @@ export class Acting {
       this.anticStanced = false;
     }
     this.setTarget(tx, def.targetY, tz);
-    // Builds with the word; after the next-to-last key it completes (~8 frames, the anticipation proper).
-    this.anticGoal = keysLeft <= 1 ? 1 : 0.25 + 0.45 * clamp(progress, 0, 1);
+    // Builds with the word up to the last key (round-3 judge: a coil that grows over the word, peaking on the last
+    // key); after the next-to-last key it completes (~8 frames, the anticipation proper).
+    this.anticGoal = keysLeft <= 1 ? 1 : 0.15 + 0.7 * clamp(progress, 0, 1);
   }
 
   /** The dash word: the body compresses as it is typed. */
@@ -469,6 +477,8 @@ export class Acting {
     }
     if (def.releaseStance) this.requestStance(def.releaseStance, def.releaseStance.first);
     this.tailKick += def.tailWhip;
+    // A short dip under the release (the knees give, then drive up).
+    this.dip[1] = this.dip[1]! + 1.1;
   }
 
   /** The caster's root and facing this frame (for the lunge direction). */
@@ -533,7 +543,8 @@ export class Acting {
 
   /** Arriving from a walk or run: the body sways on past the stop and settles (a balance step's weight). */
   stopSway(speed: number): void {
-    this.sway[1] = this.sway[1]! + 110 + 35 * Math.min(3, speed);
+    // The braking step: the body leans back against the stop, then sways a little forward and settles.
+    this.sway[1] = this.sway[1]! - (150 + 45 * Math.min(3, speed));
     this.tailKick += 0.4 + 0.25 * Math.min(3, speed);
   }
 
@@ -565,9 +576,10 @@ export class Acting {
     const dash = GESTURES.dashCrouch;
     switch (this.phase) {
       case "idle":
-        this.setGoal(ZERO, 1, null);
+        if (this.hitT >= 0) this.setGoal(FLINCH, this.hitE, null);
+        else this.setGoal(ZERO, 1, null);
         hlScalar = 0.12;
-        hlArm = 0.11;
+        hlArm = this.hitT >= 0 ? 0.05 : 0.11;
         break;
       case "charge":
         if (this.def) {
@@ -643,7 +655,7 @@ export class Acting {
     // A charge or strike dropped for a walk keeps no stance (the gait owns the feet).
     if (this.phase === "idle" && this.stanceOn) this.requestStance(null, undefined);
     for (let c = 0; c < N_BODY; c += 1) {
-      if (under && c !== C_CROUCH && c !== C_SHIFTF && c !== C_SHIFTR) underdampedSpring(this.s, c * 2, this.goal[c]!, underHz, underZeta, dt);
+      if (under && c !== C_CROUCH && c !== C_SHIFTF && c !== C_SHIFTR && c !== C_HEAD) underdampedSpring(this.s, c * 2, this.goal[c]!, underHz, underZeta, dt);
       else criticalSpring(this.s, c * 2, this.goal[c]!, hlScalar, dt);
     }
     // An arm unseen before this frame's step (weight ~0) follows where the clip holds it (last frame). A new aim then
@@ -678,7 +690,7 @@ export class Acting {
       this.sphereStep(g, this.goal[o]!, this.goal[o + 1]!, this.goal[o + 2]!, unseen && !this.clipSeen ? 0 : hlArm, dt);
     }
     underdampedSpring(this.pulse, 0, 0, 5, 0.4, dt);
-    underdampedSpring(this.sway, 0, 0, 2.6, 0.45, dt);
+    underdampedSpring(this.sway, 0, 0, 2.6, 0.35, dt);
     underdampedSpring(this.dip, 0, 0, 3.5, 0.7, dt);
     this.updateHit(dt);
     const p = this.pulse[0]!;
@@ -690,6 +702,7 @@ export class Acting {
     this.shiftFM = this.s[C_SHIFTF * 2]!;
     this.shiftRM = this.s[C_SHIFTR * 2]!;
     this.headPitchDeg = this.s[C_HEAD * 2]! - this.hitF * HIT_HEAD * e;
+    this.square = Math.max(0, Math.min(1, this.s[C_SQUARE * 2]!));
     this.headRollDeg = this.hitR * HIT_HEAD * 0.5 * e;
     // The view offset (lunge, step back): held by what made it, then eased back to the logical position.
     if (this.offOwner === "strike") {
@@ -728,7 +741,7 @@ export class Acting {
     } else if (t < HIT_RISE_S + HIT_HOLD_S) {
       this.hitE = 1;
     } else {
-      underdampedSpring(this.hitRec, 0, 0, 2.2, 0.62, dt);
+      underdampedSpring(this.hitRec, 0, 0, 2.8, 0.7, dt);
       this.hitE = this.hitRec[0]!;
       if (t > 1.4) {
         this.hitT = -1;
@@ -805,6 +818,8 @@ export class Acting {
     this.goal[C_SHIFTF] = (pose.shiftF ?? 0) * k;
     this.goal[C_SHIFTR] = (pose.shiftR ?? 0) * k;
     this.goal[C_HEAD] = (pose.head ?? 0) * k;
+    // The clip's own torso yaw comes out while a gesture with a pose acts (not in the recovery's rest or idle).
+    this.goal[C_SQUARE] = def ? def.square * Math.min(1, k * 1.5) : 0;
     this.armGoal(ARM_R, pose.r, k, def);
     this.armGoal(ARM_L, pose.l, k, def);
   }

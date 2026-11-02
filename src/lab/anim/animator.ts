@@ -124,7 +124,7 @@ const DASH_LAND_SHARE = 0.08;
 /** A clip foot lower than this over its standing height counts as on the ground (m). */
 const LAND_CLEAR_M = 0.03;
 /** A hit steps the body back this far (m), the feet stepping with it (round-2 judges: 0.3–0.5 m with a step). */
-const HIT_STEP_M = 0.38;
+const HIT_STEP_M = 0.28;
 /** A cast turn: the turn's speed and acceleration × this, the body this far past the lagging foot, re-plant steps this long (s). */
 const CAST_TURN_BOOST = 2.2;
 const CAST_TURN_LEAD = 95 * DEG;
@@ -139,7 +139,12 @@ const MOVE_ON = 0.04;
 const FWD_GAITS: readonly ClipKey[] = ["walk", "jog", "run"];
 const SIDE_GAITS: readonly ClipKey[] = ["strafeL", "strafeR", "back"];
 /** Gait blend band round the crossover of two neighbours (share of the crossover speed, log-symmetric). */
-const GAIT_BAND = 1.25;
+const GAIT_BAND = 1.45;
+/**
+ * The speed that picks the gaits and their blend follows the ground speed on this half-life (s). Round 3: accelerating
+ * through a narrow band moved the walk/run weight ~30 % a frame and the inertialized switch threw Lam's head back 70°.
+ */
+const GAIT_SEL_HL = 0.06;
 const H_VEL = 1 / 60;
 /** Yaw half-life when turning in place past 60° (the feet re-plant on the way: ~0.6 s for 180°). */
 export const TURN_IN_PLACE_HL = 0.14;
@@ -208,6 +213,8 @@ export class Animator {
   /** The stance request last handed to the feet, and the settle step's countdown after a stop (s, −1 none). */
   private stanceSeq = 0;
   private settleIn = -1;
+  /** The gait-picking speed (spring: value, velocity). */
+  private readonly gaitSel = new Float64Array(2);
   /** The tail chain (springs) for the acting's whips. */
   private tailChain = -1;
   private readonly forward = new THREE.Vector3(0, 0, 1);
@@ -646,6 +653,10 @@ export class Animator {
     this.layers.applyHit();
     this.root.updateMatrixWorld(true);
     this.feet?.capture();
+    // The stride (front foot minus back foot along the facing, from the clip) drives the arm swing and tail sway.
+    const g = this.gaitShown >= 0 ? this.keys[this.gaitShown] : null;
+    this.layers.stride = this.feet && g !== null ? this.feet.clipStride(this.loco.showX, this.loco.showZ, this.loco.fx, this.loco.fz) : 0;
+    this.layers.strideArms = g === "walk" ? 1 : g === "run" || g === "jog" ? 0.35 : 0;
     this.layers.turnHint = wrapPi(this.loco.yawGoal - this.loco.yaw);
     this.layers.applyWorld(fx, fz, act);
     act.applyArms(fx, fz);
@@ -808,6 +819,8 @@ export class Animator {
   private updateLoco(dt: number): void {
     const loco = this.loco;
     const speed = loco.speed;
+    if (this.gaitShown < 0 && speed < 0.05) this.gaitSel[0] = this.gaitSel[1] = 0;
+    else criticalSpring(this.gaitSel, 0, speed, GAIT_SEL_HL, dt);
     const active = speed > MOVE_ON || (loco.hasPath && speed > 0.01);
     if (this.brakeLeft >= 0) {
       // The braking step's contact pose holds (the planted front foot), then Idle brings the back foot up.
@@ -883,14 +896,15 @@ export class Animator {
           const s0 = this.gaits.get(f[k]!)!.speed;
           const s1 = this.gaits.get(f[k + 1]!)!.speed;
           const cross = Math.sqrt(s0 * s1);
-          if (speed <= cross / GAIT_BAND) break;
+          const sel = Math.max(1e-3, this.gaitSel[0]!);
+          if (sel <= cross / GAIT_BAND) break;
           a = this.indexOf(f[k]!);
-          if (speed >= cross * GAIT_BAND) {
+          if (sel >= cross * GAIT_BAND) {
             a = this.indexOf(f[k + 1]!);
             continue;
           }
           b = this.indexOf(f[k + 1]!);
-          w = smoothstep(Math.log(cross / GAIT_BAND), Math.log(cross * GAIT_BAND), Math.log(speed));
+          w = smoothstep(Math.log(cross / GAIT_BAND), Math.log(cross * GAIT_BAND), Math.log(sel));
           break;
         }
       }

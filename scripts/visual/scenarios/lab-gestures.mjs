@@ -72,14 +72,26 @@ export default async function (page) {
     writeFileSync(file, Buffer.from(r.data, "base64"));
   };
   let n = 0; // running frame index over all parts
+  // The play crop holds still while the caster stays within DZ px of its centre (a lunge, a step back or a hop shows as
+  // motion through space) and follows beyond that.
+  const DZ = Math.round(90 * sc);
+  const crop = { x: -1, y: -1 };
   const tick = async (partFrames) => {
     const res = await page.eval("window.__lab.tick(1/60)");
     if (!Array.isArray(res)) throw new Error("tick failed: " + JSON.stringify(res));
     const [, sx, sy] = res;
     const id = String(n).padStart(5, "0");
+    if (crop.x < 0) {
+      crop.x = sx;
+      crop.y = sy;
+    }
+    if (sx - crop.x > DZ) crop.x = sx - DZ;
+    else if (crop.x - sx > DZ) crop.x = sx + DZ;
+    if (sy - crop.y > DZ) crop.y = sy - DZ;
+    else if (crop.y - sy > DZ) crop.y = sy + DZ;
     if (views.includes("play")) {
-      const x = Math.max(0, Math.min(W - PLAY, Math.round(sx - PLAY / 2)));
-      const y = Math.max(0, Math.min(H - PLAY, Math.round(sy - PLAY * 0.55)));
+      const x = Math.max(0, Math.min(W - PLAY, Math.round(crop.x - PLAY / 2)));
+      const y = Math.max(0, Math.min(H - PLAY, Math.round(crop.y - PLAY * 0.55)));
       await shoot(join(raw, `play-${id}.jpg`), { x, y, width: PLAY, height: PLAY });
     }
     if (views.includes("close")) {
@@ -104,6 +116,7 @@ export default async function (page) {
   for (const part of parts) {
     await page.eval("window.__lab.reset()");
     await page.eval(`window.__lab.mark(${JSON.stringify(part)})`);
+    crop.x = crop.y = -1;
     const frames = [];
     const keys = {};
     await advance(0.35, frames);
