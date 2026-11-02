@@ -470,8 +470,9 @@ bus.on((e) => {
     attacks += 1;
     attackOf[e.slot] = attacks;
     hitsOf[e.slot] = 0;
-    // A field-wide skill and the ultimate show one running headline total at the top of the view.
-    if (e.slot === "k7" || e.slot === "k5") compiler.headline(attacks);
+    // Field-wide, ultimate and multi-target skills show one running headline total at the top of the view (round
+    // 3a: their small blows count only there).
+    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4") compiler.headline(attacks);
   } else if (e.kind === "impact") {
     const n = hitsOf[e.slot] ?? 0;
     hitsOf[e.slot] = n + 1;
@@ -1157,7 +1158,7 @@ declare global {
       setFx(intensity: number): void;
       /** Event counts since the last reset (release, impact, death, flyby, world, callout). */
       events(): Record<string, number>;
-      /** Damage numbers since the last reset: packets shown (numbers spawned), cluster totals, live now, dropped by the field. */
+      /** Damage numbers since the last reset: numbers shown, packets in a total only, live now by kind, dropped by the field. */
       numbers(): Record<string, number>;
       /** The last key-7 or K5 cast's victim tiers (round 3a, P6): heroes (shove and most screen motion, px at 1080p), secondary and background counts. */
       victims(): Record<string, unknown>;
@@ -1512,7 +1513,20 @@ void (async () => {
     },
     setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
     events: () => ({ ...bus.counts }),
-    numbers: () => ({ shown: compiler.shown, clusters: compiler.clusters, live: numbers.live, dropped: numbers.field.dropped }),
+    numbers() {
+      // Live numbers by kind (round 3a, P7: at most 2 headlines, 4 victims, 2 crits or elites; 8 in all).
+      const f = numbers.field;
+      let headlines = 0;
+      let crits = 0;
+      let victims = 0;
+      for (let i = 0; i < f.alive.length; i += 1) {
+        if (f.alive[i] === 0) continue;
+        if (f.tier[i]! >= 5) headlines += 1;
+        else if (f.tier[i]! >= 4) crits += 1;
+        else victims += 1;
+      }
+      return { shown: compiler.shown, totalOnly: compiler.totalOnly, clusters: compiler.clusters, live: numbers.live, headlines, victims, crits, dropped: f.dropped };
+    },
     victims: () => victims.report(),
     beast(i) {
       screenV.set(herd.x(i), herd.midY(i) + herd.airY(i), herd.z(i)).project(view.camera);

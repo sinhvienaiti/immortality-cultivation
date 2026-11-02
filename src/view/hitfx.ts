@@ -1001,6 +1001,8 @@ export function compactNumber(value: number): string {
  */
 export class SkillNumberField extends DrawnNumberField implements NumberPaint {
   readonly rgb = new Int32Array(this.alive.length);
+  /** The attack each number belongs to (−1 none): a new batch of that attack fades its older victims. */
+  readonly owner = new Int32Array(this.alive.length).fill(-1);
   readonly gold = new Uint8Array(this.alive.length);
   /** The highest a number may float (screen px): the field's far edge above its point; its side edges at that depth. */
   readonly minY = new Float32Array(this.alive.length);
@@ -1033,18 +1035,23 @@ export class SkillNumberField extends DrawnNumberField implements NumberPaint {
 
 export interface SkillNumbers {
   /**
-   * A compiled packet: `value` over `hits` blows on `key` (a target, or a
-   * cluster's own key) at a world point (m). `crit`: 120–135 % and the gold
-   * edge; `rgb`: the skill's colour on the lower stroke; `tier`: the size and
-   * life row (SKILL_NUMBER_TIERS: 1 a small hit, 2 a packet, 3 a cluster, 4 a
-   * big hit or crit, 5 a headline).
+   * A compiled packet: `value` over `hits` blows on `key` (a target) at a world
+   * point (m). `crit`: 120–135 % and the gold edge; `rgb`: the skill's colour
+   * on the lower stroke; `tier`: the size and life row (SKILL_NUMBER_TIERS: 1
+   * a small hit, 2 a packet, 3 a big victim, 4 a crit, an elite or a
+   * finisher: the crit budget; 1–3 the victim budget); `owner` the attack.
    */
-  show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX?: number): void;
+  show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX?: number, owner?: number): void;
   /**
    * A big skill's one headline total (a running total that counts up while it lands, at the top of the view,
-   * still): `pop` scales it on the finisher. Ends `fadeS` s after the last call.
+   * still): `pop` scales it on the finisher. Ends `fadeS` s after the last call. `lane` 1: a second headline running
+   * at once, under the first.
    */
-  headline(value: number, hits: number, rgb: number, pop: boolean, fadeS?: number): void;
+  headline(value: number, hits: number, rgb: number, pop: boolean, fadeS?: number, lane?: number): void;
+  /** A new batch of `owner` (−1: every attack) arrived: its older victim numbers fade out now (~0.12 s). */
+  fadeVictims(owner?: number): void;
+  /** Word tags on screen (CSS px boxes): no number is ever drawn over one. */
+  setWordTags(rects: readonly Rect[]): void;
   readonly field: SkillNumberField;
   readonly live: number;
   update(dt: number): void;
@@ -1055,8 +1062,19 @@ export interface SkillNumbers {
 
 /** Crits are this much bigger (POWER_RESEARCH: 120–135 %). */
 const CRIT_SIZE = 1.28;
+/**
+ * Round 3a (P7; "never more than eight combat-number objects visible"): the field holds at most 8 numbers: 2
+ * headlines, 4 victims (tiers 1–3), 2 crits or elites (tier 4). A new number over its budget takes the place of the
+ * oldest of its kind. Labels stay EDGE_INSET of the view inside its edges and never over a word tag.
+ */
+export const SKILL_NUMBER_CAP = 8;
+export const VICTIM_NUMBERS = 4;
+export const CRIT_NUMBERS = 2;
+export const EDGE_INSET = 0.05;
+/** A faded victim number's remaining life (s). */
+const FADE_OUT_S = 0.12;
 
-/** The headline's key (above every target and cluster key) and its place (shares of the view: top middle). */
+/** The headlines' keys (above every target key; lane 0 and 1) and their place (shares of the view: top middle). */
 const HEADLINE_KEY = (1 << 21) + 7;
 const HEADLINE_X = 0.5;
 const HEADLINE_Y = 0.055;
@@ -1071,7 +1089,8 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
   private readonly edge: ScreenPoint = { x: 0, y: 0, visible: false };
   private readonly box: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
   private readonly boxB: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
-  private headlineAt = -1;
+  private readonly headlineAt = [-1, -1];
+  private tags: readonly Rect[] = [];
   private now = 0.5;
   private width = 1600;
   private height = 900;
@@ -1083,7 +1102,7 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     private readonly look: NumberLook,
   ) {
     this.field = new SkillNumberField(IC_SKILL_NUMBERS);
-    this.field.limit = Math.max(1, Math.floor(capacity));
+    this.field.limit = Math.max(1, Math.min(SKILL_NUMBER_CAP, Math.floor(capacity)));
     this.removeOverlay = renderer.addOverlay(this);
   }
 
@@ -1091,9 +1110,51 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     return this.field.live;
   }
 
-  show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX = 0): void {
+  /** Is number i one of the headlines? */
+  private isHeadline(i: number): boolean {
+    const k = this.field.key[i]!;
+    return k === HEADLINE_KEY || k === HEADLINE_KEY + 1;
+  }
+
+  /**
+   * Makes room for one more number of `tier`'s kind (victims 1–3, crits 4): the oldest of its kind goes. A blow the
+   * kit will merge into a live number of its key adds no object, unless it turns that victim into a crit.
+   */
+  private budget(key: number, tier: number): void {
+    const f = this.field;
+    let merge = -1;
+    for (let i = 0; i < f.alive.length && merge < 0; i += 1) {
+      if (f.alive[i] === 1 && f.key[i] === key && !this.isHeadline(i) && this.now - f.born[i]! <= f.profile.numbers.mergeS) merge = i;
+    }
+    const crit = (merge >= 0 ? Math.max(f.tier[merge]!, tier) : tier) >= 4;
+    if (merge >= 0 && f.tier[merge]! >= 4 === crit) return;
+    let count = 0;
+    let oldest = -1;
+    for (let i = 0; i < f.alive.length; i += 1) {
+      if (f.alive[i] === 0 || i === merge || this.isHeadline(i) || f.tier[i]! >= 4 !== crit) continue;
+      count += 1;
+      if (oldest < 0 || f.life[i]! - f.age[i]! < f.life[oldest]! - f.age[oldest]!) oldest = i;
+    }
+    if (count >= (crit ? CRIT_NUMBERS : VICTIM_NUMBERS) && oldest >= 0) f.kill(oldest);
+  }
+
+  fadeVictims(owner = -1): void {
+    const f = this.field;
+    for (let i = 0; i < f.alive.length; i += 1) {
+      if (f.alive[i] === 0 || this.isHeadline(i) || f.tier[i]! >= 4) continue;
+      if (owner >= 0 && f.owner[i] !== owner) continue;
+      f.life[i] = Math.min(f.life[i]!, f.age[i]! + FADE_OUT_S);
+    }
+  }
+
+  setWordTags(rects: readonly Rect[]): void {
+    this.tags = rects;
+  }
+
+  show(key: number, value: number, hits: number, x: number, y: number, z: number, crit: boolean, rgb: number, tier: number, dirX = 0, owner = -1): void {
     const row = tierRow(tier, this.field.profile.tiers);
     if (row.number === null || value <= 0) return;
+    this.budget(key, tier);
     // Below-right of the beast: the word tags own the zone above its head (POWER_RESEARCH §7).
     this.renderer.project(x, y + 0.2, z, this.screen);
     if (!this.screen.visible) return;
@@ -1102,17 +1163,19 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     const top = this.edge.visible ? this.edge.y + 10 : 0;
     // And inside the field's side edges at the beast's depth.
     this.renderer.project(-FIELD_HALF_X, 0, z, this.edge);
-    const left = this.edge.visible ? Math.max(8, this.edge.x) : 8;
+    const inX = this.width * EDGE_INSET;
+    const left = this.edge.visible ? Math.max(inX, this.edge.x) : inX;
     this.renderer.project(FIELD_HALF_X, 0, z, this.edge);
-    const right = this.edge.visible ? Math.min(this.width - 8, this.edge.x) : this.width - 8;
+    const right = this.edge.visible ? Math.min(this.width - inX, this.edge.x) : this.width - inX;
     const size = row.number.size * (crit ? CRIT_SIZE : 1);
     const sx = Math.min(right - 16, Math.max(left + 16, this.screen.x + 14));
-    const sy = Math.min(this.height - 24, Math.max(top + 20, this.screen.y + 6));
+    const sy = Math.min(this.height * (1 - EDGE_INSET) - 24, Math.max(top + 20, this.screen.y + 6));
     const at = this.field.spawn(key, sx, sy, value, crit ? STYLE.crit : STYLE.normal, tier, size, row.number.life * (crit ? 1.2 : 1), dirX, -1, this.now);
     if (at < 0) return;
     // The kit merged it into a live number of this key: its hits are this packet's too.
     this.field.count[at] = this.field.count[at]! + (hits - 1);
     this.field.rgb[at] = rgb;
+    this.field.owner[at] = owner;
     this.field.minY[at] = top;
     this.field.minX[at] = left;
     this.field.maxX[at] = right;
@@ -1120,16 +1183,19 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     else if (this.field.count[at] === hits) this.field.gold[at] = 0;
   }
 
-  headline(value: number, hits: number, rgb: number, pop: boolean, fadeS = 1.2): void {
+  headline(value: number, hits: number, rgb: number, pop: boolean, fadeS = 1.2, lane = 0): void {
     if (value <= 0) return;
     const f = this.field;
+    const ln = lane === 1 ? 1 : 0;
+    const key = HEADLINE_KEY + ln;
     const row = tierRow(5, f.profile.tiers).number!;
-    // Its whole box inside the view (the kit drops a number whose box leaves the top).
-    const hy = Math.max(this.height * HEADLINE_Y, f.fontPx * row.size * row.pop * 0.6 + 12);
-    let i = this.headlineAt;
-    if (i < 0 || f.alive[i] === 0 || f.key[i] !== HEADLINE_KEY) {
-      i = f.spawn(HEADLINE_KEY, this.width * HEADLINE_X, hy + 16, value, STYLE.crit, 5, row.size, fadeS, 0, -1, this.now);
-      this.headlineAt = i;
+    // Its whole box EDGE_INSET inside the view (the kit drops a number whose box leaves the top); lane 1 under lane 0.
+    const half = f.fontPx * row.size * row.pop * 0.6;
+    const hy = Math.max(this.height * HEADLINE_Y, this.height * EDGE_INSET + half + 4) + ln * (half * 2 + 8);
+    let i = this.headlineAt[ln]!;
+    if (i < 0 || f.alive[i] === 0 || f.key[i] !== key) {
+      i = f.spawn(key, this.width * HEADLINE_X, hy + 16, value, STYLE.crit, 5, row.size, fadeS, 0, -1, this.now);
+      this.headlineAt[ln] = i;
       if (i < 0) return;
       f.gold[i] = 1;
     }
@@ -1158,15 +1224,19 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
       if (f.alive[i] === 0) continue;
       f.box(i, this.box);
       const hw = this.box.w / 2;
-      const lo = Math.max(8, f.minX[i]!);
-      const hi = Math.min(this.width - 8, f.maxX[i]!);
+      const inX = this.width * EDGE_INSET;
+      const inY = this.height * EDGE_INSET;
+      const lo = Math.max(inX, f.minX[i]!);
+      const hi = Math.min(this.width - inX, f.maxX[i]!);
       if (f.x[i]! - hw < lo) f.x[i] = Math.min(lo + hw, (lo + hi) / 2);
       else if (f.x[i]! + hw > hi) f.x[i] = Math.max(hi - hw, (lo + hi) / 2);
-      const top = Math.max(8 + this.box.h / 2, f.minY[i]! + this.box.h / 2);
+      const top = Math.max(inY + this.box.h / 2, f.minY[i]! + this.box.h / 2);
       if (f.y[i]! < top) {
         f.y[i] = top;
         if (f.vy[i]! < 0) f.vy[i] = 0;
       }
+      const bottom = this.height - inY - this.box.h / 2;
+      if (f.y[i]! > bottom) f.y[i] = bottom;
     }
     // The clamp puts a number back on the one the field's settle had lifted it above (numbers held under the far
     // edge or the view's top read as one smudge, "19 2×6 6×6"): the younger goes below the older instead, inside the
@@ -1180,7 +1250,7 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
           const a = f.box(i, this.box);
           const b = f.box(j, this.boxB);
           if (!(a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y)) continue;
-          const older = f.key[i] === HEADLINE_KEY ? i : f.key[j] === HEADLINE_KEY ? j : f.born[i]! <= f.born[j]! ? i : j;
+          const older = this.isHeadline(i) ? i : this.isHeadline(j) ? j : f.born[i]! <= f.born[j]! ? i : j;
           const younger = older === i ? j : i;
           const o = older === i ? a : b;
           const y = older === i ? b : a;
@@ -1191,11 +1261,40 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
       }
       if (!moved) break;
     }
+    // Never over a word tag: below it, else above it, else the number goes; and never past the inset view.
+    if (this.tags.length > 0) {
+      const inY = this.height * EDGE_INSET;
+      for (let i = 0; i < f.alive.length; i += 1) {
+        if (f.alive[i] === 0) continue;
+        for (let pass = 0; pass < 3; pass += 1) {
+          const b = f.box(i, this.box);
+          const tag = this.tagOver(b);
+          if (tag === null) break;
+          const below = tag.y + tag.h + b.h / 2 + 4;
+          const above = tag.y - b.h / 2 - 4;
+          f.y[i] = pass === 0 && below + b.h / 2 <= this.height - inY ? below : above;
+          if (f.vy[i]! < 0) f.vy[i] = 0;
+        }
+        const b = f.box(i, this.box);
+        if (this.tagOver(b) !== null || b.y < inY - 0.5 || b.y + b.h > this.height - inY + 0.5) {
+          f.kill(i);
+          f.dropped += 1;
+        }
+      }
+    }
+  }
+
+  private tagOver(b: Rect): Rect | null {
+    for (let k = 0; k < this.tags.length; k += 1) {
+      const t = this.tags[k]!;
+      if (b.x < t.x + t.w && b.x + b.w > t.x && b.y < t.y + t.h && b.y + b.h > t.y) return t;
+    }
+    return null;
   }
 
   clear(): void {
     for (let i = 0; i < this.field.alive.length; i += 1) this.field.kill(i);
-    this.headlineAt = -1;
+    this.headlineAt[0] = this.headlineAt[1] = -1;
   }
 
   draw(gl: THREE.WebGLRenderer, width: number, height: number): void {
