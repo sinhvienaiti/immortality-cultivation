@@ -430,9 +430,14 @@ function startUltimate(tx: number, tz: number): void {
   screen.flash(0.08, 0.06);
   screen.punch(0.012, 0.2);
 }
+/** A big skill fires: at the whole-field fit a short dolly push (zoomed in, the wide framing is the camera's move). */
+function bigSkillBeat(): void {
+  if (zoom.wanted === 0 && zoom.value < 0.02) zoom.push();
+}
 function fireUltimate(): void {
   probe.lastKey("k5");
   screen.cut();
+  bigSkillBeat();
   caster.release("k5", ultAim.x, ultAim.z);
   emitRelease("k5", ultAim.x, ultAim.z);
   queueCast("k5", ultAim.x, ultAim.z);
@@ -567,6 +572,7 @@ function type(slot: LabSlot): void {
     // The body takes Ngự Kiếm's quick command (its release lands inside the 50 ms gate); the eight blades leave the hand.
     caster.release("k1", 0, -8);
     emitRelease("k7", 0, -8);
+    bigSkillBeat();
     pendingVan = true;
     vanFirstHit = false;
     herd.toughness = 2;
@@ -809,6 +815,9 @@ function frame(dt: number): void {
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
   // The base pose: the whole-field fit blended toward the close view on Lam (zoom 0 is exactly the fit, so a resize
   // refits too). On real time: zooming stays smooth through a hit-stop.
+  // Big skills never leave the frame (power pass round 2): while key 7, the ultimate's cut-in or the ultimate
+  // plays, the view eases out to the whole field (0.25 s) and holds; then back to the player's zoom.
+  zoom.holdWide(cutin.active || van.running || fx.isRunning("k5"));
   if (!customCamera && !followShown) {
     zoom.update(view.camera, view.fit, 0, caster.x, caster.z, dt);
     camBase.copy(view.camera.position);
@@ -917,6 +926,8 @@ declare global {
       camera(mode: "play" | "close", x?: number, z?: number, distanceM?: number): void;
       /** Canon D57 zoom: with a value 0 (whole field) to 1 (close view on Lam) jumps there; returns the shown zoom. */
       zoom(value?: number): number;
+      /** The camera's framing now: the player's zoom (wanted, shown), a big skill's wide weight and the camera distance (m). */
+      framing(): Record<string, number>;
       /** The hand prop's state (loaded, dissolve, jade and core levels, length, triangles) and its grip. */
       hand(): Record<string, unknown>;
       /** Tunes the grip (degrees, metres in the hand's frame); missing fields keep theirs. */
@@ -950,6 +961,8 @@ declare global {
       setFx(intensity: number): void;
       /** Event counts since the last reset (release, impact, death, flyby, world, callout). */
       events(): Record<string, number>;
+      /** Damage numbers since the last reset: packets shown (numbers spawned), cluster totals, live now, dropped by the field. */
+      numbers(): Record<string, number>;
       /** Key 7's state: its clock (s, −1 idle), swords drawn, strikes so far. */
       van(): { clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
@@ -1059,6 +1072,7 @@ void (async () => {
       }
       return zoom.value;
     },
+    framing: () => ({ wanted: zoom.wanted, shown: zoom.value, wide: zoom.wideShown, distanceM: view.camera.position.distanceTo(screenV.set(0, 0, view.fit.targetZ)) }),
     camera(mode, x = 0, z = -6, distanceM = 15) {
       customCamera = mode !== "play";
       zoom.set(0);
@@ -1194,6 +1208,7 @@ void (async () => {
     screen: () => ({ ...screen.shown }),
     setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
     events: () => ({ ...bus.counts }),
+    numbers: () => ({ shown: compiler.shown, clusters: compiler.clusters, live: numbers.live, dropped: numbers.field.dropped }),
     van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
     cutin: () => cutin.time,
     bladePx() {

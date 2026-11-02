@@ -2556,6 +2556,11 @@ export class KiemFx {
     }
   }
 
+  /** True while the slot's last cast still runs (the lab frames the whole field while K5 plays). */
+  isRunning(slot: KiemSlot): boolean {
+    return this.running(slot);
+  }
+
   /** True while the slot's last cast still runs (and owns its sigil). */
   private running(slot: KiemSlot): boolean {
     switch (slot) {
