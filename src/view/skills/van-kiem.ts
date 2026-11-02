@@ -63,6 +63,18 @@ export interface VanKiemHost {
   flash(at: THREE.Vector3, colour: string, intensity: number): void;
 }
 
+/** A sword's pose as drawn (VanKiemFx.poseOf): middle (m), unit direction, length (m), class 0 lead, 1 mid, 2 far. */
+export interface SwordPose {
+  x: number;
+  y: number;
+  z: number;
+  dx: number;
+  dy: number;
+  dz: number;
+  len: number;
+  cls: number;
+}
+
 export interface VanKiemTextures {
   readonly glow: THREE.Texture;
   readonly slash: THREE.Texture;
@@ -1696,6 +1708,29 @@ export class VanKiemFx {
       this.dz[i] = 0;
       this.lenM[i] = i < HERO_N ? HERO_M : SWORD_M;
     }
+  }
+
+  /** Swords in the pool (lead blades first). */
+  get swordCount(): number {
+    return this.cap;
+  }
+
+  /**
+   * Sword `i` as drawn this frame (captures and the lab's HDR probe): its middle, unit direction, length (m) and
+   * class (0 lead, 1 mid, 2 far streak); false when it is not shown.
+   */
+  poseOf(i: number, out: SwordPose): boolean {
+    if (i < 0 || i >= this.cap || this.st[i] === S_OFF || this.sc[i]! <= 0.01) return false;
+    const s = this.sc[i]!;
+    out.x = this.px[i]!;
+    out.y = this.py[i]!;
+    out.z = this.pz[i]!;
+    out.dx = this.dx[i]!;
+    out.dy = this.dy[i]!;
+    out.dz = this.dz[i]!;
+    out.len = this.lenM[i]! * (0.55 + 0.45 * s);
+    out.cls = i < HERO_N ? 0 : 1;
+    return true;
   }
 
   /** Swords drawn now (captures: the river's size on screen). */

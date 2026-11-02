@@ -25,6 +25,8 @@
  * stand-in (lab-k5-perf.mjs).
  */
 import * as THREE from "three";
+import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import type { Quality } from "../content/types";
 import { CameraZoom } from "../view/camera-zoom";
 import { createRenderer, placeCamera } from "../view/renderer";
@@ -45,7 +47,7 @@ import { LabSound } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
-import { VAN_KIEM_COLOUR, VAN_KIEM_FLASH, VAN_KIEM_SWORDS, VanKiemFx, type VanKiemPhase } from "../view/skills/van-kiem";
+import { VAN_KIEM_COLOUR, VAN_KIEM_FLASH, VAN_KIEM_SWORDS, VanKiemFx, type SwordPose, type VanKiemPhase } from "../view/skills/van-kiem";
 import { CasterPresence } from "./presence";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
@@ -64,6 +66,67 @@ const view = createRenderer(host, quality);
 const pinDpr = Number(params.get("dpr") ?? "");
 if (pinDpr > 0) view.pinPixelRatio(pinDpr);
 const look = applyLook(view, { exposure: Number(params.get("exposure") ?? "0.72"), bloom: Number(params.get("bloom") ?? "0.45") });
+const BLOOM_STRENGTH = view.stage.bloom.strength;
+
+/**
+ * The post chain (power pass round 3a, P0; ChatGPT's diagnosis of 03/11/2026 asked for it to be checked, not
+ * assumed). On High and Ultra a frame is:
+ * 1. RenderPass: the scene in LINEAR HDR into the composer's half-float target (MSAA on its two targets, D57). No
+ *    tone mapping and no sRGB there: three applies both only when it draws to the screen.
+ * 2. HdrProbe (lab only, disabled unless armed): copies that buffer to the CPU, so the values that enter the bloom
+ *    can be read (__lab.hdr).
+ * 3. UnrealBloomPass: luminance above its threshold (1) spreads, added onto the same linear buffer.
+ * 4. ScreenPass (screen-fx.ts): darkening, vignette, desaturation, still on linear HDR.
+ * 5. OutputPass: exposure, the renderer's tone mapping (Neutral) and the sRGB encode, from here on display values.
+ * 6. Anything after the OutputPass works on display values (round 3a's graphic impact frame).
+ * Then renderer.addOverlay draws the damage numbers over the finished frame; the DOM (cut-in, word tags) sits on
+ * top. Low and Medium draw straight to the screen (no composer): tone mapping happens in each material.
+ */
+class HdrProbe extends Pass {
+  rgb: Float32Array | null = null;
+  width = 0;
+  height = 0;
+  constructor() {
+    super();
+    this.needsSwap = false;
+    this.enabled = false;
+  }
+  override render(renderer: THREE.WebGLRenderer, _write: THREE.WebGLRenderTarget, read: THREE.WebGLRenderTarget): void {
+    const w = read.width;
+    const h = read.height;
+    const buf = new Uint16Array(w * h * 4);
+    renderer.readRenderTargetPixels(read, 0, 0, w, h, buf);
+    const rgb = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i += 1) {
+      rgb[i * 3] = THREE.DataUtils.fromHalfFloat(buf[i * 4]!);
+      rgb[i * 3 + 1] = THREE.DataUtils.fromHalfFloat(buf[i * 4 + 1]!);
+      rgb[i * 3 + 2] = THREE.DataUtils.fromHalfFloat(buf[i * 4 + 2]!);
+    }
+    this.rgb = rgb;
+    this.width = w;
+    this.height = h;
+    this.enabled = false;
+  }
+}
+const hdrProbe = new HdrProbe();
+view.stage.composer.insertPass(hdrProbe, Math.max(1, view.stage.composer.passes.findIndex((p) => p instanceof RenderPass) + 1));
+const TONE_NAMES: Record<number, string> = { [THREE.NoToneMapping]: "none", [THREE.LinearToneMapping]: "linear", [THREE.NeutralToneMapping]: "neutral", [THREE.ACESFilmicToneMapping]: "aces" };
+/** The chain as it stands (P0's record): passes in order, the target's type and colour space, tone mapping, bloom, fog. */
+function pipeline(): Record<string, unknown> {
+  const c = view.stage.composer;
+  const rt = c.renderTarget1;
+  const r = view.stage.renderer;
+  const fog = view.scene.fog as THREE.Fog | null;
+  return {
+    passes: c.passes.map((p) => ({ name: p.constructor.name, enabled: p.enabled, needsSwap: p.needsSwap, renderToScreen: p.renderToScreen })),
+    composerOn: view.stage.bloom.enabled,
+    target: { type: rt.texture.type === THREE.HalfFloatType ? "HalfFloat" : rt.texture.type === THREE.FloatType ? "Float" : String(rt.texture.type), samples: rt.samples, colorSpace: rt.texture.colorSpace || "linear (none)", size: [rt.width, rt.height] },
+    renderer: { toneMapping: TONE_NAMES[r.toneMapping] ?? String(r.toneMapping), exposure: r.toneMappingExposure, outputColorSpace: r.outputColorSpace, pixelRatio: r.getPixelRatio() },
+    bloom: { strength: view.stage.bloom.strength, radius: view.stage.bloom.radius, threshold: view.stage.bloom.threshold, enabled: view.stage.bloom.enabled },
+    fog: fog === null ? null : { near: +fog.near.toFixed(1), far: +fog.far.toFixed(1), color: "#" + fog.color.getHexString() },
+  };
+}
+const savedFog = { near: 0, far: 0 };
 // Mid-dark paving, as the map concept asks for the Kết Giới (word tags and skills read on it).
 buildField(view, { tint: params.get("ground") ?? "#7c848b", repeat: 6 });
 
@@ -1015,6 +1078,20 @@ declare global {
       perf(frames: number, dt?: number): { cpu: number[]; total: number[]; drawCalls: number; triangles: number; hero: number; swarm: number; gpu: string; k5n: number };
       /** The screen effects shown this frame (darkening, flash, split, shake px, roll, punch, world speed). */
       screen(): Record<string, number | boolean>;
+      /** The post chain as it stands (round 3a, P0): passes in order, target type and colour space, tone mapping, bloom, fog. */
+      pipeline(): Record<string, unknown>;
+      /**
+       * Capture variants of the chain (round 3a, P0), applied and the frame redrawn (no time passes): tone mapping
+       * ("neutral" the game's, "linear" exposure and a clamp, "none"), bloom strength (null: the lab's), the screen
+       * pass on or off, the fog on or off. post({}) puts everything back.
+       */
+      post(opts: { tone?: "neutral" | "linear" | "none"; bloom?: number | null; screen?: boolean; fog?: boolean }): Record<string, unknown>;
+      /**
+       * The linear HDR buffer as it enters the bloom (round 3a, P0), redrawn now: luminance histogram and shares over
+       * the box [x0, y0, x1, y1] (shares of the frame, y down), the brightest, and per visible key-7 sword class the
+       * peak luminance along its blade (median and max over the swords: what the bloom's threshold of 1 sees).
+       */
+      hdr(x0?: number, y0?: number, x1?: number, y1?: number): Record<string, unknown>;
       /** Screen-effect intensity 0–1 (accessibility). */
       setFx(intensity: number): void;
       /** Event counts since the last reset (release, impact, death, flyby, world, callout). */
@@ -1269,6 +1346,102 @@ void (async () => {
       return { cpu, total, drawCalls: info.drawCalls, triangles: info.triangles, hero: drawn.hero, swarm: drawn.swarm, gpu: info.gpu, k5n: Number.isFinite(k5n) && k5n > 0 ? Math.min(K5_MAX, k5n) : -1 };
     },
     screen: () => ({ ...screen.shown }),
+    pipeline,
+    post(opts) {
+      const r = view.stage.renderer;
+      const fog = view.scene.fog as THREE.Fog | null;
+      r.toneMapping = opts.tone === "linear" ? THREE.LinearToneMapping : opts.tone === "none" ? THREE.NoToneMapping : THREE.NeutralToneMapping;
+      view.stage.bloom.strength = opts.bloom === undefined || opts.bloom === null ? BLOOM_STRENGTH : opts.bloom;
+      screen.bypass = opts.screen === false;
+      if (fog !== null) {
+        if (savedFog.far === 0) {
+          savedFog.near = fog.near;
+          savedFog.far = fog.far;
+        }
+        if (opts.fog === false) {
+          fog.near = 1e5;
+          fog.far = 1e5 + 1;
+        } else if (fog.near >= 1e5) {
+          fog.near = savedFog.near;
+          fog.far = savedFog.far;
+        }
+      }
+      screen.update(0, view.camera);
+      view.render(0);
+      return pipeline();
+    },
+    hdr(x0 = 0, y0 = 0, x1 = 1, y1 = 1) {
+      hdrProbe.enabled = true;
+      view.render(0);
+      const rgb = hdrProbe.rgb;
+      const w = hdrProbe.width;
+      const h = hdrProbe.height;
+      if (rgb === null || w === 0) return { error: "no read" };
+      const lumAt = (x: number, y: number): number => {
+        const o = ((h - 1 - y) * w + x) * 3;
+        return 0.2126 * rgb[o]! + 0.7152 * rgb[o + 1]! + 0.0722 * rgb[o + 2]!;
+      };
+      const edges = [0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16];
+      const hist = new Array<number>(edges.length + 1).fill(0);
+      let n = 0;
+      let sum = 0;
+      let max = 0;
+      const over: number[] = [];
+      for (let y = Math.floor(y0 * h); y < Math.floor(y1 * h); y += 1) {
+        for (let x = Math.floor(x0 * w); x < Math.floor(x1 * w); x += 1) {
+          const l = lumAt(x, y);
+          n += 1;
+          sum += l;
+          if (l > max) max = l;
+          let b = 0;
+          while (b < edges.length && l >= edges[b]!) b += 1;
+          hist[b] = hist[b]! + 1;
+          if (l > 1) over.push(l);
+        }
+      }
+      over.sort((a, b) => a - b);
+      const q = (p: number): number => (over.length === 0 ? 0 : +over[Math.min(over.length - 1, Math.floor(p * (over.length - 1)))]!.toFixed(2));
+      // Each visible key-7 sword: the brightest pixel within 2 px of 7 points along its blade (base to 90 %).
+      const pose: SwordPose = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, len: 0, cls: 0 };
+      const cores: number[][] = [[], [], []];
+      const pv = new THREE.Vector3();
+      for (let i = 0; i < van.swordCount; i += 1) {
+        if (!van.poseOf(i, pose)) continue;
+        let peak = 0;
+        for (let k = 0; k < 7; k += 1) {
+          const t = -0.45 + (k / 6) * 0.85;
+          pv.set(pose.x + pose.dx * pose.len * t, pose.y + pose.dy * pose.len * t, pose.z + pose.dz * pose.len * t).project(view.camera);
+          if (pv.z > 1 || Math.abs(pv.x) > 1 || Math.abs(pv.y) > 1) continue;
+          const cx = Math.round((pv.x * 0.5 + 0.5) * w);
+          const cy = Math.round((-pv.y * 0.5 + 0.5) * h);
+          for (let yy = cy - 2; yy <= cy + 2; yy += 1) {
+            for (let xx = cx - 2; xx <= cx + 2; xx += 1) {
+              if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+              const l = lumAt(xx, yy);
+              if (l > peak) peak = l;
+            }
+          }
+        }
+        cores[pose.cls]!.push(peak);
+      }
+      const summary = (a: number[]): Record<string, number> => {
+        const s2 = [...a].sort((p, r) => p - r);
+        return { n: s2.length, median: s2.length ? +s2[Math.floor(s2.length / 2)]!.toFixed(2) : 0, p10: s2.length ? +s2[Math.floor(s2.length * 0.1)]!.toFixed(2) : 0, max: s2.length ? +s2[s2.length - 1]!.toFixed(2) : 0 };
+      };
+      return {
+        size: [w, h],
+        exposure: view.stage.renderer.toneMappingExposure,
+        mean: +(sum / Math.max(1, n)).toFixed(4),
+        max: +max.toFixed(2),
+        overOne: +(over.length / Math.max(1, n)).toFixed(5),
+        overFour: +(over.filter((l) => l > 4).length / Math.max(1, n)).toFixed(5),
+        overOneP50: q(0.5),
+        overOneP99: q(0.99),
+        edges,
+        hist: hist.map((c) => +(c / Math.max(1, n)).toFixed(4)),
+        swords: { lead: summary(cores[0]!), mid: summary(cores[1]!), far: summary(cores[2]!) },
+      };
+    },
     setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
     events: () => ({ ...bus.counts }),
     numbers: () => ({ shown: compiler.shown, clusters: compiler.clusters, live: numbers.live, dropped: numbers.field.dropped }),

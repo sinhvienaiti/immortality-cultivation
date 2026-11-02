@@ -284,6 +284,8 @@ const VIGNETTE_SHARE = 0.55;
 export class ScreenFx {
   /** Accessibility scale 0–1 for shake, roll, punch, darkening, flash, blur and split. */
   intensity = 1;
+  /** Lab captures (round 3a, P0): the pass draws nothing while true (the chain without the screen effects). */
+  bypass = false;
   /** Camera offset this frame (world metres) and roll (rad); read by `applyCamera`. */
   readonly offset = new THREE.Vector3();
   roll = 0;
@@ -680,7 +682,7 @@ export class ScreenFx {
     this.pass.splitPx = split;
     const active = u.uDark.value > 0.002 || u.uVignette.value > 0.002 || desat > 0.002 || flash > 0.002 || split > 0.05 || blur > 1e-4 || u.uLocal.value.w > 0.002;
     const viaComposer = this.host.composerOn();
-    this.pass.enabled = active && viaComposer;
+    this.pass.enabled = active && viaComposer && !this.bypass;
     this.quad.dark = viaComposer || lights ? 0 : dark;
     this.quad.flash = viaComposer ? 0 : flash;
     this.quad.setFlashColor(this.flashColor);
