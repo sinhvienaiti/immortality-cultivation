@@ -682,18 +682,19 @@ export interface TierRow {
 }
 
 /**
- * canon §20.2, PB-35: the Stage3D tier table, 4 keys (ultra = high at MVP but for its DPR, D57).
+ * canon §20.2, PB-35: the Stage3D tier table, 4 keys (ultra = high at MVP).
  * Particles from the canon; bloom on from Medium and the kit's tipsPerSide
  * and trail are this round's proposal (Lane 1 confirms in HN0). DPR (canon
  * D57, 03/11/2026): Ultra draws at the display's pixel ratio up to 2 (the
- * owner found DPR 1 blurry on a Retina screen). High stays at 1 for now: on the
- * M4 at 1920 × 1080, DPR 1.5 already put the K5 peak at p95 16–17 ms against
- * 12 (tmp/shots/d57/perf); a dynamic resolution step comes next.
+ * owner found DPR 1 blurry on a Retina screen). On the M4 at 1920 × 1080 CSS,
+ * DPR 1.5 put the K5 peak at p95 16–17 ms and DPR 2 at 25–32 ms against 12
+ * (tmp/shots/d57/perf), so High and Ultra float between DPR 1 and this value
+ * on the frame pacing (TT_DYNAMIC_RES, view/dynamic-resolution.ts).
  */
 export const TT_TIERS: Readonly<Record<Quality, TierRow>> = {
   low: { dpr: 1, particles: 600, bloom: false, tipsPerSide: 1, trail: 12 },
   medium: { dpr: 1, particles: 1500, bloom: true, tipsPerSide: 2, trail: 18 },
-  high: { dpr: 1, particles: 3000, bloom: true, tipsPerSide: 3, trail: 30 },
+  high: { dpr: 2, particles: 3000, bloom: true, tipsPerSide: 3, trail: 30 },
   ultra: { dpr: 2, particles: 3000, bloom: true, tipsPerSide: 3, trail: 30 },
 };
 
@@ -704,6 +705,16 @@ export const TT_TIERS: Readonly<Record<Quality, TierRow>> = {
  * 1920 × 1080: MSAA 4 adds about 3 ms at DPR 1, so only Ultra has it.
  */
 export const TT_MSAA: Readonly<Record<Quality, number>> = { low: 0, medium: 0, high: 0, ultra: 4 };
+
+/**
+ * canon D57: dynamic resolution on the tiers whose DPR can exceed 1 (null =
+ * fixed). Judged on 1 s windows of rAF intervals against the display's
+ * refresh (at most 1/60 s): ≥ 20 % frames later than 1.3 × refresh steps the
+ * pixel ratio down 0.25 and blocks raises for 8 s; 3 clean windows in a row
+ * (≤ 3 % late) step it up. Starts halfway between 1 and the tier's DPR.
+ */
+export const TT_DYNAMIC_RES: Readonly<Record<Quality, { readonly minDpr: number } | null>> = { low: null, medium: null, high: { minDpr: 1 }, ultra: { minDpr: 1 } };
+export const DYNAMIC_RES = { step: 0.25, windowMs: 1000, lateFactor: 1.3, dropShare: 0.2, cleanShare: 0.03, raiseAfter: 3, holdAfterDropMs: 8000, ignoreOverMs: 250 } as const;
 
 export interface TierBudget {
   readonly width: number;

@@ -16,13 +16,16 @@
 import * as THREE from "three";
 import { Stage3D, type StageLights } from "../kit/three/stage";
 import type { Projector, Quality, ScreenPoint } from "../app/contracts";
-import { CAMERA, FIELD, TT_MSAA, TT_TIERS } from "../content/rules";
+import { CAMERA, DYNAMIC_RES, FIELD, TT_DYNAMIC_RES, TT_MSAA, TT_TIERS } from "../content/rules";
+import { DynamicResolution } from "./dynamic-resolution";
 
 export interface RenderInfo {
   readonly drawCalls: number;
   readonly triangles: number;
   /** WEBGL_debug_renderer_info string (SwiftShader / llvmpipe runs are invalid). */
   readonly gpu: string;
+  /** The pixel ratio drawn this frame (canon D57: dynamic on High and Ultra). */
+  readonly pixelRatio: number;
 }
 
 /** Scene groups in draw order: ground and decals, beasts and actors, effects. */
@@ -58,6 +61,8 @@ export interface Renderer3D {
   setQuality(quality: Quality): void;
   /** Keeps the field clear of DOM bands (CSS px) and refits the camera. */
   setViewInsets(insets: ViewInsets): void;
+  /** Pins the pixel ratio (captures, perf runs) or, with null, hands it back to the dynamic resolution (D57). */
+  pinPixelRatio(dpr: number | null): void;
   /**
    * Something drawn over the finished frame in screen space (the damage
    * numbers, hitfx.ts), after the post passes; returns its removal. Its draw
@@ -256,7 +261,7 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
   stage.scene.add(layers.ground, layers.actors, layers.fx);
 
   const gpu = gpuString(stage.renderer);
-  const counts = { drawCalls: 0, triangles: 0, gpu };
+  const counts = { drawCalls: 0, triangles: 0, gpu, pixelRatio: 1 };
   const scratch = new THREE.Vector3();
   const overlays: Overlay[] = [];
   let width = 1;
@@ -272,10 +277,33 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     lastFit = fit;
     stage.emitPointScale();
   };
+  // canon D57: the pixel ratio floats on the frame pacing between the tier's floor and its DPR (the display's
+  // at most); Stage3D.resize sets the tier's DPR, then this overrides it. A pinned ratio wins over both.
+  let governor: DynamicResolution | null = null;
+  let pinned: number | null = null;
+  let lastFrameAt = 0;
+  const deviceMax = (q: Quality): number => Math.min(TT_TIERS[q].dpr, typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+  const makeGovernor = (q: Quality): void => {
+    const rule = TT_DYNAMIC_RES[q];
+    const max = deviceMax(q);
+    governor = rule !== null && max > rule.minDpr ? new DynamicResolution({ ...DYNAMIC_RES, minDpr: rule.minDpr }, max) : null;
+  };
+  const applyPixelRatio = (): void => {
+    const dpr = pinned ?? governor?.pixelRatio ?? null;
+    counts.pixelRatio = dpr ?? stage.renderer.getPixelRatio();
+    if (dpr === null || dpr === stage.renderer.getPixelRatio()) return;
+    stage.renderer.setPixelRatio(dpr);
+    stage.renderer.setSize(width, height, false);
+    stage.composer.setPixelRatio(dpr);
+    stage.composer.setSize(width, height);
+    stage.emitPointScale();
+  };
+  makeGovernor(quality);
   const resize = (): void => {
     stage.resize();
     width = stage.size.width;
     height = stage.size.height;
+    applyPixelRatio();
     refit();
   };
   resize();
@@ -304,6 +332,9 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
       return counts;
     },
     render: (dt) => {
+      const now = performance.now();
+      if (governor !== null && pinned === null && lastFrameAt > 0 && governor.frame(now - lastFrameAt)) applyPixelRatio();
+      lastFrameAt = now;
       stage.update(dt);
       stage.render(dt);
       // Plain loop: no iterator object per frame.
@@ -319,7 +350,12 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     resize,
     setQuality: (next) => {
       applyMsaa(next);
+      makeGovernor(next);
       stage.setQuality(next);
+      resize();
+    },
+    pinPixelRatio: (dpr) => {
+      pinned = dpr;
       resize();
     },
     setViewInsets: (next) => {
