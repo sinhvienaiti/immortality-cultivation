@@ -458,7 +458,7 @@ const van = new VanKiemFx(
  * 1 s while it plays (lab time), then the skill fires.
  */
 const cutin = new CutIn(document.body);
-const ULT_CUTIN = { name: "MILKY-WAY SWORD RAIN", hanzi: "天河劍雨", seconds: Number(params.get("cutin") ?? "1") || 1 };
+const ULT_CUTIN = { name: "MILKY-WAY SWORD RAIN", hanzi: "天河劍雨", seconds: Number(params.get("cutin") ?? "0.9") || 0.9 };
 const ultAim = { x: 0, z: -9 };
 function startUltimate(tx: number, tz: number): void {
   ultAim.x = tx;
