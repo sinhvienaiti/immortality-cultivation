@@ -42,6 +42,7 @@ import { CameraKick, FlashLights, smooth01 } from "./feel";
 import { SCREEN_TIERS, ScreenFx, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
+import { VictimDirector } from "./victims";
 import { CutIn } from "./cutin";
 import { LabSound } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
@@ -399,8 +400,6 @@ const hostApi: KiemHost = {
   },
   struck(target, dx, dz, power, light, killed) {
     const slot = fx.striking;
-    // The ultimate's last wave is its finisher: its light flings the small beasts in the vortex up.
-    if (slot === "k5" && power >= 1) herd.launch(target, dx, dz);
     emitImpact(slot, target, dx, dz, power, light ? "secondary" : "primary", killed, fx.paletteOf(slot).flashHex);
   },
   moveCaster(x, z) {
@@ -489,8 +488,20 @@ bus.on((e) => {
 });
 // Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.
 const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow, scorch: textures.scorch }, quality === "low");
+// Victim tiers (round 3a, P6): per cast of key 7 or K5, a few hero victims launched and pinned by a planted sword,
+// a shared hop for the secondary ones, the rim flash and dissolve for the rest; a hero's kill bursts after its pin.
+const victims = new VictimDirector(
+  view.layers.fx,
+  herd,
+  { ring: textures.ring, star: textures.star, scorch: textures.scorch },
+  view.camera,
+  () => ({ width: innerWidth, height: innerHeight }),
+  (x, y, z, dx, dz, rgb, beastTier) => deathFx.spawn(x, y, z, dx, dz, rgb, beastTier),
+);
 bus.on((e) => {
-  if (e.kind === "death") deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+  if (e.kind === "release") victims.cast(e.slot);
+  else if (e.kind === "impact") victims.impact(e, frameNo);
+  else if (e.kind === "death" && !herd.isHero(e.target)) deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
 });
 // Key 7, Vạn Kiếm Triều Tông (canon D58 (2), POWER_RESEARCH): the field-wide prototype on the skill tier with an
 // ultimate-strength finisher. Its timeline calls the screen effects and the bus on the frame each phase starts.
@@ -828,6 +839,7 @@ function reset(): void {
   kick.reset();
   presence.reset();
   deathFx.reset();
+  victims.reset();
   compiler.reset();
   numbers.clear();
   van.reset();
@@ -974,6 +986,7 @@ function frame(dt: number): void {
   handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);
   deathFx.update(world);
+  victims.update(world);
   // Numbers are UI: they compile and float on real time (through a hit-stop or the cut-in).
   compiler.update(dt);
   numbers.update(dt);
@@ -1146,6 +1159,10 @@ declare global {
       events(): Record<string, number>;
       /** Damage numbers since the last reset: packets shown (numbers spawned), cluster totals, live now, dropped by the field. */
       numbers(): Record<string, number>;
+      /** The last key-7 or K5 cast's victim tiers (round 3a, P6): heroes (shove and most screen motion, px at 1080p), secondary and background counts. */
+      victims(): Record<string, unknown>;
+      /** Beast i on screen now (CSS px of its middle), its height in the air (m), alive, a hero victim. */
+      beast(i: number): { x: number; y: number; air: number; alive: boolean; hero: boolean };
       /** Key 7's state: its clock (s, −1 idle), swords drawn, strikes so far. */
       van(): { clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
@@ -1496,6 +1513,11 @@ void (async () => {
     setFx: (k) => (screen.intensity = Math.max(0, Math.min(1, k))),
     events: () => ({ ...bus.counts }),
     numbers: () => ({ shown: compiler.shown, clusters: compiler.clusters, live: numbers.live, dropped: numbers.field.dropped }),
+    victims: () => victims.report(),
+    beast(i) {
+      screenV.set(herd.x(i), herd.midY(i) + herd.airY(i), herd.z(i)).project(view.camera);
+      return { x: Math.round((screenV.x * 0.5 + 0.5) * innerWidth), y: Math.round((-screenV.y * 0.5 + 0.5) * innerHeight), air: +herd.airY(i).toFixed(2), alive: herd.alive(i), hero: herd.isHero(i) };
+    },
     van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
     cutin: () => cutin.time,
     bladePx() {

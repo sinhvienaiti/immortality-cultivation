@@ -184,6 +184,37 @@ export default async function (page) {
     report.maxLive = maxLive;
     report.perFrame = seen;
     report.final = await page.eval("window.__lab.numbers()");
+  } else if (mode === "herostrip") {
+    // The first hero victim before key 7's finisher and the first on it (or K5's): full frames at the blow and after
+    // (+1 the shove and silhouette, the flight, the pin), with the hero's screen point for crops and the 25 % test.
+    report.strips = [];
+    for (const skill of (process.env.SKILLS ?? "k7,k5").split(",")) {
+      await fresh(page);
+      await check(await page.eval(`window.__lab.type(${JSON.stringify(skill)})`));
+      const wanted = skill === "k7" ? [0, 4] : [0, 3];
+      const seen = new Set();
+      for (let f = 0; f < 420 && seen.size < wanted.length; f += 1) {
+        await page.eval("window.__lab.step(1)");
+        const v = await page.eval("window.__lab.victims()");
+        const heroes = v?.heroes ?? [];
+        for (const w of wanted) {
+          if (seen.has(w) || heroes.length <= w) continue;
+          seen.add(w);
+          const target = heroes[w].target;
+          const strip = { skill, hero: w, target, frames: [] };
+          let at = 0;
+          for (const d of [0, 1, 2, 8, 20, 40, 60, 80, 100]) {
+            if (d > at) await page.eval(`window.__lab.step(${d - at})`);
+            at = d;
+            const file = join(out, `hero-${skill}-${w}-d${String(d).padStart(3, "0")}.png`);
+            await page.shot(file);
+            strip.frames.push({ d, file, beast: await page.eval(`window.__lab.beast(${target})`) });
+          }
+          report.strips.push(strip);
+          f += at;
+        }
+      }
+    }
   } else if (mode === "victims") {
     report.casts = {};
     for (const skill of (process.env.SKILLS ?? "k7,k5").split(",")) {

@@ -29,8 +29,15 @@
  * with a cool white HDR edge in the vortex's middle). K5's vortex
  * (`pull`) draws the beasts in its zone toward its heart in a swirl, the dying
  * ones lifted into it as they dissolve; a respawn dissolves in from the
- * ground with a cool edge and rises (no teleport, no pop). Allocates nothing
- * per frame.
+ * ground with a cool edge and rises (no teleport, no pop). Round 3a (P6,
+ * victim tiers: "the player's eye needs a few spectacular proof points"):
+ * the lab's victim director (victims.ts) picks per cast 4–8 HERO victims
+ * (`heroVictim`: a one-frame white-cyan silhouette, an 0.4 m shove on the
+ * blow's frame, a real launch with 1.25 turns, then lying pinned for about a
+ * second while the director plants a sword through it; a kill dissolves after
+ * the pin), SECONDARY victims (`hop`: a shared hop with the rim flash) and
+ * background ones (the rim flash and the dissolve). The finisher's light no
+ * longer launches every small beast by itself. Allocates nothing per frame.
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -93,20 +100,28 @@ const SLIDE_POWER = 0.95;
 const SLIDE_MIN = 0.3;
 const SLIDE_MAX = 0.8;
 const SLIDE_K = 9;
-/** A launch (the finisher's light): up-speed (m/s), gravity (m/s²), along-the-blow speed (m/s); small beasts only. */
-const LAUNCH_POWER = 1.1;
+/** A launch (`launch`): up-speed (m/s), gravity (m/s²), along-the-blow speed (m/s); small beasts only. */
 const LAUNCH_VY = 5.6;
 const LAUNCH_G = -16;
 const LAUNCH_V = 3.4;
 /** Peak of the underdamped tilt spring per unit kick (1/ω × its first-peak share at ζ = TILT_Z). */
 const TILT_PEAK = 0.62 / 15;
+/** Hero victims: the shove on the blow's frame (m), the launch's up-speed (m/s) and along-the-blow speed, its turns, the pin (s). */
+const HERO_SHOVE_M = 0.4;
+const HERO_VY = 6.4;
+const HERO_V = 2.2;
+const HERO_TURNS = 1.25;
+const PIN_S = 1.0;
+/** A secondary victim's hop: up-speed (m/s), about 0.3 m. */
+const HOP_VY = 3.2;
 /** The respawn's edge colour (linear): a dim ember, below bloom (a cool white HDR edge read as bleached ghosts). */
 const SPAWN_EDGE = [0.42, 0.1, 0.06] as const;
 
 /** Per-instance dissolve: the vertex passes its threshold, edge colour and model-space point to the fragment. */
-const DISSOLVE_VERT_PARS = "attribute float iDissolve;\nattribute vec3 iEdge;\nattribute vec3 iRim;\nattribute vec4 iCut;\nvarying float vDissolve;\nvarying vec3 vEdge;\nvarying vec3 vRim;\nvarying vec4 vCut;\nvarying vec3 vDisP;\n";
-const DISSOLVE_VERT = "#include <begin_vertex>\n\tvDissolve = iDissolve;\n\tvEdge = iEdge;\n\tvRim = iRim;\n\tvCut = iCut;\n\tvDisP = position;";
-const DISSOLVE_FRAG_PARS = `varying float vDissolve;
+const DISSOLVE_VERT_PARS = "attribute float iDissolve;\nattribute vec3 iEdge;\nattribute vec3 iRim;\nattribute vec4 iCut;\nattribute float iWhite;\nvarying float vDissolve;\nvarying vec3 vEdge;\nvarying vec3 vRim;\nvarying vec4 vCut;\nvarying vec3 vDisP;\nvarying float vWhite;\n";
+const DISSOLVE_VERT = "#include <begin_vertex>\n\tvDissolve = iDissolve;\n\tvEdge = iEdge;\n\tvRim = iRim;\n\tvCut = iCut;\n\tvDisP = position;\n\tvWhite = iWhite;";
+const DISSOLVE_FRAG_PARS = `varying float vWhite;
+varying float vDissolve;
 varying vec3 vEdge;
 varying vec3 vRim;
 varying vec4 vCut;
@@ -138,6 +153,7 @@ export class LabHerd implements TargetField {
   private readonly edgeAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly rimAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly cutAttr: THREE.InstancedBufferAttribute[] = [];
+  private readonly whiteAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly heights: number[] = [];
   private readonly sp = new Int8Array(MAX);
   private readonly slot = new Int16Array(MAX); // instance index within its species
@@ -191,6 +207,15 @@ export class LabHerd implements TargetField {
   private readonly die0 = new Float32Array(MAX);
   private readonly lift0 = new Float32Array(MAX);
   private readonly vortex = { on: false, x: 0, z: 0, r: 0, t: 0, until: 0 };
+  /** Hero victims (round 3a, P6): 1 while launched, the pin left (s), a kill held until the pin ends, the white frame shown. */
+  private readonly hero = new Uint8Array(MAX);
+  private readonly pin = new Float32Array(MAX);
+  private readonly heldDeath = new Uint8Array(MAX);
+  private readonly whiteShown = new Uint8Array(MAX);
+  /** A hero victim lands and is pinned at (x, z), struck along (dx, dz): the director plants its sword. */
+  onPin: ((i: number, x: number, z: number, dx: number, dz: number) => void) | null = null;
+  /** A held kill starts dissolving after its pin (the director answers with the death's VFX). */
+  onDie: ((i: number) => void) | null = null;
   private count = 0;
   private mode: HerdMode = "still";
   /**
@@ -245,6 +270,10 @@ export class LabHerd implements TargetField {
       const edge = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
       const rim = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
       const cut = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4);
+      const white = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+      white.setUsage(THREE.DynamicDrawUsage);
+      geometry.setAttribute("iWhite", white);
+      this.whiteAttr[k] = white;
       dis.setUsage(THREE.DynamicDrawUsage);
       edge.setUsage(THREE.DynamicDrawUsage);
       rim.setUsage(THREE.DynamicDrawUsage);
@@ -287,7 +316,9 @@ export class LabHerd implements TargetField {
             "#include <emissivemap_fragment>",
             "#include <emissivemap_fragment>\n\tif ( vDissolve > 0.0 ) totalEmissiveRadiance += vEdge * ( 1.0 - smoothstep( 0.0, 0.09, labDn - labTh ) );" +
               // The hit rim: fresnel in the blow's colour (HDR on the silhouette, a faint fill inside so it reads at 30 px).
-              "\n\tfloat labRim = 1.0 - clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );\n\ttotalEmissiveRadiance += vRim * ( 0.12 + 1.6 * labRim * labRim );",
+              "\n\tfloat labRim = 1.0 - clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );\n\ttotalEmissiveRadiance += vRim * ( 0.12 + 1.6 * labRim * labRim );" +
+              // A hero victim's one-frame silhouette: the whole body white-cyan light (round 3a, P6).
+              "\n\tdiffuseColor.rgb *= 1.0 - vWhite;\n\ttotalEmissiveRadiance = mix( totalEmissiveRadiance, vec3( 1.5, 2.0, 2.2 ), vWhite );",
           );
     };
     material.customProgramCacheKey = () => "lab-herd-dissolve";
@@ -383,6 +414,12 @@ export class LabHerd implements TargetField {
       this.tilt[i] = this.tiltV[i] = 0;
       this.caught[i] = 0;
       this.shownDis[i] = this.shownLift[i] = 0;
+      this.hero[i] = this.heldDeath[i] = this.whiteShown[i] = 0;
+      this.pin[i] = 0;
+    }
+    for (const a of this.whiteAttr) {
+      (a.array as Float32Array).fill(0);
+      a.needsUpdate = true;
     }
     // A death cut short keeps its slice plane on the instance (only a finished death clears it): clear them all,
     // or the next leave or spawn dissolve (march) eats along that stale plane instead of the noise.
@@ -411,7 +448,66 @@ export class LabHerd implements TargetField {
 
   /** A beast dissolving out at the heart (march) is no target: it reappears at the gate (review fix). */
   alive(i: number): boolean {
-    return i >= 0 && i < this.count && this.live[i] === 1 && this.dying[i] === 0 && this.leave[i]! < 0;
+    return i >= 0 && i < this.count && this.live[i] === 1 && this.dying[i] === 0 && this.leave[i]! < 0 && this.hero[i] === 0 && this.pin[i]! <= 0 && this.heldDeath[i] === 0;
+  }
+
+  /** The beast's height above the ground now (a launch or a hop), m. */
+  airY(i: number): number {
+    return this.air[i]!;
+  }
+
+  /** True while beast `i` is a hero victim (launched or pinned). */
+  isHero(i: number): boolean {
+    return this.hero[i] === 1 || this.pin[i]! > 0;
+  }
+
+  /**
+   * Makes beast `i` (just struck along (dx, dz)) a hero victim: a one-frame white-cyan silhouette now, an 0.4 m
+   * shove along the blow, a launch with 1.25 turns, then lying pinned for PIN_S on landing (onPin); a kill (the hit
+   * that just landed) is held until the pin ends, then dissolves (onDie). Small and medium beasts (tier ≤ 2) only.
+   */
+  heroVictim(i: number, dx: number, dz: number): boolean {
+    if (i < 0 || i >= this.count || this.tier(i) >= 3 || this.hero[i] === 1 || this.pin[i]! > 0) return false;
+    if (this.live[i] !== 1 || this.leave[i]! >= 0 || this.spawn[i]! >= 0) return false;
+    if (this.dying[i]! > 0) {
+      this.dying[i] = 0;
+      this.heldDeath[i] = 1;
+    }
+    this.hero[i] = 1;
+    this.whiteNow(i);
+    // The shove reads on the blow's frame (~18 px at the play camera), then the flight carries it on.
+    this.px[i] = this.px[i]! + dx * HERO_SHOVE_M;
+    this.pz[i] = this.pz[i]! + dz * HERO_SHOVE_M;
+    // A medium beast (the boar) flies lower.
+    const vy = this.tier(i) >= 2 ? HERO_VY * 0.8 : HERO_VY;
+    this.airV[i] = vy;
+    this.air[i] = 0.001;
+    this.svx[i] = dx * HERO_V;
+    this.svz[i] = dz * HERO_V;
+    this.flip[i] = 0;
+    this.flipV[i] = (Math.PI * 2 * HERO_TURNS) / ((2 * vy) / -LAUNCH_G);
+    this.ax[i] = dz;
+    this.az[i] = -dx;
+    this.tilt[i] = this.tiltV[i] = 0;
+    this.rx[i] = this.rz[i] = this.rvx[i] = this.rvz[i] = 0;
+    return true;
+  }
+
+  /** A secondary victim's hop (about 0.3 m, no turn), shared by every one struck on the frame. */
+  hop(i: number): void {
+    if (i < 0 || i >= this.count || this.air[i]! > 0.05 || this.hero[i] === 1 || this.pin[i]! > 0) return;
+    if (this.tier(i) >= 4) return;
+    this.airV[i] = this.tier(i) >= 2 ? HOP_VY * 0.7 : HOP_VY;
+    this.air[i] = 0.001;
+  }
+
+  /** The white-cyan silhouette on this frame's draw (cleared by the next update). */
+  private whiteNow(i: number): void {
+    const a = this.whiteAttr[this.sp[i]!];
+    if (a === undefined) return;
+    a.setX(this.slot[i]!, 1);
+    a.needsUpdate = true;
+    this.whiteShown[i] = 1;
   }
   x(i: number): number {
     return this.px[i]! + this.rx[i]!;
@@ -492,8 +588,7 @@ export class LabHerd implements TargetField {
     // A big hit slides the beast back 0.3–0.8 m along the blow (it stays where it lands; elites half); the
     // finisher's light flings small beasts up in one flip. The king never moves at the root.
     if (!king && power >= SLIDE_POWER) {
-      if (power > LAUNCH_POWER && !elite) this.launch(i, dx, dz);
-      else {
+      {
         const d = (SLIDE_MIN + (SLIDE_MAX - SLIDE_MIN) * Math.min(1, (power - SLIDE_POWER) / 0.25)) * (elite ? 0.5 : 1);
         // Exponential decay: distance = v0 / SLIDE_K; a slide already running keeps the faster of the two.
         const v0 = d * SLIDE_K;
@@ -600,6 +695,11 @@ export class LabHerd implements TargetField {
       const edge = this.edgeAttr[k]!;
       const rimA = this.rimAttr[k]!;
       const cutA = this.cutAttr[k]!;
+      // A hero victim's white silhouette lasts the one frame it was drawn on.
+      if (this.whiteShown[i] === 1) {
+        this.whiteAttr[k]!.setX(idx, 0);
+        this.whiteShown[i] = 0;
+      }
       // Reaction timers. A local hit-stop holds this beast still (its springs and walk wait).
       this.immune[i] = Math.max(0, this.immune[i]! - dt);
       const held = this.hold[i]! > 0;
@@ -613,6 +713,10 @@ export class LabHerd implements TargetField {
         const lv = RIM_LEVEL * r;
         rimA.setXYZ(idx, (((rgb >> 16) & 255) / 255) * lv, (((rgb >> 8) & 255) / 255) * lv, ((rgb & 255) / 255) * lv);
         this.rimT[i] = Math.max(0, this.rimT[i]! - dt);
+      } else if (this.pin[i]! > 0 || this.hero[i] === 1) {
+        // A hero victim keeps a cyan rim while it flies and lies pinned (it reads at a quarter of the frame's size).
+        const lv = 1.4 * Math.min(1, this.hero[i] === 1 ? 1 : this.pin[i]! / 0.3);
+        rimA.setXYZ(idx, 0.06 * lv, 0.55 * lv, 0.95 * lv);
       } else rimA.setXYZ(idx, 0, 0, 0);
       if (this.gone[i]! > 0) {
         this.gone[i] = this.gone[i]! - dt;
@@ -646,9 +750,37 @@ export class LabHerd implements TargetField {
         this.air[i] = this.air[i]! + this.airV[i]! * bdt;
         this.flip[i] = this.flip[i]! + this.flipV[i]! * bdt;
         if (this.air[i]! <= 0) {
-          // Lands upright with a squash.
-          this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
-          this.flash[i] = Math.max(this.flash[i]!, 0.6);
+          if (this.hero[i] === 1) {
+            // A hero victim lands on its side (its 1.25 turns end a quarter turn over) and is pinned there.
+            let tl = this.flip[i]! % (Math.PI * 2);
+            if (tl > Math.PI) tl -= Math.PI * 2;
+            this.tilt[i] = tl;
+            this.tiltV[i] = 0;
+            this.hero[i] = 0;
+            this.pin[i] = PIN_S;
+            const sl = Math.hypot(this.svx[i]!, this.svz[i]!) || 1;
+            const ddx = this.svx[i]! / sl;
+            const ddz = this.svz[i]! / sl;
+            this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = this.svx[i] = this.svz[i] = 0;
+            this.onPin?.(i, this.x(i), this.z(i), ddx, ddz);
+          } else {
+            // Lands upright with a squash.
+            this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
+            this.flash[i] = Math.max(this.flash[i]!, 0.6);
+          }
+        }
+      }
+      // A pinned hero victim lies still; then a held kill dissolves, a survivor gets up.
+      if (this.pin[i]! > 0) {
+        this.pin[i] = Math.max(0, this.pin[i]! - bdt);
+        if (this.pin[i] === 0) {
+          if (this.heldDeath[i] === 1) {
+            this.heldDeath[i] = 0;
+            this.dying[i] = 1e-4;
+            this.die0[i] = 0;
+            this.lift0[i] = 0;
+            this.onDie?.(i);
+          }
         }
       }
       let lift = 0;
@@ -712,7 +844,7 @@ export class LabHerd implements TargetField {
           dissolve = 1;
         }
       }
-      if (this.mode === "march" && this.dying[i] === 0 && this.leave[i]! < 0 && !staggered && !held) {
+      if (this.mode === "march" && this.dying[i] === 0 && this.leave[i]! < 0 && !staggered && !held && this.pin[i]! <= 0 && this.hero[i] === 0 && this.heldDeath[i] === 0) {
         const dx = 0 - this.px[i]!;
         const dz = 1 - this.pz[i]!;
         const d = Math.hypot(dx, dz);
@@ -754,8 +886,10 @@ export class LabHerd implements TargetField {
         this.rvz[i] = this.rvz[i]! + (-w2 * this.rz[i]! - 2 * KNOCK_W * this.rvz[i]!) * h;
         this.rx[i] = this.rx[i]! + this.rvx[i]! * h;
         this.rz[i] = this.rz[i]! + this.rvz[i]! * h;
-        this.tiltV[i] = this.tiltV[i]! + (-tw2 * this.tilt[i]! - 2 * TILT_Z * TILT_W * this.tiltV[i]!) * h;
-        this.tilt[i] = this.tilt[i]! + this.tiltV[i]! * h;
+        if (this.pin[i]! <= 0 && this.heldDeath[i] === 0) {
+          this.tiltV[i] = this.tiltV[i]! + (-tw2 * this.tilt[i]! - 2 * TILT_Z * TILT_W * this.tiltV[i]!) * h;
+          this.tilt[i] = this.tilt[i]! + this.tiltV[i]! * h;
+        }
       }
       const bob = this.mode === "march" ? Math.abs(Math.sin(this.time * 9 + i)) * 0.05 : Math.sin(this.time * 1.7 + i) * 0.01;
       // A waddle while marching: a slight roll on the step.
@@ -811,6 +945,7 @@ export class LabHerd implements TargetField {
       this.edgeAttr[k]!.needsUpdate = true;
       this.rimAttr[k]!.needsUpdate = true;
       this.cutAttr[k]!.needsUpdate = true;
+      this.whiteAttr[k]!.needsUpdate = true;
     }
   }
 }
