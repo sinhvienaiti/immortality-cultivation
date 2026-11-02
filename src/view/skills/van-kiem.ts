@@ -307,6 +307,13 @@ export class VanKiemFx {
   private sweepNx = 0;
   private sweepNz = 0;
   private flybys = 0;
+  /**
+   * This frame's turn shares: 0.45 (a sword following its motion), 0.3 (settling along the stroke) and 0.35 (the
+   * plunge) per 60 Hz frame, turned into rates on the world step, so 120 Hz turns as 60 Hz does and a hit-stop holds.
+   */
+  private kMove = 0.45;
+  private kSettle = 0.3;
+  private kPlunge = 0.35;
   /** Strikes and dives so far in this cast (the "~800 perceived strikes" check). */
   strikes = 0;
   dives = 0;
@@ -647,6 +654,10 @@ export class VanKiemFx {
     const t0 = this.t;
     this.t += dt;
     const t = this.t;
+    const f = dt * 60;
+    this.kMove = 1 - Math.pow(0.55, f);
+    this.kSettle = 1 - Math.pow(0.7, f);
+    this.kPlunge = 1 - Math.pow(0.65, f);
     if (t0 < T_SEAM && t >= T_SEAM) {
       this.host.phase("open");
       this.seam();
@@ -915,7 +926,7 @@ export class VanKiemFx {
           this.py[i] = y;
           this.pz[i] = z;
           const l = Math.hypot(this.s1.x - this.s0.x, this.s1.z - this.s0.z);
-          this.turn(i, (this.s1.x - this.s0.x) / l, -0.05, (this.s1.z - this.s0.z) / l, 0.3);
+          this.turn(i, (this.s1.x - this.s0.x) / l, -0.05, (this.s1.z - this.s0.z) / l, this.kSettle);
         }
         this.sc[i] = 1;
         if (k >= 1) {
@@ -955,7 +966,7 @@ export class VanKiemFx {
     this.px[i] = x;
     this.py[i] = y;
     this.pz[i] = z;
-    if (l > 1e-4) this.turn(i, dx / l, dy / l, dz / l, 0.45);
+    if (l > 1e-4) this.turn(i, dx / l, dy / l, dz / l, this.kMove);
   }
 
   private turn(i: number, dx: number, dy: number, dz: number, k: number): void {
@@ -1152,7 +1163,7 @@ export class VanKiemFx {
     for (let i = HERO_N; i < this.cap; i += 1) {
       if (this.st[i] !== S_STROKE) continue;
       this.py[i] = this.ay[i]! + (0.5 - this.ay[i]!) * drop;
-      this.turn(i, this.sweepNx * 0.25 + (this.s1.x - this.s0.x) / 34.5 * 0.4, -0.88, this.sweepNz * 0.25 + (this.s1.z - this.s0.z) / 34.5 * 0.4, 0.35);
+      this.turn(i, this.sweepNx * 0.25 + (this.s1.x - this.s0.x) / 34.5 * 0.4, -0.88, this.sweepNz * 0.25 + (this.s1.z - this.s0.z) / 34.5 * 0.4, this.kPlunge);
     }
     if (k1 >= 1) {
       this.sweepT = -1;
