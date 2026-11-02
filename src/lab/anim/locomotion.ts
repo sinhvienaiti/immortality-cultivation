@@ -2,8 +2,12 @@
  * Ground motion of the lab caster (MOTION_PLAN step 2.5–2.6, appendix C
  * §2.3): way-point following with speed springs (start, arrive and stop
  * ease in and out), facing by a critically damped yaw spring (half-life
- * 0.06 s moving, 0.15 s turning in place), turn-before-go when the path
- * starts more than ~60° off the facing, and the dash's shown path.
+ * 0.06 s moving, 0.15 s turning in place) whose goal is a follower with
+ * limited speed and acceleration (motion round 2: no turn faster than
+ * 360°/s, eased in and out, the feet stepping), turn-before-go when the path
+ * starts more than ~60° off the facing, and the dash's shown path. (A lunge
+ * or a step back from a blow is the acting's view offset on the shown root,
+ * added by the Animator after `update`; the logical position never moves.)
  *
  * Logical vs shown: `x, z` is where the skill code puts the caster (the
  * dash's eased path from kiem.ts arrives through `external`); the shown
@@ -17,6 +21,17 @@ const PATH_MAX = 64;
 const HIST = 16;
 /** Dash ease-in time (s): the shown dash lags the logical one by half of it once moving. */
 const DASH_EASE = 0.06;
+/**
+ * Yaw: a follower runs to the goal at ≤ TURN_VMAX with ≤ TURN_ACC (rad/s², less turning in place, where the feet
+ * step), braking in time (v ≤ √(2·a·err)); the shown yaw is a short critical spring on it, its per-frame turn
+ * capped at TURN_CAP (a spring tracking an eased path barely overshoots its speed; the cap guarantees 360°/s).
+ */
+const TURN_VMAX = (300 * Math.PI) / 180;
+/** Turning in place the feet step one at a time (foot-ik.ts), so the body turns slower. */
+const TURN_VMAX_IN_PLACE = (250 * Math.PI) / 180;
+const TURN_ACC = 34;
+const TURN_ACC_IN_PLACE = 18;
+export const TURN_CAP_RAD_S = (355 * Math.PI) / 180;
 
 export class Locomotion {
   // Logical position (skill code reads it) and velocity.
@@ -28,6 +43,9 @@ export class Locomotion {
   private readonly sp = new Float64Array(2);
   /** Yaw (heading atan2(fx, fz), unwrapped) spring: angle, velocity. */
   private readonly yawS = new Float64Array(2);
+  /** The follower the yaw spring tracks (unwrapped, like the yaw) and its speed (rad/s). */
+  private yawRamp = Math.PI;
+  private yawRampV = 0;
   yawGoal = Math.PI;
   /** Shown position (root). */
   showX = 0;
@@ -50,6 +68,19 @@ export class Locomotion {
   private time = 0;
   private dashT = -1;
   private dashLastMove = 0;
+  /**
+   * The shown dash path (before any view offset), its speed (m/s) and peak: the landing reads these. Review fix: it
+   * read the logical path, which stops ~3 frames before the shown root (it lags by the ease), so the legs reached for
+   * the ground and the lift fell with the shown root still at 37 m/s (a 10.3 m/s planted-foot skid).
+   */
+  /** The logical dash path's speed at its last move (m/s), its peak, and when it last moved: it leads the shown root. */
+  private dashSpeed = 0;
+  private dashPeak = 0;
+  private dashMoveT = 0;
+  private dashShowX = 0;
+  private dashShowZ = 0;
+  private dashShowSpeed = 0;
+  private dashShowPeak = 0;
   /** Yaw half-life in use (s). */
   turnHalflife = 0.06;
   /** Where the planted feet point (rad) and how far the body may turn past it (rad; 0 = no limit). Set by the Animator. */
@@ -106,6 +137,8 @@ export class Locomotion {
     this.yawS[0] = yaw;
     this.yawS[1] = 0;
     this.yawGoal = yaw;
+    this.yawRamp = yaw;
+    this.yawRampV = 0;
     this.yawBias = 0;
     this.biasS[0] = this.biasS[1] = 0;
     // The feet limit is re-read from the feet after the first frame; a stale one would pull the new facing round.
@@ -150,6 +183,12 @@ export class Locomotion {
     if (this.dashT >= 0 && dx * dx + dz * dz > 1e-6) {
       this.face(dx, dz);
       this.dashLastMove = this.time;
+      const h = this.time - this.dashMoveT;
+      if (h > 1e-4) {
+        this.dashSpeed = Math.hypot(dx, dz) / h;
+        this.dashPeak = Math.max(this.dashPeak, this.dashSpeed);
+      }
+      this.dashMoveT = this.time;
     }
     this.x = x;
     this.z = z;
@@ -166,8 +205,25 @@ export class Locomotion {
     this.sp[0] = this.sp[1] = 0;
     this.dashT = 0;
     this.dashLastMove = this.time;
+    this.dashMoveT = this.time;
+    this.dashSpeed = 0;
+    this.dashPeak = 0;
+    this.dashShowX = this.x;
+    this.dashShowZ = this.z;
+    this.dashShowSpeed = 0;
+    this.dashShowPeak = 0;
     this.histN = 0;
     this.record();
+  }
+
+  /** The logical dash path (it leads the shown root by ~3 frames) is past its peak and under `share` of it, or stopped. */
+  dashPathSlowerThan(share: number): boolean {
+    return this.dashT >= 0 && this.dashPeak > 4 && (this.dashSpeed < share * this.dashPeak || this.time - this.dashLastMove > 1e-3);
+  }
+
+  /** The shown dash path is past its peak and under `share` of it. */
+  dashSlowerThan(share: number): boolean {
+    return this.dashT >= 0 && this.dashShowPeak > 4 && this.dashShowSpeed < share * this.dashShowPeak;
   }
 
   private record(): void {
@@ -209,7 +265,25 @@ export class Locomotion {
       if (d > this.yawLead) goal = this.yawS[0]! + wrapPi(this.feetYaw + this.yawLead - this.yawS[0]!);
       else if (d < -this.yawLead) goal = this.yawS[0]! + wrapPi(this.feetYaw - this.yawLead - this.yawS[0]!);
     }
-    criticalSpring(this.yawS, 0, goal, this.turnHalflife, dt);
+    // The follower: towards the goal along the short way, speed and acceleration limited, braking in time.
+    const err = wrapPi(goal - this.yawRamp);
+    const inPlace = this.turnHalflife > 0.1;
+    const acc = inPlace ? TURN_ACC_IN_PLACE : TURN_ACC;
+    const vWant = Math.sign(err) * Math.min(inPlace ? TURN_VMAX_IN_PLACE : TURN_VMAX, Math.sqrt(2 * acc * 0.85 * Math.abs(err)), Math.abs(err) / Math.max(dt, 1e-4));
+    const dv = vWant - this.yawRampV;
+    const dvMax = acc * dt;
+    this.yawRampV += dv > dvMax ? dvMax : dv < -dvMax ? -dvMax : dv;
+    this.yawRamp += this.yawRampV * dt;
+    // Keep the follower on the spring's unwrapped branch.
+    this.yawRamp = this.yawS[0]! + wrapPi(this.yawRamp - this.yawS[0]!);
+    const before = this.yawS[0]!;
+    criticalSpring(this.yawS, 0, this.yawRamp, Math.min(this.turnHalflife, 0.05), dt);
+    const turned = this.yawS[0]! - before;
+    const cap = TURN_CAP_RAD_S * dt;
+    if (Math.abs(turned) > cap) {
+      this.yawS[0] = before + Math.sign(turned) * cap;
+      this.yawS[1] = Math.sign(turned) * TURN_CAP_RAD_S;
+    }
   }
 
   private updateDash(dt: number): void {
@@ -220,6 +294,12 @@ export class Locomotion {
     const still = this.time - this.dashLastMove;
     if (still > 0) lag = Math.max(0, lag - still);
     this.sampleHist(this.time - lag);
+    if (dt > 1e-6) {
+      this.dashShowSpeed = Math.hypot(this.showX - this.dashShowX, this.showZ - this.dashShowZ) / dt;
+      this.dashShowPeak = Math.max(this.dashShowPeak, this.dashShowSpeed);
+    }
+    this.dashShowX = this.showX;
+    this.dashShowZ = this.showZ;
     if (still > DASH_EASE && lag <= 0) {
       this.dashT = -1;
       this.showX = this.x;

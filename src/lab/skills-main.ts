@@ -25,7 +25,8 @@ import { CLIP_RELEASE_S, LabCaster, type CasterClip } from "./caster";
 import { LabHerd, type HerdMode } from "./herd";
 import { applyLook, buildField, LAB_ASSETS } from "./look";
 import { collectLayerNames, MotionProbe } from "./motion-probe";
-import { CameraKick, FlashLights, HitStop, smooth01 } from "./feel";
+import { CameraKick, CameraShake, FlashLights, HitStop, smooth01 } from "./feel";
+import { CasterPresence } from "./presence";
 
 const params = new URLSearchParams(location.search);
 const quality = (["low", "medium", "high", "ultra"].includes(params.get("q") ?? "") ? params.get("q") : "high") as Quality;
@@ -78,13 +79,14 @@ view.layers.actors.add(herd.group, caster.root);
 // Camera kick, hit stop and impact lights, owned by the lab (the game has its own in feedback-profile.ts): feel.ts.
 const camBase = new THREE.Vector3();
 const kick = new CameraKick();
+// Camera shake on strikes (round 2 "weight"): 0.1–0.2 m dying in ~120 ms, halved at Low, × 0.75 at Medium.
+const shake = new CameraShake(quality === "low" ? 0.5 : quality === "medium" ? 0.75 : 1);
 const stop = new HitStop();
 /** About 2 cm of kick per "px" a skill asks for (the old lab scale). */
 const KICK_M_PER_PX = 0.02;
 // The kit stage's one impact light jumps to each new flash at full strength: the lab lights its flashes itself.
 view.stage.impactLight.removeFromParent();
 const lights = new FlashLights(view.layers.fx, quality === "low" ? 1 : quality === "medium" ? 2 : 3);
-const boltHit = new THREE.Vector3();
 
 const hostApi: KiemHost = {
   layer: view.layers.fx,
@@ -110,6 +112,12 @@ const hostApi: KiemHost = {
   hitStop(ms) {
     stop.start(ms);
   },
+  shake(metres) {
+    shake.add(metres);
+  },
+  pull(x, z, r, seconds) {
+    herd.pull(x, z, r, seconds);
+  },
   moveCaster(x, z) {
     caster.moveTo(x, z);
   },
@@ -119,6 +127,8 @@ const hostApi: KiemHost = {
 };
 const fx = new KiemFx(hostApi, { ...textures }, quality);
 void ribbonNoise;
+// The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
+const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
 
 // The equipped sword (D55). Only swords: the sabre and spear skills are not built yet.
 const SWORDS = weaponsOf("sword");
@@ -164,9 +174,11 @@ function updateBolt(dt: number): void {
     if (d <= 2.1) {
       bolt.end = 0;
       if (!fx.block(bolt.x, bolt.z)) {
-        lights.flash(boltHit.set(caster.x, 1, caster.z), view.camera.position, "#ff4a4a", 6);
+        // The caster shows the blow as a red-white rim flash and a stagger (caster.hit); no red light over the body.
         probe.event("hit");
         caster.hit(bolt.x, bolt.z);
+        presence.hit(caster.x, caster.z, bolt.x, bolt.z);
+        shake.add(0.12);
       }
     } else {
       bolt.x += (dx / d) * step;
@@ -217,7 +229,9 @@ const TARGET: Record<KiemSlot, [number, number]> = { auto: [0, -8], k1: [0, -8],
 function type(slot: KiemSlot): void {
   if (slot === "auto") {
     probe.lastKey("auto");
-    caster.release("auto");
+    // A release cuts a hit-stop still holding: the body answers the last key within the 50 ms gate (feel.ts cut).
+    stop.cut();
+    caster.release("auto", TARGET.auto[0], TARGET.auto[1]);
     queueCast("auto", 0, 0);
     return;
   }
@@ -257,12 +271,13 @@ function updateTyping(dt: number): void {
     const p = typing.typed / typing.letters;
     if (typing.typed >= typing.letters) {
       probe.lastKey(typing.slot);
-      caster.release(typing.slot);
+      stop.cut();
+      caster.release(typing.slot, typing.tx, typing.tz);
       queueCast(typing.slot, typing.tx, typing.tz);
       typing = null;
       break;
     }
-    caster.charge(typing.slot, p, typing.tx, typing.tz);
+    caster.charge(typing.slot, p, typing.tx, typing.tz, typing.letters - typing.typed);
     pending.charge = true;
     pending.slot = typing.slot;
     pending.p = p;
@@ -281,8 +296,11 @@ function reset(): void {
   enemyBolt.clear();
   stop.reset();
   kick.reset();
+  shake.reset();
+  presence.reset();
   lights.reset();
   probe.reset();
+  caster.resetChecks();
 }
 
 const KEYS: Record<string, KiemSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5" };
@@ -360,15 +378,20 @@ function frame(dt: number): void {
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   fx.update(world, dt);
+  presence.update(world, dt, caster.x, caster.z, fx);
   enemyBolt.update(world);
-  // Camera kick: a damped spring along the blow, in metres, on real time (it plays through a hit-stop).
+  // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
   if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
   kick.update(dt);
+  shake.update(dt, view.camera);
   lights.update(dt);
-  view.camera.position.set(camBase.x + kick.x, camBase.y, camBase.z + kick.z);
+  view.camera.position.set(camBase.x + kick.x + shake.x, camBase.y + shake.y, camBase.z + kick.z + shake.z);
   view.render(dt);
   // After the draw: world matrices are fresh and the probe reads what was shown.
-  if (probeOn) probe.sample(dt);
+  if (probeOn) {
+    probe.sample(dt);
+    caster.check(probe.lastFrame);
+  }
 }
 
 // A second view of the same frame for captures: the caster close up at 55° (no time passes).
@@ -440,7 +463,9 @@ void (async () => {
   const equipped = setWeapon(wanted).then((ok) => (ok ? true : setWeapon(DEFAULT_WEAPON)));
   await Promise.all([herd.load(), caster.load(), look.ready, equipped]);
   if (caster.model !== null) {
+    presence.attach(caster.model);
     const names = collectLayerNames(fx, new Map());
+    collectLayerNames(presence, names);
     names.set(enemyBolt.mesh, "enemyBolt");
     probe.attach({
       root: caster.root,
@@ -450,7 +475,7 @@ void (async () => {
       fxLayer: view.layers.fx,
       layerNames: names,
       blades: fx.blades,
-      flashLayers: ["flare", "star", "glow", "spark", "motes", "shock", "groundShock", "groundRing", "beams", "slash"],
+      flashLayers: ["flare", "star", "glow", "spark", "motes", "shock", "groundShock", "groundRing", "beams", "slash", "backGlow", "backStar", "hitSparks", "hitRing"],
     });
   }
   caster.onState = (kind, detail) => {
@@ -461,7 +486,13 @@ void (async () => {
   window.__lab = {
     ready: true,
     type,
-    cast: (slot, tx, tz) => fx.cast(slot, tx, tz),
+    // The caster acts the slot first: KiemHost.play names only a clip (K4 asks for Skill2 like the guard, K1 for Attack
+    // like Phi Kiếm), so a cast left to play() acted the wrong skill (review fix).
+    cast: (slot, tx, tz) => {
+      stop.cut();
+      caster.release(slot, tx, tz);
+      fx.cast(slot, tx, tz);
+    },
     enemyShot,
     step(frames: number, dt = 1 / 60) {
       for (let i = 0; i < frames; i += 1) frame(dt);
@@ -476,7 +507,7 @@ void (async () => {
     faceTo: (x, z) => caster.faceTo(x, z),
     moving: () => caster.moving,
     mark: (label) => probe.event("phase", label),
-    metrics: () => probe.metrics(),
+    metrics: () => ({ ...probe.metrics(), arms: caster.armReport() }),
     anim: () => caster.debug(),
     view: (mode, distanceM = 6) => showView(mode, distanceM),
     caster: () => ({ x: caster.x, z: caster.z, fx: caster.fx, fz: caster.fz }),

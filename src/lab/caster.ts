@@ -10,6 +10,12 @@
  * feet stepping, the dash as a glide, Hit as an additive, breathing, recoil,
  * look-at, foot locking (heel / ball pivot) and spring chains.
  *
+ * Round 2 (acting): each skill acts in three phases on its clip section
+ * (anim/acting.ts); K4 plays its own copy of Attack (`thrust`) with its own
+ * pose and rhythm, apart from the guard's Skill2; a blow shows as a
+ * red-white rim flash (rises in 2 frames, fades over 0.2 s) instead of a
+ * red light over the whole body.
+ *
  * Lam's front is −z (lam.glb), so the root's yaw is the facing + π (the P0 of
  * the step 1 report: the lab showed Lam's back to its own facing).
  *
@@ -20,7 +26,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { KiemSlot } from "../view/skills/kiem";
-import { Animator, type AnimatorClip, type ClipKey } from "./anim/animator";
+import { Animator, type AnimatorClip, type ClipKey, type MoveId } from "./anim/animator";
+import { ArmCheck } from "./anim/arm-check";
 import { resampleClip } from "./anim/resample";
 import { retargetClip } from "./anim/retarget";
 import { ClipSampler, Rig } from "./anim/rig";
@@ -49,21 +56,25 @@ const M2M_CLIPS: Partial<Record<CasterClip, [file: string, clip: string]>> = {
   back: ["human-addon-animations.glb", "Walk_Backwards"],
 };
 
+/** Clips copied from another of Lam's, so a skill has its own clip and rhythm (K4 apart from the guard's Skill2). */
+const COPIES: Partial<Record<CasterClip, CasterClip>> = { thrust: "attack" };
+
 /** Looping clips (the rest play once). */
 const LOOPS: ReadonlySet<CasterClip> = new Set<CasterClip>(["idle", "run", "walk", "strafeL", "strafeR", "back", "dash"]);
 /** Clip time of the strike (s): hand speed peak by FK on lam.glb (MOTION_PLAN appendix A, §5.6 `release`). */
-export const CLIP_RELEASE_S: Partial<Record<CasterClip, number>> = { attack: 0.267, skill1: 0.267, skill2: 0.708, ult: 1.083 };
+export const CLIP_RELEASE_S: Partial<Record<CasterClip, number>> = { attack: 0.267, thrust: 0.267, skill1: 0.267, skill2: 0.708, ult: 1.083 };
 
-/** The clip each skill slot plays. */
-export const SLOT_CLIP: Record<KiemSlot, CasterClip> = { auto: "attack", k1: "attack", k2: "skill1", guard: "skill2", dash: "dash", k4: "skill2", k5: "ult" };
-/**
- * Seconds after the release that a skill's own strikes still land (kiem.ts
- * hit ticks, canon §12.1: K1 blades at +0, +0.5, +1.0 s; K5 waves to +2.0 s):
- * the follow-through pose holds until then (plan step 2.3).
- */
-const SLOT_HOLD: Partial<Record<KiemSlot, number>> = { k1: 1.05, k5: 2.05 };
-/** Recoil kick per slot (deg/s of torso tilt; ~5° peak at 300). */
-const SLOT_RECOIL: Record<KiemSlot, number> = { auto: 220, k1: 260, k2: 320, guard: 200, dash: 0, k4: 260, k5: 380 };
+/** The clip each skill slot plays (the acting of each is in anim/acting.ts; how long it holds follows its hit ticks there). */
+export const SLOT_CLIP: Record<KiemSlot, CasterClip> = { auto: "attack", k1: "attack", k2: "skill1", guard: "skill2", dash: "dash", k4: "thrust", k5: "ult" };
+/** A strike clip asked for by the skill code without a typed word (KiemHost.play): the move it acts. */
+const CLIP_MOVE: Partial<Record<CasterClip, MoveId>> = { attack: "auto", thrust: "k4", skill1: "k2", skill2: "guard", ult: "k5" };
+
+/** Hit rim flash: rise (s, 2 frames), fade (s), peak (linear emissive at the silhouette edge). */
+const RIM_RISE_S = 2 / 60;
+const RIM_FADE_S = 0.2;
+const RIM_PEAK = 1.5;
+const RIM_HOT = new THREE.Color(1, 0.78, 0.74);
+const RIM_RED = new THREE.Color(1, 0.13, 0.08);
 
 /** State changes for the motion probe: a clip starts, a walk starts, changes speed or stops, a turn. */
 export type CasterEvent = "clip" | "move" | "face";
@@ -83,6 +94,12 @@ export class LabCaster {
   /** Which missing clips came from Mesh2Motion (the rest fall back to Run). */
   readonly retargeted: CasterClip[] = [];
   anim: Animator | null = null;
+  /** Arms-out check (both upper arms past 70° for more than 3 frames outside an intended pose), read by __lab.metrics(). */
+  private armCheck: ArmCheck | null = null;
+  /** Rim flash uniforms (shared by Lam's materials) and its age (−1 off). */
+  private readonly rimK = { value: 0 };
+  private readonly rimCol = { value: new THREE.Color() };
+  private rimT = -1;
   private lastSegSpeed = 0;
   private wasMoving = false;
 
@@ -101,6 +118,8 @@ export class LabCaster {
       if (mesh.isMesh) {
         mesh.castShadow = true;
         mesh.frustumCulled = false;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) this.addRim(m);
       }
     });
     this.root.add(model);
@@ -113,6 +132,14 @@ export class LabCaster {
       if (!src) continue;
       const loop = LOOPS.has(key);
       clips.push({ key, clip: resampleClip(src, loop), loop, release: CLIP_RELEASE_S[key] });
+      this.clipRefs.push(src);
+    }
+    for (const key of Object.keys(COPIES) as CasterClip[]) {
+      const src = gltf.animations.find((a) => a.name === LAM_CLIPS[COPIES[key]!]);
+      if (!src) continue;
+      const copy = src.clone();
+      copy.name = src.name + "_" + key;
+      clips.push({ key, clip: resampleClip(copy, false), loop: false, release: CLIP_RELEASE_S[key] });
       this.clipRefs.push(src);
     }
     // Missing clips: Mesh2Motion retargeted onto Lam (bones outside its rig keep Idle's frame 0).
@@ -141,6 +168,7 @@ export class LabCaster {
       this.clipActions.push(anim.actions[i]!);
     }
     anim.onClip = (key) => this.onState?.("clip", key);
+    this.armCheck = new ArmCheck(model);
     // Console access for tuning (the lab is dev-only and never built).
     (window as unknown as Record<string, unknown>).__labCaster = this;
   }
@@ -170,7 +198,11 @@ export class LabCaster {
     return this.anim ? this.anim.loco.fz : -1;
   }
 
-  /** The skill code asks for a clip (KiemHost.play): a release already made this frame is kept; a dash starts the dash. */
+  /**
+   * The skill code asks for a clip (KiemHost.play): a release the lab made this frame is that strike (kept, whatever
+   * clip the skill names: K4 asks for Skill2 but acts on its own `thrust`); a dash starts the dash; a strike cast
+   * from code without a typed word releases now.
+   */
   play(clip: CasterClip): void {
     const anim = this.anim;
     if (!anim) return;
@@ -179,25 +211,30 @@ export class LabCaster {
       return;
     }
     if (clip !== "attack" && clip !== "skill1" && clip !== "skill2" && clip !== "ult") return;
-    // A strike the lab did not release first (a skill cast from code): release now.
-    if (anim.state !== "strike" || anim.clip !== clip) anim.release(clip, 0, 240);
+    if (anim.strikeAgeS < 0.1) return;
+    const move = CLIP_MOVE[clip] ?? "auto";
+    anim.release(move, clip, this.x + this.fx * 6, this.z + this.fz * 6, false);
   }
 
-  /** A key of a typed word on `slot` (progress 0…1) aimed at (tx, tz). */
-  charge(slot: KiemSlot, progress: number, tx: number, tz: number): void {
-    this.anim?.charge(SLOT_CLIP[slot], progress, tx, tz);
+  /** A key of a typed word on `slot` (progress 0…1, `keysLeft` still to type) aimed at (tx, tz). */
+  charge(slot: KiemSlot, progress: number, tx: number, tz: number, keysLeft = 1): void {
+    const anim = this.anim;
+    if (!anim) return;
+    if (slot === "dash") anim.charge("dash", "dash", progress, keysLeft, tx, tz);
+    else anim.charge(slot, SLOT_CLIP[slot], progress, keysLeft, tx, tz);
   }
 
-  /** The last key: the strike runs on from its release (the VFX read the hand after `update`). */
-  release(slot: KiemSlot): void {
-    const clip = SLOT_CLIP[slot];
-    if (clip === "dash") return; // the dash starts on KiemHost.play("dash")
-    this.anim?.release(clip, SLOT_HOLD[slot] ?? 0, SLOT_RECOIL[slot]);
+  /** The last key: the strike runs on from its release, aimed at (tx, tz) (the VFX read the hand after `update`). */
+  release(slot: KiemSlot, tx?: number, tz?: number): void {
+    if (slot === "dash") return; // the dash starts on KiemHost.play("dash")
+    const has = tx !== undefined && tz !== undefined;
+    this.anim?.release(slot, SLOT_CLIP[slot], has ? tx : this.x + this.fx * 6, has ? tz : this.z + this.fz * 6, has);
   }
 
-  /** An enemy blow landed from (fromX, fromZ). */
+  /** An enemy blow landed from (fromX, fromZ): the stagger, the step back and the rim flash. */
   hit(fromX: number, fromZ: number): void {
     this.anim?.hit(fromX, fromZ);
+    this.rimT = 0;
   }
 
   /** KiemHost.moveCaster: the dash path (the shown root eases into it). */
@@ -208,6 +245,8 @@ export class LabCaster {
   /** Puts the caster at (x, z) facing (fx, fz) at once (reset). */
   place(x: number, z: number, fx: number, fz: number): void {
     this.anim?.place(x, z, fx, fz);
+    this.rimT = -1;
+    this.rimK.value = 0;
     this.lastSegSpeed = 0;
     this.wasMoving = false;
   }
@@ -252,6 +291,61 @@ export class LabCaster {
     out.set(this.x + this.fx * 0.4 - this.fz * 0.25, 1.15, this.z + this.fz * 0.4 + this.fx * 0.25);
   }
 
+  /**
+   * A rim term on Lam's own materials (dev-only lab): emissive (1 − N·V)⁴ × uRimK × uRimCol, added where the
+   * standard shader sums its emission, so the flash rims the silhouette instead of tinting the whole body.
+   */
+  private addRim(material: THREE.Material): void {
+    const m = material as THREE.MeshStandardMaterial;
+    if (!m.isMeshStandardMaterial) return;
+    const rimK = this.rimK;
+    const rimCol = this.rimCol;
+    m.onBeforeCompile = (shader) => {
+      shader.uniforms.uRimK = rimK;
+      shader.uniforms.uRimCol = rimCol;
+      shader.fragmentShader =
+        "uniform float uRimK;\nuniform vec3 uRimCol;\n" +
+        shader.fragmentShader.replace(
+          "#include <emissivemap_fragment>",
+          "#include <emissivemap_fragment>\n\tfloat labRim = 1.0 - clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );\n\tlabRim *= labRim;\n\ttotalEmissiveRadiance += uRimCol * ( uRimK * labRim * labRim );",
+        );
+    };
+    m.customProgramCacheKey = () => "lab-hit-rim";
+    m.needsUpdate = true;
+  }
+
+  /** The rim flash: up in 2 frames (hot, near white), then down over 0.2 s as it cools to red. */
+  private updateRim(dt: number): void {
+    if (this.rimT < 0) return;
+    this.rimT += dt;
+    const t = this.rimT;
+    let e: number;
+    if (t < RIM_RISE_S) {
+      const u = t / RIM_RISE_S;
+      e = u * u * (3 - 2 * u);
+    } else {
+      const u = Math.min(1, (t - RIM_RISE_S) / RIM_FADE_S);
+      e = (1 - u) * (1 - u);
+      if (u >= 1) this.rimT = -1;
+    }
+    const cool = Math.min(1, Math.max(0, (t - RIM_RISE_S) / 0.12));
+    this.rimCol.value.copy(RIM_HOT).lerp(RIM_RED, cool * cool * (3 - 2 * cool));
+    this.rimK.value = this.rimT < 0 ? 0 : RIM_PEAK * e;
+  }
+
+  /** Probe frame `f` was drawn: the arms-out check reads the pose (fresh world matrices). */
+  check(f: number): void {
+    this.armCheck?.sample(f, this.anim ? this.anim.intendedPose : false);
+  }
+
+  resetChecks(): void {
+    this.armCheck?.reset();
+  }
+
+  armReport(): Record<string, unknown> {
+    return this.armCheck ? this.armCheck.report() : {};
+  }
+
   /** The Animator's state and clip analysis (JSON-safe, for __lab.anim()). */
   debug(): Record<string, unknown> {
     const anim = this.anim;
@@ -276,6 +370,7 @@ export class LabCaster {
     const anim = this.anim;
     if (!anim) return;
     anim.update(dt);
+    this.updateRim(dt);
     // Probe markers for walks: a segment speed change, arrival.
     const loco = anim.loco;
     if (loco.hasPath && loco.segmentSpeed !== this.lastSegSpeed) {

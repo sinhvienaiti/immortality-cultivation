@@ -952,6 +952,12 @@ export class BeamSpec {
   /** Share of the length fading out at the base and at the tip. */
   fadeBase = 0.08;
   fadeTip = 0.45;
+  /**
+   * Seconds of smoothstep fade-in (0: full on its first frame, a flash). Bursts
+   * that must not blaze on in one frame (K5's vortex core, K1's arriving
+   * strokes) rise over ≥ 3 frames at 60 Hz (round 2 impact lane).
+   */
+  rise = 0;
   reset(): this {
     this.dx = this.dz = 0;
     this.dy = 1;
@@ -965,11 +971,12 @@ export class BeamSpec {
     this.a = 1;
     this.fadeBase = 0.08;
     this.fadeTip = 0.45;
+    this.rise = 0;
     return this;
   }
 }
 
-const BF = 25; // floats per beam state
+const BF = 26; // floats per beam state
 
 /**
  * Axis billboards: a quad from a base point along a world direction, turned
@@ -1085,6 +1092,7 @@ export class BeamPool {
     st[o + 22] = s.a;
     st[o + 23] = s.fadeBase;
     st[o + 24] = s.fadeTip;
+    st[o + 25] = s.life > 0 ? Math.max(0, s.rise) : 0;
     this.live += 1;
     this.write(this.live - 1);
   }
@@ -1134,7 +1142,8 @@ export class BeamPool {
     const sweep = grow > 0 ? easeOutCubic(clamp01(age / grow)) : 1;
     const len = lerp(st[o + 6]!, st[o + 7]!, easeOutCubic(t)) * sweep;
     const w = lerp(st[o + 9]!, st[o + 10]!, easeOutCubic(t));
-    const k = st[o + 22]! * lifeFade(t);
+    const rise = st[o + 25]!;
+    const k = st[o + 22]! * lifeFade(t) * (rise > 0 && age < rise ? smooth01(age / rise) : 1);
     const b = i * 4;
     this.base[b] = st[o]!;
     this.base[b + 1] = st[o + 1]!;
@@ -1158,7 +1167,18 @@ export class BeamPool {
 // ── Ground sigils ───────────────────────────────────────────────────────────
 
 /** Pattern of a ground plane (one shader, a define per kind). */
-export type SigilKind = "hex" | "spiral" | "arcs" | "line" | "arrow" | "ring" | "seal";
+export type SigilKind = "hex" | "spiral" | "arcs" | "line" | "arrow" | "ring" | "seal" | "crack" | "presence";
+
+/**
+ * The caster seal's inner glyph per skill (uShape), after the shape grammar of
+ * SKILL_CATALOG §2 (each skill its own shape at 40 px; round 2: "the same white
+ * hexagram everywhere"): 0 none, 1 Ngự Kiếm three strokes and a head (≡>),
+ * 2 Nhất Tuyến one cut, 3 Hộ thân three arcs and blades, 4 Lưu Quang two
+ * points and a slanted stroke, 5 Lạc Kiếm hexagon and six inward swords,
+ * 6 Thiên Hà three spiral arms round a dark heart. +x of the plane is the
+ * facing (place the seal with the facing's yaw).
+ */
+export const SEAL_SHAPE = { none: 0, k1: 1, k2: 2, guard: 3, dash: 4, k4: 5, k5: 6 } as const;
 
 const SIGIL_VERTEX = /* glsl */ `
 varying vec2 vUv;
@@ -1177,6 +1197,10 @@ uniform float uCount;    // arcs left (Hộ thân charges, fractional while one 
 uniform float uPhase;    // spiral rotation (rad), accumulated on the CPU (GroundSigil.spin)
 uniform vec3 uColor;     // light, ≤ 0.64 per channel (× at most 1.4 below: ≤ 0.9, no bloom)
 uniform vec3 uCore;      // thin HDR line colour (unit max)
+uniform float uShape;    // seal glyph (SEAL_SHAPE)
+uniform float uGlyph;    // 0..1 the glyph's share (it crossfades when the skill changes)
+uniform float uHeat;     // 0..n afterglow along a cut (embers and a glowing seam), cooling to 0
+uniform float uAsh;      // 0..1 pale ash left where the light burned (normal blend, not dark ink)
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -1207,6 +1231,7 @@ float sdTri(vec2 p, float r) {
   return -length(p) * sign(p.y);
 }
 vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
+float sdSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
 // A band of rune dashes of uneven length round radius r0 (n cells, turning with spin).
 float runes(float ang, float r, float r0, float w, float n, float spin) {
   float a = (ang + 3.14159265) / 6.2831853 * n + spin;
@@ -1219,6 +1244,61 @@ float runes(float ang, float r, float r0, float w, float n, float spin) {
 }
 const float PI = 3.14159265;
 
+#ifdef SEAL
+// The seal's skill glyph (SEAL_SHAPE): thin strokes in the seal's light, +x along the facing.
+float glyph(vec2 p, float r, float ang, float shape, float t) {
+  float g = 0.0;
+  if (shape < 0.5) {
+    g = 0.0;
+  } else if (shape < 1.5) {
+    // Ngự Kiếm: three parallel strokes and a chevron head (≡>).
+    for (int i = 0; i < 3; i++) {
+      float y = (float(i) - 1.0) * 0.17;
+      g += band(sdSeg(p, vec2(-0.5, y), vec2(0.2 - abs(y) * 0.4, y)), 0.018);
+    }
+    g += band(sdSeg(p, vec2(0.28, 0.27), vec2(0.58, 0.0)), 0.02) + band(sdSeg(p, vec2(0.28, -0.27), vec2(0.58, 0.0)), 0.02);
+  } else if (shape < 2.5) {
+    // Nhất Tuyến: one cut through the seal, a diamond at its point, two short guide strokes.
+    g += band(sdSeg(p, vec2(-0.72, 0.0), vec2(0.6, 0.0)), 0.017);
+    g += band(abs(p.x - 0.68) + abs(p.y) * 1.8 - 0.09, 0.012);
+    g += (band(sdSeg(p, vec2(-0.3, 0.13), vec2(0.12, 0.13)), 0.009) + band(sdSeg(p, vec2(-0.3, -0.13), vec2(0.12, -0.13)), 0.009)) * 0.6;
+  } else if (shape < 3.5) {
+    // Hộ thân: three arcs round the heart with gaps, a blade on each, turning slowly.
+    float a = mod(ang - t * 0.6 + PI, 2.0 * PI / 3.0);
+    float seg = smoothstep(0.12, 0.22, a) * (1.0 - smoothstep(1.7, 1.9, a));
+    g += band(r - 0.46, 0.02) * seg;
+    for (int i = 0; i < 3; i++) {
+      float th = t * 0.6 + float(i) * 2.0 * PI / 3.0;
+      vec2 d = vec2(cos(th), sin(th));
+      g += band(sdSeg(p, d * 0.16, d * 0.62), 0.013);
+    }
+  } else if (shape < 4.5) {
+    // Lưu Quang Bộ: two points joined by a slanted stroke, two chevrons along it.
+    g += 1.0 - smoothstep(0.035, 0.065, length(p - vec2(-0.46, -0.2)));
+    g += 1.0 - smoothstep(0.035, 0.065, length(p - vec2(0.46, 0.2)));
+    g += band(sdSeg(p, vec2(-0.46, -0.2), vec2(0.46, 0.2)), 0.014);
+    for (int i = 0; i < 2; i++) {
+      float x = -0.02 + float(i) * 0.2;
+      g += band(sdSeg(p, vec2(x - 0.13, 0.16), vec2(x, 0.0)), 0.012) + band(sdSeg(p, vec2(x - 0.13, -0.16), vec2(x, 0.0)), 0.012);
+    }
+  } else if (shape < 5.5) {
+    // Lạc Kiếm Trận: a hexagon and six swords pointing at the heart.
+    g += band(sdHex(vec2(p.y, p.x), 0.5), 0.016);
+    float a6 = mod(ang + PI / 6.0, PI / 3.0) - PI / 6.0;
+    g += band(sin(a6) * r, 0.012) * smoothstep(0.14, 0.2, r) * (1.0 - smoothstep(0.5, 0.56, r));
+    g += band(r - 0.12, 0.012);
+  } else {
+    // Thiên Hà: three spiral arms round a dark heart.
+    for (int i = 0; i < 3; i++) {
+      float th = mod(ang - t * 0.35 - float(i) * 2.0 * PI / 3.0 + 4.0 * PI, 2.0 * PI);
+      float target = 0.13 * exp(0.24 * th);
+      g += band(r - target, 0.018 + 0.02 * th / 6.2832) * smoothstep(0.1, 0.16, r) * (1.0 - smoothstep(0.6, 0.66, r));
+    }
+  }
+  return g;
+}
+#endif
+
 void main() {
   vec2 p = vUv;
   float r = length(p);
@@ -1226,6 +1306,10 @@ void main() {
   float light = 0.0;
   float core = 0.0;
   float ink = 0.0;
+  // Pale ash (normal blend), and the afterglow of a cut (added to light and core below).
+  float ashL = 0.0;
+  float heatL = 0.0;
+  float heatC = 0.0;
   float n = fbm(p * 6.0 + uTime * 0.15);
   float revealArc = revealSoft(fract((ang + PI) / (2.0 * PI)), uReveal, 0.05);
 
@@ -1293,7 +1377,14 @@ void main() {
   float reveal = revealSoft(along, uReveal, 0.04);
   light = (1.0 - smoothstep(0.0, 0.5, w)) * reveal * (0.7 + 0.3 * n);
   core = (1.0 - smoothstep(0.0, 0.12, w)) * reveal;
-  ink = (1.0 - smoothstep(0.1, 0.9, w + n * 0.25)) * reveal * smoothstep(0.0, 0.05, along) * smoothstep(1.0, 0.92, along);
+  float ends = smoothstep(0.0, 0.05, along) * smoothstep(1.0, 0.92, along);
+  ink = (1.0 - smoothstep(0.1, 0.9, w + n * 0.25)) * reveal * ends;
+  // Afterglow: a glowing seam with embers along the cut (uHeat) that cools into pale ash (uAsh), not a dark smear.
+  float seam = (1.0 - smoothstep(0.0, 0.2 + 0.12 * n, w)) * reveal * ends;
+  float speck = smoothstep(0.66, 0.86, noise(vec2(along * 150.0, p.y * 7.0) + vec2(uTime * 0.7, 0.0)));
+  heatL = seam * uHeat * (0.5 + 0.5 * n);
+  heatC = seam * speck * uHeat * 0.9;
+  ashL = (1.0 - smoothstep(0.04, 0.8, w + (n - 0.5) * 0.3)) * reveal * ends * (0.45 + 0.55 * fbm(p * vec2(26.0, 3.0)));
 #elif defined(ARROW)
   float along = (p.x + 1.0) * 0.5;
   float w = abs(p.y);
@@ -1309,11 +1400,52 @@ void main() {
   float ringO2 = band(r - 0.84, 0.01);
   float ringI = band(r - 0.6, 0.014);
   float rune = runes(ang, r, 0.72, 0.045, 36.0, uTime * 0.35);
-  float tri = band(sdTri(rot2(p, t0), 0.5), 0.016) + band(sdTri(rot2(p, -t0 + PI), 0.5), 0.016);
-  float heart = 1.0 - smoothstep(0.0, 0.3, r);
-  light = (ringO + ringO2 * 0.7 + ringI * 0.8 + rune * 0.9) * revealArc + tri * 0.75 * uReveal + heart * 0.35 * uReveal;
-  core = ringO * revealArc * 0.8 + tri * 0.45 * uReveal;
-  ink = (1.0 - smoothstep(0.85, 1.0, r)) * 0.4;
+  // The skill's own glyph (the same white hexagram under every skill read as one skill, round 2).
+  float gl = glyph(p, r, ang, uShape, t0) * uGlyph;
+  float heart = (1.0 - smoothstep(0.0, 0.3, r)) * (uShape > 5.5 ? 0.25 : 1.0);
+  light = (ringO + ringO2 * 0.7 + ringI * 0.8 + rune * 0.9) * revealArc + gl * 0.8 * uReveal + heart * 0.35 * uReveal;
+  core = ringO * revealArc * 0.6 + gl * 0.5 * uReveal;
+  ink = (1.0 - smoothstep(0.85, 1.0, r)) * 0.4 + (uShape > 5.5 ? (1.0 - smoothstep(0.0, 0.16, r)) * 0.5 * uGlyph : 0.0);
+#elif defined(CRACK)
+  // Ground fissures under a heavy strike (L6): jagged rays from the heart and a web of cell walls warped by
+  // noise, reaching out to uReveal of the radius; hot seams (uGlow) that cool, a dark bed (uInk) and pale dust (uAsh).
+  vec2 q = p * 5.0 + vec2(fbm(p * 2.6), fbm(p * 2.6 + 5.2)) * 0.9;
+  vec2 ip = floor(q);
+  vec2 fp = fract(q);
+  float f1 = 8.0;
+  float f2 = 8.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = vec2(hash(ip + g), hash(ip + g + 17.3));
+      float d = length(g + o - fp);
+      if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+    }
+  }
+  float wall = 1.0 - smoothstep(0.0, 0.07 + 0.05 * r, f2 - f1);
+  float a9 = (ang + PI) / (2.0 * PI) * 9.0;
+  float jag = (noise(vec2(r * 7.0, floor(a9))) - 0.5) * 0.55 * smoothstep(0.05, 0.3, r);
+  float sa = abs(fract(a9 + jag) - 0.5);
+  float ray = 1.0 - smoothstep(0.0, 0.024 / max(r, 0.08) + 0.012, sa);
+  float spread = 1.0 - smoothstep(uReveal * 0.96 - 0.1, uReveal * 0.96, r);
+  float outer = 1.0 - smoothstep(0.72, 0.97, r);
+  float crack = max(wall * smoothstep(0.1, 0.3, r) * (0.45 + 0.55 * (1.0 - r)), ray) * spread * outer;
+  light = crack * (0.55 + 0.45 * n);
+  core = crack * crack * (1.0 - 0.6 * r);
+  ink = crack + (1.0 - smoothstep(0.0, 0.85, r)) * 0.25 * spread;
+  // Pale dust round the fissures, never over them (the cracks stay dark).
+  ashL = (1.0 - smoothstep(0.15, 0.95, r)) * spread * (0.35 + 0.65 * fbm(p * 8.0)) * 0.6 * (1.0 - crack);
+#elif defined(PRESENCE)
+  // The caster's ground ring (presence P7, game-hero-presence-vfx): a thin antialiased ring, three slow arc marks
+  // turning (9 s a turn), a soft falloff and a dark backing so it reads on pale stone; never red, soft-edged.
+  float aa = max(fwidth(r) * 1.3, 0.008);
+  float ringL = 1.0 - smoothstep(0.0, aa + 0.012, abs(r - 0.8));
+  float fall = exp(-abs(r - 0.8) * 10.0) * 0.32;
+  float a3 = mod(ang - uTime * 0.7 + PI, 2.0 * PI / 3.0);
+  float marks = (1.0 - smoothstep(0.0, aa + 0.01, abs(r - 0.66))) * smoothstep(0.05, 0.14, a3) * (1.0 - smoothstep(0.62, 0.74, a3));
+  light = (ringL + fall + marks * 0.55) * revealArc;
+  core = ringL * 0.3 * revealArc;
+  ink = (1.0 - smoothstep(0.45, 0.95, r)) * 0.55;
 #else
   // RING: a thin expanding ring (uReveal = radius 0..1).
   float d = r - uReveal * 0.95;
@@ -1326,13 +1458,15 @@ void main() {
 #if defined(LINE) || defined(ARROW)
   edge = 1.0;
 #endif
-  float la = clamp(light * uGlow, 0.0, 6.0) * edge;
-  float ca = clamp(core * uGlow * 2.0, 0.0, 6.0) * edge;
+  float la = clamp(light * uGlow + heatL, 0.0, 6.0) * edge;
+  float ca = clamp(core * uGlow * 2.0 + heatC * 2.0, 0.0, 6.0) * edge;
   vec3 rgb = uColor * min(la, 1.4) + uCore * ca;
   float inkA = clamp(ink * uInk, 0.0, 1.0) * edge;
-  // Premultiplied over: light adds, ink darkens.
-  float a = clamp(inkA, 0.0, 1.0) * uFade;
-  gl_FragColor = vec4(rgb * uFade, a);
+  float ashA = clamp(ashL * uAsh, 0.0, 0.8) * edge;
+  // Premultiplied over: light adds, ink darkens, ash (pale grey) lies over the ink.
+  vec3 ashC = vec3(0.3, 0.31, 0.33) * ashA;
+  float a = clamp(inkA + ashA * (1.0 - inkA), 0.0, 1.0) * uFade;
+  gl_FragColor = vec4((rgb + ashC) * uFade, a);
 }`;
 
 /** A flat plane on the ground with a sigil shader. */
@@ -1348,6 +1482,10 @@ export class GroundSigil {
     uPhase: { value: number };
     uColor: { value: THREE.Color };
     uCore: { value: THREE.Color };
+    uShape: { value: number };
+    uGlyph: { value: number };
+    uHeat: { value: number };
+    uAsh: { value: number };
   };
   /**
    * Spiral rotation speed (rad/s), integrated into uPhase by `tick`: a speed
@@ -1355,6 +1493,9 @@ export class GroundSigil {
    * step 3), and blades riding the pattern read the same phase.
    */
   spin = 0;
+  /** Fade-out in progress (fadeOutEased): seconds since it began (−1 none), and the fade it began from. */
+  private outT = -1;
+  private out0 = 0;
 
   constructor(kind: SigilKind, sizeX: number, sizeZ: number, colour: string, core: string) {
     this.uniforms = {
@@ -1367,6 +1508,10 @@ export class GroundSigil {
       uPhase: { value: 0 },
       uColor: { value: new THREE.Color(colour) },
       uCore: { value: new THREE.Color(core) },
+      uShape: { value: 0 },
+      uGlyph: { value: 1 },
+      uHeat: { value: 0 },
+      uAsh: { value: 0 },
     };
     const defines: Record<string, string> = {};
     defines[kind.toUpperCase()] = "";
@@ -1395,12 +1540,46 @@ export class GroundSigil {
   place(x: number, z: number, yaw = 0): void {
     this.mesh.position.set(x, 0.02, z);
     this.mesh.rotation.set(-Math.PI / 2, 0, yaw);
+    this.mesh.scale.set(1, 1, 1);
     this.mesh.visible = true;
+    this.outT = -1;
   }
 
   hide(): void {
     this.mesh.visible = false;
     this.uniforms.uFade.value = 0;
+    this.outT = -1;
+    this.mesh.scale.set(1, 1, 1);
+  }
+
+  /**
+   * Fades the sigil out over `dur` s with an eased alpha (smoothstep from the
+   * fade it shows now) and a slight swell of its size (× 1 + `grow`), then
+   * hides it; call once a frame until it returns false (hidden). Round 2:
+   * sigils used to fade linearly or drop in a frame.
+   */
+  fadeOutEased(dt: number, dur = 0.3, grow = 0.06): boolean {
+    if (!this.mesh.visible) return false;
+    if (this.outT < 0) {
+      this.outT = 0;
+      this.out0 = this.uniforms.uFade.value;
+    }
+    this.outT += dt;
+    const u = Math.min(1, this.outT / dur);
+    const e = u * u * (3 - 2 * u);
+    if (u >= 1) {
+      this.hide();
+      return false;
+    }
+    this.uniforms.uFade.value = this.out0 * (1 - e);
+    const s = 1 + grow * e;
+    this.mesh.scale.set(s, s, 1);
+    return true;
+  }
+
+  /** True while fadeOutEased runs. */
+  get fadingOut(): boolean {
+    return this.outT >= 0;
   }
 
   tick(dt: number): void {

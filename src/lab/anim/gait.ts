@@ -25,6 +25,8 @@ export interface GaitInfo {
   speed: number;
   stride: number;
   phase0: number;
+  /** The left foot's touch-down after `phase0` (its most forward point): the front-foot contact a landing holds. */
+  contact0: number;
   shiftM: number;
 }
 
@@ -38,6 +40,8 @@ export interface GaitFeet {
 
 const RATE = 120;
 const PLANT_M = 0.045;
+/** A foot this close to its standing height has touched down (m). */
+const CONTACT_M = 0.015;
 
 /**
  * Measures the gait of looping `clip` and, when `stabilize`, rewrites its
@@ -84,6 +88,15 @@ export function analyseGait(clip: THREE.AnimationClip, rig: Rig, root: THREE.Obj
         mostFwd = a.z;
         td = k;
       }
+    }
+  }
+  // The left foot's touch-down after its most forward point (review: a dash landing held phase0, a foot in the air).
+  let contact = td;
+  for (let j = 0; j < n; j += 1) {
+    const k = (td + j) % n;
+    if (rel[0]![k]! <= CONTACT_M) {
+      contact = k;
+      break;
     }
   }
   // The planted foot's mean direction over the ground frames (a back step plants feet moving forward).
@@ -207,5 +220,5 @@ export function analyseGait(clip: THREE.AnimationClip, rig: Rig, root: THREE.Obj
   const forward = mz;
   const right = -mx;
   const speed = Math.hypot(forward, right);
-  return { forward, right, speed, stride: speed * dur, phase0: td / n, shiftM };
+  return { forward, right, speed, stride: speed * dur, phase0: td / n, contact0: contact / n, shiftM };
 }

@@ -84,6 +84,12 @@ export class SpringChains {
   private readonly centerPrev = new THREE.Matrix4();
   enabled = true;
 
+  /**
+   * Multiplies each joint's trail share and the per-step trail clamp (1 normally): the dash raises it so the tail
+   * streams behind the glide (motion round 2), within each joint's cone limit.
+   */
+  trailBoost = 1;
+
   constructor(private readonly center: THREE.Object3D) {}
 
   /** A chain parent → child; the last bone's tip is `tipLength` along its +Y (the Blender bone axis). */
@@ -189,8 +195,9 @@ export class SpringChains {
         _w.copy(j.pos).applyMatrix4(this.centerPrev);
         _w.sub(_v);
         const l = _w.length();
-        if (l > 0.03) _w.multiplyScalar(0.03 / l);
-        _v.addScaledVector(_w, s.trail);
+        const lim = 0.03 * Math.max(1, this.trailBoost);
+        if (l > lim) _w.multiplyScalar(lim / l);
+        _v.addScaledVector(_w, Math.min(1, s.trail * this.trailBoost));
       }
       // Velocity to world, a damped spring to the animated tip, gravity (semi-implicit Euler).
       _w.copy(j.vel).applyQuaternion(_cq);

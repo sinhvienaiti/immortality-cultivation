@@ -1,7 +1,8 @@
 /**
  * The skills lab's hit feel (dev-only, never built; MOTION_PLAN step 3 item
- * 11, appendix B #20 and #23): a camera kick on a damped spring fed velocity
- * impulses, a hit-stop that counts part frames and eases back to full speed,
+ * 11, appendix B #20 and #23; round 2 impact lane): a camera kick on a damped
+ * spring fed velocity impulses, a camera shake per strike that dies in
+ * ~120 ms, a hit-stop that counts part frames and eases back to full speed,
  * and the lab's own impact lights, so a new flash elsewhere never drags a
  * lit spot across the ground (the kit stage has one impact light that jumps
  * to each new flash at full strength; src/kit is not edited, D44, see
@@ -74,6 +75,69 @@ export class CameraKick {
 }
 
 /**
+ * Camera shake (round 2 "weight"): a strike adds an amplitude in metres
+ * (0.1–0.2 m at the play camera, scaled by the quality tier: Low ×0.5,
+ * Medium ×0.75), which dies exponentially (e-fold 40 ms: ~5 % left at 120 ms).
+ * The offset moves along the camera's right and up axes with two sums of
+ * sines at 17–37 Hz and fixed phases, so a capture on the fixed clock repeats
+ * exactly. Stacked strikes take the larger amplitude plus a quarter of the
+ * smaller one, capped at `maxM`. Runs on real time (through a hit-stop: the
+ * world freezes, the camera rings). No allocation per frame.
+ */
+export class CameraShake {
+  x = 0;
+  y = 0;
+  z = 0;
+  private amp = 0;
+  private t = 0;
+  private readonly right = new THREE.Vector3();
+  private readonly up = new THREE.Vector3();
+
+  constructor(
+    private readonly tierScale = 1,
+    private readonly decayS = 0.04,
+    private readonly maxM = 0.24,
+  ) {}
+
+  add(metres: number): void {
+    const a = metres * this.tierScale;
+    this.amp = Math.min(this.maxM, Math.max(this.amp, a) + 0.25 * Math.min(this.amp, a));
+  }
+
+  /** Steps the shake and writes the world offset (x, y, z) along the camera's own axes. */
+  update(dt: number, camera: THREE.Camera): void {
+    this.t += dt;
+    this.amp *= Math.exp(-dt / this.decayS);
+    if (this.amp < 2e-4) {
+      this.amp = 0;
+      this.x = this.y = this.z = 0;
+      return;
+    }
+    const t = this.t;
+    const TAU = Math.PI * 2;
+    const n1 = 0.62 * Math.sin(TAU * 19 * t + 0.7) + 0.38 * Math.sin(TAU * 31 * t + 2.1);
+    const n2 = 0.62 * Math.sin(TAU * 23 * t + 1.3) + 0.38 * Math.sin(TAU * 37 * t + 4.2);
+    this.right.setFromMatrixColumn(camera.matrixWorld, 0);
+    this.up.setFromMatrixColumn(camera.matrixWorld, 1);
+    const a = this.amp;
+    this.x = (this.right.x * n1 + this.up.x * n2 * 0.8) * a;
+    this.y = (this.right.y * n1 + this.up.y * n2 * 0.8) * a;
+    this.z = (this.right.z * n1 + this.up.z * n2 * 0.8) * a;
+  }
+
+  /** The amplitude now (m), for checks. */
+  get level(): number {
+    return this.amp;
+  }
+
+  reset(): void {
+    this.amp = 0;
+    this.t = 0;
+    this.x = this.y = this.z = 0;
+  }
+}
+
+/**
  * Hit-stop: world time runs at `slow` while a stop holds, counted to the part
  * of a frame (a 30 ms stop is 30 ms at 60 or 120 Hz, not 2 or 4 whole
  * frames), then eases back to full speed over `exitS` (smoothstep) instead of
@@ -119,6 +183,16 @@ export class HitStop {
 
   get active(): boolean {
     return this.left > 0;
+  }
+
+  /**
+   * A new release cuts a stop still holding, with no exit ramp (review fix,
+   * round 2): the player's input never waits on a stop. A 50–83 ms stop held
+   * a release's body 100 ms after its last key in lab-stress (gate 50 ms).
+   */
+  cut(): void {
+    this.left = 0;
+    this.exitAge = this.exitS;
   }
 
   reset(): void {

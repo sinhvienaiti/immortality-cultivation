@@ -96,7 +96,7 @@ interface Leg {
 const LOCK_ON_M = 0.045;
 const LOCK_OFF_M = 0.06;
 const FADE_HALFLIFE = 0.07;
-const STEP_S = 0.34;
+const STEP_S = 0.3;
 /**
  * A step lifts over the first STEP_RISE of its time and sets down over the last; it crosses between
  * STEP_ACROSS and 1 − STEP_ACROSS (the foot already 4 cm up), overlapping both, so the foot travels on an
@@ -108,8 +108,11 @@ const STEP_ACROSS = 0.22;
 const STEP_LIFT = 0.048;
 const STEP_YAW = (35 * Math.PI) / 180;
 const STEP_DRIFT = 0.1;
-/** The second foot may start once the first is this far through its step. */
-const STEP_OVERLAP = 0.6;
+/**
+ * The second foot may start once the first is this far through its step: late enough that one foot is always
+ * planted (motion round 2: at 0.6 both feet were in the air for ~8 frames of each step of a 180° turn).
+ */
+const STEP_OVERLAP = 0.88;
 /** Standing this long before a drift step (the inertialization settles first). */
 const STAND_DELAY_S = 0.12;
 /** Moving: a lock further than this from the clip foot lets go (a run's stance speed is not constant, so the offset swells mid-stance). */
@@ -275,6 +278,13 @@ export class FootLock {
     }
   }
 
+  /** The lowest captured clip foot's height over its standing height (m, ankle or ball): after `capture`. */
+  clearance(): number {
+    let c = Infinity;
+    for (const L of this.legs) c = Math.min(c, L.a0.y - L.standA, L.b0.y - L.standB);
+    return c;
+  }
+
   /**
    * Locks, steps and solves the legs on fresh world matrices (after the
    * layers). `rootX, rootZ, yaw`: the shown root and its heading (rad); `ahead`: the turn still to come
@@ -333,6 +343,14 @@ export class FootLock {
       if (L.stepT >= 0) {
         L.stepT += dt;
         const u = Math.min(1, L.stepT / STEP_S);
+        // A turn asked for during the step (a new facing): the landing spot follows it while the foot is still up,
+        // so it does not land where the old turn wanted and slip at once out of reach (motion round 2).
+        if (u < 0.75) {
+          const k = 1 - Math.exp(-dt / 0.05);
+          L.toX += (goalX - L.toX) * k;
+          L.toZ += (goalZ - L.toZ) * k;
+          L.toYaw += wrapPi(clipYaw + ahead - L.toYaw) * k;
+        }
         // Up first, across while up, down last; the heading turns over the whole step (a pivot at either end).
         // The landing spot is fixed when the step starts, so the body turning on does not drag it.
         const s = smoothstep(STEP_ACROSS, 1 - STEP_ACROSS, u);
@@ -377,7 +395,10 @@ export class FootLock {
         const d2 = L.offX * L.offX + L.offZ * L.offZ;
         if (mode === "stand") {
           const other = legs[1 - i];
-          const busy = other !== undefined && other.stepT >= 0 && other.stepT < STEP_S * STEP_OVERLAP;
+          // One foot always bears the weight: no step while the other foot is up (stepping early, or still in the air
+          // after a dash's braking step), unless this foot cannot be held at all.
+          const otherUp = other !== undefined && !other.locked && other.stepT < 0 && !this.overreach(L, L.a0.x + L.offX, L.a0.y, L.a0.z + L.offZ, OVERREACH);
+          const busy = (other !== undefined && other.stepT >= 0 && other.stepT < STEP_S * STEP_OVERLAP) || otherUp;
           const gx = goalX - (L.a0.x + L.offX);
           const gz = goalZ - (L.a0.z + L.offZ);
           const turning = Math.abs(ahead) > STEP_YAW && gx * gx + gz * gz > 0.05 * 0.05;

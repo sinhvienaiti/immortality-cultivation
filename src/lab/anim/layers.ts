@@ -1,12 +1,11 @@
 /**
  * Procedural layers on top of the clip pose (CHARACTER_ANIMATION §5.6,
  * MOTION_PLAN steps 2.7 and 2.10, appendix C §2.3, §2.6, §2.9): breathing,
- * the wind-up coil (the torso turns away from the strike as the word is
- * typed and springs through on the release: anticipation and follow-through),
- * release recoil, hit flinch (directional spring + the Hit clip as an
- * upper-body additive), lean into turns and starts, the dash crouch, and the
- * spring look-at (head 0.6, neck 0.4 of the clamped angle, spine_03 0.2 of
- * the rest). Rotations are applied in world space (L' = P⁻¹·d·P·L), so the
+ * release recoil, the Hit clip as a light upper-body additive, lean into
+ * turns and starts, the acting's body pose (acting.ts: pelvis drop with a hip
+ * hinge, torso twist and lean, side lean, the hit stagger on the head), and
+ * the spring look-at (head 0.6, neck 0.4 of the clamped angle, spine_03 0.2
+ * of the rest). Rotations are applied in world space (L' = P⁻¹·d·P·L), so the
  * rig's local axes do not matter. No allocation per frame.
  */
 import * as THREE from "three";
@@ -20,9 +19,22 @@ const HIT_OUT = 0.25;
 /** Look-at clamp (td_lookAt in lam.glb: past ~25° the hood rim stretches). */
 const LOOK_MAX = 20 * DEG;
 const LOOK_SPINE_MAX = 15 * DEG;
-/** Wind-up coil at full charge: torso turn and lean back (deg). */
-const COIL_DEG = 30;
-const COIL_BACK_DEG = 6;
+/** The Hit clip under the acting's directional stagger (round 2: the stagger reads, the clip adds texture). */
+const HIT_WEIGHT = 0.3;
+/** Hip hinge per metre of pelvis drop (deg/m): a 5 cm crouch tips the pelvis 6° forward. */
+const HINGE_DEG_PER_M = 120;
+/** Share of the acting lean taken at the hips (the rest bends the spine). */
+const LEAN_HIP = 0.35;
+
+/** The acting's body pose this frame (acting.ts outputs). */
+export interface ActBody {
+  crouchM: number;
+  twistDeg: number;
+  leanDeg: number;
+  sideDeg: number;
+  headPitchDeg: number;
+  headRollDeg: number;
+}
 
 const _q = new THREE.Quaternion();
 const _d = new THREE.Quaternion();
@@ -60,12 +72,6 @@ export class Layers {
   private readonly lean = new Float64Array(4);
   leanForwardGoal = 0;
   leanSideGoal = 0;
-  // Crouch (0–1) spring.
-  private readonly crouch = new Float64Array(2);
-  crouchGoal = 0;
-  // Coil (−1…1, sign = the side the torso turns to) on an underdamped spring: overshoot is the follow-through.
-  private readonly coil = new Float64Array(2);
-  coilGoal = 0;
   // Look-at: yaw, pitch springs (rad) and weight.
   private readonly look = new Float64Array(6);
   readonly lookTarget = new THREE.Vector3();
@@ -104,12 +110,9 @@ export class Layers {
   reset(): void {
     this.recoil.fill(0);
     this.lean.fill(0);
-    this.crouch.fill(0);
-    this.coil.fill(0);
-    this.coilGoal = 0;
     this.look.fill(0);
     this.hitT = -1;
-    this.leanForwardGoal = this.leanSideGoal = this.crouchGoal = this.lookWeightGoal = 0;
+    this.leanForwardGoal = this.leanSideGoal = this.lookWeightGoal = 0;
     // Idle breathing in full again (a reset during a strike left it at the strike's 0.3).
     this.breathWeight = 1;
     this.breathW[0] = 1;
@@ -142,8 +145,6 @@ export class Layers {
     underdampedSpring(this.recoil, 0, 0, 5, 0.6, dt);
     criticalSpring(this.lean, 0, this.leanForwardGoal, 0.12, dt);
     criticalSpring(this.lean, 2, this.leanSideGoal, 0.12, dt);
-    criticalSpring(this.crouch, 0, this.crouchGoal, 0.05, dt);
-    underdampedSpring(this.coil, 0, this.coilGoal, 3.2, 0.55, dt);
     criticalSpring(this.look, 4, this.lookWeightGoal, 0.15, dt);
     if (this.hitT >= 0) {
       this.hitT += dt;
@@ -156,7 +157,7 @@ export class Layers {
     const s = this.hitSampler;
     if (!s || this.hitT < 0) return;
     const dur = s.duration;
-    const w = smoothstep(0, HIT_IN, this.hitT) * (1 - smoothstep(dur - HIT_OUT, dur, this.hitT));
+    const w = HIT_WEIGHT * smoothstep(0, HIT_IN, this.hitT) * (1 - smoothstep(dur - HIT_OUT, dur, this.hitT));
     if (w <= 0) return;
     s.sample(this.hitT, this.hitQ, this.hitP);
     for (const i of this.hitBones) {
@@ -169,47 +170,46 @@ export class Layers {
     }
   }
 
-  /** World-space layers on fresh world matrices (subtrees refreshed after each bone). `fx, fz`: the facing. */
-  applyWorld(fx: number, fz: number): void {
+  /** World-space layers on fresh world matrices (subtrees refreshed after each bone). `fx, fz`: the facing; `act`: the acting pose. */
+  applyWorld(fx: number, fz: number, act: ActBody): void {
     const rx = -fz;
     const rz = fx;
     this.pelvisDrop = 0;
-    const crouch = this.crouch[0]!;
     const rec = this.recoil[0]!;
-    // Pelvis: lean (forward about the right axis, side about forward), crouch (drop), recoil push.
+    const crouch = act.crouchM;
+    // Pelvis: lean (forward about the right axis, side about forward) with the hip hinge of the crouch, drop, recoil push.
     const pelvis = this.pelvis;
     if (pelvis && pelvis.parent) {
-      const leanF = this.lean[0]! + crouch * 9;
-      const leanS = this.lean[2]!;
+      const leanF = this.lean[0]! + act.leanDeg * LEAN_HIP + Math.max(0, crouch) * HINGE_DEG_PER_M;
+      const leanS = this.lean[2]! + act.sideDeg * 0.5;
       worldQuat(pelvis.parent, _p);
       if (Math.abs(leanF) > 1e-3) rotateBoneWorld(pelvis, _p, _d.setFromAxisAngle(_h.set(rx, 0, rz), -leanF * DEG));
       if (Math.abs(leanS) > 1e-3) rotateBoneWorld(pelvis, _p, _d.setFromAxisAngle(_h.set(fx, 0, fz), leanS * DEG));
-      const drop = crouch * 0.05;
+      const drop = crouch;
       const push = rec * 0.0025;
-      if (drop > 1e-4 || Math.abs(push) > 1e-4) {
+      if (Math.abs(drop) > 1e-4 || Math.abs(push) > 1e-4) {
         // World offset (down, and along the push) into the pelvis parent's frame.
         _v.set((this.recoilF * fx + this.recoilR * rx) * push, -drop, (this.recoilF * fz + this.recoilR * rz) * push);
         const sc = pelvis.parent.matrixWorld.getMaxScaleOnAxis() || 1;
         _v.applyQuaternion(_q.copy(_p).invert()).multiplyScalar(1 / sc);
         pelvis.position.add(_v);
-        this.pelvisDrop = drop;
+        this.pelvisDrop = Math.max(0, drop);
       }
       pelvis.updateMatrixWorld(true);
     }
-    // Coil: the torso turns about up (spine_01 0.25, spine_02 0.35, spine_03 0.4 of COIL_DEG) and leans back a little.
-    const coil = this.coil[0]!;
-    if (Math.abs(coil) > 1e-3) {
-      const yaw = coil * COIL_DEG * DEG;
-      const back = -Math.abs(coil) * COIL_BACK_DEG * DEG;
-      this.turn(this.spine1, fx, fz, yaw * 0.25, back * 0.3);
-      this.turn(this.spine2, fx, fz, yaw * 0.35, back * 0.35);
-      this.turn(this.spine3, fx, fz, yaw * 0.4, back * 0.35);
+    // Twist: the torso turns about up (spine_01 0.25, spine_02 0.35, spine_03 0.4).
+    const yaw = act.twistDeg * DEG;
+    if (Math.abs(yaw) > 1e-4) {
+      this.turn(this.spine1, fx, fz, yaw * 0.25, 0);
+      this.turn(this.spine2, fx, fz, yaw * 0.35, 0);
+      this.turn(this.spine3, fx, fz, yaw * 0.4, 0);
     }
-    // Spine: breathing (pitch), recoil tilt towards the push, crouch counter-pitch.
+    // Spine: breathing (pitch), recoil tilt towards the push, the acting lean, the crouch's hunch, side lean.
     const bw = this.breathW[0]!;
     const b = Math.sin(this.breath) * bw;
-    const pitch = (b * 1.0 - rec * this.recoilF - crouch * 4) * 0.5;
-    const roll = rec * this.recoilR * 0.5;
+    const hunch = Math.max(0, crouch) * 40;
+    const pitch = (b * 1.0 - rec * this.recoilF - hunch - act.leanDeg * (1 - LEAN_HIP)) * 0.5;
+    const roll = (rec * this.recoilR + act.sideDeg * 0.5) * 0.5;
     this.tilt(this.spine2, fx, fz, pitch, roll);
     this.tilt(this.spine3, fx, fz, pitch, roll);
     // Clavicles rise a little with the in-breath.
@@ -219,6 +219,11 @@ export class Layers {
       this.tilt(this.clavR, fx, fz, 0, lift);
     }
     this.applyLook(fx, fz);
+    // The hit stagger snaps the head back (after the look, so the eyes on the attacker do not cancel it).
+    if (Math.abs(act.headPitchDeg) > 1e-3 || Math.abs(act.headRollDeg) > 1e-3) {
+      this.tilt(this.neck, fx, fz, act.headPitchDeg * 0.35, act.headRollDeg * 0.35);
+      this.tilt(this.head, fx, fz, act.headPitchDeg * 0.65, act.headRollDeg * 0.65);
+    }
   }
 
   /** Pitch (deg, + leans back) about the right axis and roll (deg, + to the right) about the facing, in world space. */
