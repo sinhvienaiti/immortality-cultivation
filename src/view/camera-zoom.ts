@@ -9,8 +9,12 @@ import type * as THREE from "three";
 import { placeCamera, type CameraFit } from "./renderer";
 
 export const ZOOM = {
-  /** Camera distance at full zoom, metres (the whole-field fit is about 4x farther, so the hero reads about 4x larger). */
-  closeDistanceM: 22,
+  /**
+   * Camera distance at full zoom, metres. At 22 m the hero was still about a tenth of the frame height in the
+   * lab (03/11/2026); at 12 m (FOV 28°: about 6 m of ground in view) the hero and the sword read about a
+   * quarter of it, the anime close view the owner asked for (D57).
+   */
+  closeDistanceM: 12,
   /** Zoom change per key press (0 = whole field, 1 = closest). */
   step: 0.2,
   /** Zoom change per wheel pixel: a 100 px mouse notch moves one step; a trackpad's small deltas add up smoothly. */
