@@ -17,7 +17,12 @@
  *   Zheng) above it, a huge faint hanzi watermark behind, a gold rule, and a
  *   red seal with the skill's hanzi stamps down at 0.42 s;
  * then the band collapses to its middle line and the skill fires. Both fonts
- * are OFL through @fontsource, the textures Kenney CC0 (THIRD_PARTY.md). Driven
+ * are OFL through @fontsource, the textures Kenney CC0 (THIRD_PARTY.md).
+ * With a two-frame painting (`CutInSpec.art`; owner 03/11: "hình nhân vật đứng
+ * im, k khẩu hình, không cử chỉ, ánh mắt không thể hiện"), a taller band
+ * shows her gathering, eyes closed; on `shoutAt` (the callout's stressed
+ * word) it cuts to the shout frame under a flash at her face, with a punch-in
+ * and a short shake. Three styles wait for the owner's pick (CUTIN_ART). Driven
  * by lab time, not CSS animations, so the fixed-step captures show the same
  * frames every run. DOM over the canvas: the 3D view and its overlays sit
  * under it; the panel stays usable (pointer-events none).
@@ -43,14 +48,60 @@ const IMG_H = 1536;
 const FACE_X = 0.5;
 const FACE_Y = 0.17;
 
-/** The band's edges at the left and right of the screen (shares of the height), open. */
-const TOP_L = 0.3;
-const TOP_R = 0.13;
-const BOT_L = 0.77;
-const BOT_R = 0.6;
+/** The band's edges (shares of the height), open: top left, top right, bottom left, bottom right. */
+type Band = readonly [number, number, number, number];
+const BAND: Band = [0.3, 0.13, 0.77, 0.6];
+/** The taller band for a two-frame painting: her head, hands and the sky swords all show. */
+const ART_BAND: Band = [0.12, 0.04, 0.9, 0.82];
 /** The wipe's run (s) and when the seal stamps (s). */
 const WIPE_S = 0.2;
 const STAMP_AT = 0.42;
+
+/** One frame of a two-frame painting: its URL, aspect and where her face sits (shares of its width and height). */
+export interface CutInFrame {
+  readonly src: string;
+  readonly aspect: number;
+  readonly face: readonly [number, number];
+}
+export interface CutInArt {
+  readonly gather: CutInFrame;
+  readonly shout: CutInFrame;
+}
+/** Where her face lands on screen (shares of the width and height). */
+const ART_FACE_X = 0.24;
+const ART_FACE_Y = 0.38;
+/** The painting is at least this wide (share of the width) and this tall (share of the height). */
+const ART_MIN_W = 1.18;
+const ART_MIN_H = 1.0;
+/** The shout's punch-in (scale at the cut), flash and shake (s, px). */
+const PUNCH = 0.07;
+const PUNCH_S = 0.14;
+const FLASH_S = 0.13;
+const SHAKE_S = 0.18;
+const SHAKE_PX = 8;
+
+/** Dev server paths (art-src is never built or committed); ChatGPT paintings, prompts beside them. */
+const CUTIN_DIR = "/art-src/skills/cutin/";
+const frame = (file: string, w: number, h: number, fx: number, fy: number): CutInFrame => ({
+  src: CUTIN_DIR + file,
+  aspect: w / h,
+  face: [fx, fy],
+});
+/** The three styles shown to the owner on 03/11: A donghua 3D, B anime cel, C ink and light. */
+export const CUTIN_ART: Readonly<Record<"a" | "b" | "c", CutInArt>> = {
+  a: {
+    gather: frame("tt-cutin-a-gather.v1-try1.png", 1916, 821, 0.285, 0.23),
+    shout: frame("tt-cutin-a-shout.v1-try1.png", 1821, 864, 0.26, 0.38),
+  },
+  b: {
+    gather: frame("tt-cutin-b-gather.v1-try1.png", 1916, 821, 0.29, 0.21),
+    shout: frame("tt-cutin-b-shout.v1-try1.png", 1823, 863, 0.3, 0.32),
+  },
+  c: {
+    gather: frame("tt-cutin-c-gather.v1-try1.png", 1836, 857, 0.3, 0.23),
+    shout: frame("tt-cutin-c-shout.v1-try1.png", 1836, 857, 0.27, 0.23),
+  },
+};
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const smooth = (t: number): number => {
@@ -70,6 +121,10 @@ export interface CutInSpec {
   readonly hanzi: string;
   /** Seconds the world holds. */
   readonly seconds: number;
+  /** A two-frame painting instead of the roster portrait. */
+  readonly art?: CutInArt;
+  /** When the shout frame cuts in (s); default 45 % of the hold. */
+  readonly shoutAt?: number;
 }
 
 /** Light streaks: start time (s), run (s), vertical place across the band (0 top … 1 bottom), length (share of width), thickness (px). */
@@ -109,6 +164,13 @@ export class CutIn {
   private readonly moteSpec: [number, number, number, number, number][] = [];
   private readonly blots: HTMLDivElement[] = [];
   private readonly blotSpec: [number, number, number, number, number][] = [];
+  /** The two-frame painting's layers: gather, shout, the flash at her face, a shade under the title. */
+  private readonly artGather: HTMLDivElement;
+  private readonly artShout: HTMLDivElement;
+  private readonly artFlash: HTMLDivElement;
+  private readonly titleShade: HTMLDivElement;
+  private readonly preloaded = new Set<string>();
+  private edges: Band = BAND;
   private t = -1;
   private spec: CutInSpec = { name: "", hanzi: "", seconds: 0.9 };
 
@@ -130,6 +192,13 @@ export class CutIn {
     // An ink-wash grain over the band (CC0 smoke), drifting the other way from the painting's push.
     this.wash = div(`position:absolute;inset:-10%;background-image:url(${GRAIN});background-size:38% auto;background-repeat:repeat;opacity:0.16;filter:brightness(0.35) sepia(0.5) hue-rotate(120deg);mix-blend-mode:screen`);
     this.band.append(this.wash);
+    // The two-frame painting fills the band under the speed lines; its top fades into the band (mask set per frame).
+    const artCss = "position:absolute;inset:0;background-repeat:no-repeat;display:none";
+    this.artGather = div(artCss);
+    this.artShout = div(artCss);
+    this.artFlash = div("position:absolute;inset:0;mix-blend-mode:screen;opacity:0;display:none");
+    this.titleShade = div("position:absolute;inset:0;background:radial-gradient(ellipse 50% 32% at 78% 80%,rgba(2,8,14,0.6),rgba(2,8,14,0) 100%);display:none");
+    this.band.append(this.artGather, this.artShout, this.artFlash, this.titleShade);
     for (let k = 0; k < SPEED_N; k += 1) {
       const thick = rnd() < 0.3 ? 2 : 1;
       this.speedSpec.push([0.06 + 0.88 * rnd(), 0.18 + 0.3 * rnd(), thick, 2.4 + 2.2 * rnd(), rnd()]);
@@ -207,9 +276,29 @@ export class CutIn {
     return this.t;
   }
 
+  /** Starts decoding a painting's frames, so its first cut-in never shows an empty band. */
+  preload(art: CutInArt): void {
+    for (const f of [art.gather, art.shout]) {
+      if (this.preloaded.has(f.src)) continue;
+      this.preloaded.add(f.src);
+      const img = new Image();
+      img.src = f.src;
+      void img.decode().catch(() => undefined);
+    }
+  }
+
   start(spec: CutInSpec): void {
     this.spec = spec;
     this.t = 0;
+    const art = spec.art;
+    this.edges = art ? ART_BAND : BAND;
+    if (art) {
+      this.preload(art);
+      this.artGather.style.backgroundImage = `url(${art.gather.src})`;
+      this.artShout.style.backgroundImage = `url(${art.shout.src})`;
+    }
+    for (const d of [this.artGather, this.artShout, this.artFlash, this.titleShade]) d.style.display = art ? "block" : "none";
+    this.portrait.style.display = art ? "none" : "block";
     this.hanzi.textContent = spec.hanzi;
     this.watermark.textContent = spec.hanzi;
     this.name.textContent = spec.name;
@@ -240,11 +329,36 @@ export class CutIn {
     this.root.style.display = "none";
   }
 
+  /**
+   * Places one painting frame: her face at (ART_FACE_X, ART_FACE_Y), scaled by `push` about it and raised by `rise`
+   * (share of the height); it always covers the band's width and bottom, and its top fades into the band. Returns
+   * her face on screen (px).
+   */
+  private placeArt(el: HTMLDivElement, f: CutInFrame, push: number, rise: number, W: number, H: number, bandBot: number): [number, number] {
+    const w = Math.max(ART_MIN_W * W, ART_MIN_H * H * f.aspect) * push;
+    const h = w / f.aspect;
+    const fx = ART_FACE_X * W;
+    const fy = (ART_FACE_Y - rise) * H;
+    const x = Math.min(0, Math.max(W - w, fx - f.face[0] * w));
+    const y = Math.max(bandBot - h, fy - f.face[1] * h);
+    el.style.backgroundSize = `${w}px ${h}px`;
+    el.style.backgroundPosition = `${x}px ${y}px`;
+    const m = `linear-gradient(180deg,rgba(0,0,0,0) ${y}px,#000 ${y + 0.07 * H}px)`;
+    el.style.setProperty("-webkit-mask-image", m);
+    el.style.setProperty("mask-image", m);
+    return [x + f.face[0] * w, y + f.face[1] * h];
+  }
+
   private draw(): void {
     const T = this.spec.seconds;
     const t = this.t;
     const W = innerWidth;
     const H = innerHeight;
+    const [TOP_L, TOP_R, BOT_L, BOT_R] = this.edges;
+    const art = this.spec.art;
+    const shoutAt = this.spec.shoutAt ?? 0.45 * T;
+    /** Seconds since the shout frame cut in (negative before). */
+    const since = art ? t - shoutAt : -1;
     // Open at once to its full height (the wipe reveals it); close over the last 0.14 s to its middle line.
     const close = smooth((t - (T - 0.14)) / 0.14);
     const open = 1 - close;
@@ -256,7 +370,11 @@ export class CutIn {
     const br = midR + (BOT_R - midR) * open;
     const slide = (1 - easeOut(t / 0.2)) * -3 + close * 5;
     this.band.style.clipPath = `polygon(0% ${tl * 100}%, 100% ${tr * 100}%, 100% ${br * 100}%, 0% ${bl * 100}%)`;
-    this.band.style.transform = `translateX(${slide}%)`;
+    // The cut to the shout shakes the band briefly (deterministic: lab time).
+    const shake = since >= 0 && since < SHAKE_S ? SHAKE_PX * (1 - since / SHAKE_S) : 0;
+    const shx = shake * Math.sin(since * 2 * Math.PI * 22);
+    const shy = 0.6 * shake * Math.cos(since * 2 * Math.PI * 27);
+    this.band.style.transform = `translateX(${slide}%) translate(${shx}px, ${shy}px)`;
     // The ink-splash wipe: a soft wipe left to right whose edge is torn by splatter masks riding it.
     const w = easeOut(t / WIPE_S);
     const edgeX = -12 + 124 * w;
@@ -294,6 +412,22 @@ export class CutIn {
     this.portrait.style.backgroundSize = `${bgW}px ${bgH}px`;
     this.portrait.style.backgroundPosition = `${bx}px ${by}px`;
     this.portrait.style.opacity = String(smooth((t - 0.04) / 0.1));
+    if (art) {
+      const bandBot = Math.max(BOT_L, BOT_R) * H;
+      // Gathering: a slow push and a rise with the wind. Shout: a punch-in that settles, then a slow push.
+      const g = this.placeArt(this.artGather, art.gather, 1 + 0.025 * clamp01(t / shoutAt), 0.012 * clamp01(t / shoutAt), W, H, bandBot);
+      const pushS = 1 + PUNCH * (1 - easeOut(since / PUNCH_S)) + 0.03 * clamp01(since / Math.max(0.01, T - shoutAt));
+      const s = this.placeArt(this.artShout, art.shout, pushS, 0, W, H, bandBot);
+      const fadeIn = smooth((t - 0.04) / 0.1);
+      this.artGather.style.opacity = since < 0 ? String(fadeIn) : "0";
+      this.artShout.style.opacity = since < 0 ? "0" : "1";
+      this.titleShade.style.opacity = String(fadeIn);
+      // The flash sits at her face: full on its first frame, gone in FLASH_S.
+      const fl = since >= 0 && since < FLASH_S ? Math.pow(1 - since / FLASH_S, 2) : 0;
+      const [fx, fy] = since < 0 ? g : s;
+      this.artFlash.style.background = `radial-gradient(circle at ${fx}px ${fy}px,rgba(240,255,252,0.95) 0,rgba(150,236,255,0.6) ${0.12 * H}px,rgba(80,200,255,0) ${0.55 * H}px)`;
+      this.artFlash.style.opacity = String(0.9 * fl);
+    }
     // The glint: linear across, at full light through the middle of its run.
     const g = (t - 0.24) / 0.26;
     this.glint.style.opacity = g > 0 && g < 1 ? String(Math.min(1, 6.4 * g * (1 - g))) : "0";
@@ -322,7 +456,8 @@ export class CutIn {
     for (let k = 0; k < SPEED_N; k += 1) {
       const [v, ln, , sp, ph] = this.speedSpec[k]!;
       const d = this.speed[k]!;
-      const u = (ph + t * sp) % 1.6;
+      // They race faster after the shout (a time warp, so no line jumps).
+      const u = (ph + (t + (since > 0 ? 0.8 * since : 0)) * sp) % 1.6;
       const x = (1.25 - u) * W;
       d.style.width = `${ln * W}px`;
       d.style.opacity = String(0.7 * smooth(t / 0.08) * open);
@@ -349,9 +484,10 @@ export class CutIn {
     this.watermark.style.top = `${yAt(0.5, 0.5) - wz * 0.55}px`;
     this.watermark.style.transform = `rotate(${angle}rad) translateX(${0.08 * W * (1 - easeOut(t / 0.35)) - 0.05 * W * clamp01(t / T)}px)`;
     this.watermark.style.opacity = String(0.13 * smooth((t - 0.08) / 0.2) * open);
-    const nx = 0.46 * W;
+    // Over a two-frame painting the title sits low on the right, clear of her thrust hand and arm.
+    const nx = (art ? 0.5 : 0.46) * W;
     const nz = Math.round(0.062 * H);
-    const ny = yAt(0.6, 0.6) - nz * 0.5;
+    const ny = (art ? yAt(0.66, 0.86) : yAt(0.6, 0.6)) - nz * 0.5;
     const track = 1 - smooth((t - 0.12) / 0.32);
     // The title layer slides in from the right (faster than the painting: parallax) and flashes white as it lands.
     const titleSlide = 0.1 * W * (1 - easeOut((t - 0.08) / 0.26));
@@ -383,7 +519,8 @@ export class CutIn {
     // overshoot.
     // Round 3b (item 6): the seal sits past the end of the English title on its row, never over it (it covered "WAY").
     const sz = Math.round(0.082 * H);
-    const st = (t - STAMP_AT) / 0.12;
+    // With a two-frame painting the seal slams with the shout.
+    const st = (t - (art ? shoutAt + 0.05 : STAMP_AT)) / 0.12;
     const nameW = this.name.offsetWidth || 0.42 * W;
     const sx = Math.min(W - sz * 0.62, nx + nameW + sz * 0.72);
     this.seal.style.width = `${sz}px`;

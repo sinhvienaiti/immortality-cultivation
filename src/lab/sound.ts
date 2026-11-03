@@ -43,6 +43,9 @@ export const SOUND_IDS = [
   "world-climax",
   "world-close",
   "callout",
+  "callout-k2",
+  "callout-guard",
+  "callout-k4",
   "callout-k5",
   "callout-k7",
 ] as const;
