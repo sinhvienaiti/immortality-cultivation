@@ -800,3 +800,59 @@ Nguyên tắc: pha bùng giữ nguyên (khung đầu ở đỉnh, cùng tốc đ
 - Ở nhát kết, nhiều điểm lửa của các cái chết cùng lúc vẫn là những chấm vàng sáng (đã nhỏ và vàng, không còn quả cầu trắng).
 - Pool `splash` của K5 (lớp gốc trong `sword-skills.ts`, 160 ô) bỏ 7 hạt khi K5 chạy với Fire; đó là lớp của K5, ngoài phạm vi Fire, và bỏ hạt mới chứ không cắt hạt đang sống.
 - Pass méo hơi nóng dùng chung: vẫn để làm cùng Water.
+
+### Kiểm tra lại (lượt kiểm đối kháng sau phần 5)
+
+Một lượt kiểm độc lập, không tin số của phần 5: server riêng không HMR (HEAD cổng 3131; `cff975b` xuất bằng `git archive`, `node_modules`, `art-src`, `public` là symlink, có `server.fs.allow`, cổng 3132), High 1920×1080, DPR 1, cùng `PLAN=fixes`, `PLAN=linger`, `WORLD=1`, đá sáng `#d6d0c2` và đá tối `#2a2c30`. Điểm ảnh hiệu ứng là chỗ khác hơn 0,10 ở một kênh so với khung ẩn VFX; nhạt, thân, giống máu như phần 5 (HSV, độ sáng là kênh lớn nhất). Đời của từng lớp đo bằng cách vá prototype của đúng các module lab dùng (ghi `life` và `delay` của mỗi lần sinh, số bỏ và số ô còn sống bị ghi đè), số instance sống mỗi khung qua `__THREE_DEVTOOLS__`. Số liệu, tấm ảnh, video: `tmp/shots/element-fire/r3check/` (số trước lần sửa của tôi trong `prefix/`).
+
+**Lỗi rõ đã sửa:**
+
+| Commit | Lỗi | Số đo |
+|---|---|---|
+| `67b2026` | Lửa chạy chậm vẫn giật và có bóng ma: hoa sen nay chạy 8,6 khung clip một giây, mà độ phủ trộn rồi mới làm sắc nên phần sắp mất của mỗi khung clip mờ trong suốt cùng lúc ở cuối khoảng (`k1c` khung 85: các lưỡi lửa thành màn nhìn xuyên trên đá sáng, khung 86 biến mất 29 442 điểm ảnh), nhịp giật đều mỗi ~7 khung (khung 85–86, 92–93, 99–100, 106) | Giữa hai khung, độ phủ của từng điểm ảnh chuyển sang khung sau ở thời điểm riêng theo nhiễu của clip (qua hàm logistic để trải đều), màu vẫn trộn theo thời gian; chỉ pool có `setSharpen` (hoa sen, lửa đất của Fire). Đoạn hoa sen tàn (`k1c` 76–106, đá sáng): biến mất một khung lớn nhất 29 442 → 16 423 điểm ảnh, đỉnh / trung bình của độ đổi mỗi khung 1,82 → 1,50, không còn màn trong suốt. Có test. Nhịp 7 khung vẫn còn nhẹ (xem dưới) |
+
+**Đời của lửa so với `cff975b` (lời nhắn của anh):** bùng vẫn tức thì (điểm ảnh thân lửa ở khung trúng đòn đầu, camera gần, đá sáng: 29 nghìn → 123 nghìn), rồi lưu lâu hơn:
+
+| Lớp | `cff975b` | HEAD |
+|---|---|---|
+| Hoa sen va chạm phím 1 / phát chiêu / trên không / sụp khi chết | 0,67 / 0,60 / 0,49 / 0,35 s | 1,15 / 1,02 / 0,67 / 0,51 s |
+| Lửa đất / đất cháy (một đòn, nhát kết) | 1,56 / 3,4, 4,2 s | 2,94 / 5,2, 5,6 s |
+| Tàn lửa phím 1 (trung vị / lâu nhất), phím 7 (trung vị) | 1,27 / 1,90, 1,18 s | 1,58 / 2,39, 1,49 s |
+| Nhát chém lửa (khung còn hiện, camera chơi) | 67 khung (F195–261) | 86 khung (F195–280) |
+| Đường cắt: tia nóng / đường nóng chảy nhát kết / lưỡi lửa dọc đường cắt / dòng lửa thấp | 0,60 / 2,4 / ≤ 0,50 / 2,10–2,28 s | 0,85 / 3,0 / ≤ 0,80 / 2,61–2,91 s |
+| Cắm kiếm: vòng lửa trên đất / hoa sen (tính từ tham số) / vết cháy | 0,42 / 0,60 / 3,4 s | 0,62 / 0,98 / 5,2 s |
+| Vòng áp suất / khói / tro (lâu nhất) | 0,24 / 1,79 / 1,80 s | 0,30 / 2,49 / 2,20 s |
+
+- Điểm ảnh thân lửa sau đòn đầu (camera gần, đá sáng): +2 s 33 nghìn → 115 nghìn, +3 s 4 nghìn → 38 nghìn; sau nhát kết phím 7: +2 s 54 nghìn → 171 nghìn, +3 s 1,8 nghìn → 38 nghìn.
+- Ở sân phím 7 đông, hoa sen sụp khi chết ngắn nhất 0,30 s (trước 0,35 s), nhưng khung 14–15 của `fire-burst` trống nên lửa nhìn thấy vẫn bằng trước; không phải lỗi.
+- Không che sân phím 7: lúc săn, hiệu ứng phủ ≤ 4,9 % màn hình ở camera chơi (trước ≤ 4,3 %); thú và chữ số vẫn rõ (`k7-150`, `k7c-150`). Sau nhát kết F260 phủ 7,7 % (trước 4,0 %) vì nhát chém còn cháy.
+
+**Các cổng (đo trên `67b2026`):**
+
+- **Metal không đổi: đạt.** 85/85 khung giống hệt từng byte so với `cff975b` (21 khung `lab-element-parity.mjs`, 64 khung Metal của `PLAN=fixes`), cả trước và sau `67b2026`. Lần chạy parity đầu tiên ngay sau khi khởi động lại server lệch ở 21 khung (116–16 158 điểm ảnh): kịch bản chỉ chờ 1,5 s cho texture, server nguội tải chậm hơn; chạy lại trên server đã nóng thì giống hệt. Đó là lỗi của kịch bản đo, không phải của game.
+- **Fire − Metal p95: đạt.** 6 vòng xen kẽ, `RUNS=2`, 12 lượt mỗi hệ, xả GPU trước mỗi cửa sổ. Trung vị / trung bình: nghỉ +0,10 / +0,04, phím 1 +0,30 / +0,10, phím 7 săn +0,20 / +0,10, nhát kết +0,35 / −0,03, K5 +0,50 / +0,24 ms (cổng ≤ 0,85). Trước `67b2026` (cùng cách đo): −0,35 / −0,53, −0,40 / −0,64, −0,15 / −0,27, −0,40 / +0,04, +0,20 / −0,09. Lệnh vẽ Metal / Fire: 34/34, 48/44, 53/55, 51/55, 54/57.
+- **Trần 11,5 ms: đạt.** Trung vị p95 cao nhất 8,3 ms (K5 Fire; trước `67b2026` 10,5 ms, máy lúc đó tải nặng hơn). Lượt tệ nhất 11,8 ms (Metal, nhát kết), Fire 10,0 ms; trước đó Fire 12,1, Metal 11,6 ms ở nhát kết. Khung lớn nhất Fire 10,8 ms (trước 14,8 ms, lúc săn).
+- **Phím tới phát chiêu: đạt.** VFX 0 ms, thân 33 ms ở cả 8 lần phát của Fire, hai nền.
+- **Bloom: đạt.** 0 điểm ảnh NaN hay Inf ở 178 khung.
+- **Thân lửa sau tone mapping: đạt.** Sắc trung vị 22,1–35,7° (đá sáng), 21,9–35,4° (đá tối); gần đỏ cảnh báo 0 %.
+- **Phần nhạt trên đá sáng ≤ 15 % ở mọi khung phím 1 và nhát kết: đạt.** Phím 1 lớn nhất 4,6 % (`k1-006`), nhát kết 4,9 % (`k7-215`), dải lưu 5,0 %, khung đồ hoạ 7,8 % (`k7-015`). Lúc săn `k7c-090` 17,2 % (chỉ báo: vệt kiếm sông, lưỡi furnace, ngoài phạm vi).
+- **Điểm ảnh giống máu: không đọc thành máu.** Đá sáng gộp ≤ 0,84 %, lớn nhất một khung 1,5 %; đá tối gộp ≤ 2,5 % (lúc gõ), lớn nhất 3,6 % (`k1-040`, viền đỏ sẫm gần đen).
+- **Không nhảy hình: đạt.** Ở High và Ultra (phím 1, phím 7, K5), mọi pool của Fire bỏ 0 và cắt 0 sprite còn sống. Đỉnh: hoa sen 89/128, lửa đất 16/32, đất cháy 32/64, vòng 7, tro ≤ 980/1 024 (gộp cả `splash` của K5, cùng texture). Chỉ pool `splash` 160 ô của K5 (lớp gốc) bỏ 7 hạt. Ở `cff975b` pool tro 160 ô bỏ 612 vảy ở phím 7 (677 ở K5, gộp cả `splash`): đúng như phần 5 nói.
+- **Thay, không chồng: đạt.** Khi chọn Fire, 22/22 pool phát hạt của Metal (những pool có phát khi chọn Metal) im ở phím 1; ở phím 7 im 22/23, pool còn lại là 88 tia vệt kiếm sông một khung (ngoài phạm vi). Phần dùng chung: ấn và vòng dưới chân (cùng mesh, nhánh `SOLID`), kiếm, impostor kiếm.
+- **Kiểm thử và build: đạt.** `pnpm test` 738/738 (81 tệp, thêm 1 bài). Lần chạy đầu khi máy tải 18 có một bài đo giờ của `src/sim` (`beasts-stage`, 0,72 so với 0,6 ms) trượt; chạy riêng 3/3 đạt, chạy lại cả bộ 738/738. `tsc`, `pnpm build` xanh, `verify-kit` 73 tệp; `dist` vẫn `main-XrAzOVU-.js`, `swords-CpZ2rKAM.js`, không có mã lab hay Fire.
+
+**Điểm nhìn, chưa sửa (cho anh và giám khảo; ảnh trong `r3check/evidence/`):**
+
+- Nhát chém lửa: các lưỡi lửa tam giác đều nhau đọc như lưỡi cưa hay sống lưng khủng long (`k7-240`, `k7c-215`). Ở ~4 khung cuối, nó nguội thành một dải bồ hóng tối có gạch đứt rồi tắt hẳn (`k7c` 266–270): gần như nhảy hình. Ẩn lớp `fx-flame-slash` ở khung 269 thì dải đó mất.
+- Điểm lửa: ở kiếm đầu, đầu lưỡi bồ hóng mảnh cong như chân nhện (`k7c-090`); khi nguội thành sao biển hay chong chóng cam (`k7c-260`); ở chỗ cắm kiếm, lõi vàng vẫn toả thành một quả cầu sáng mềm ~90 điểm ảnh ở camera gần (ảnh tĩnh phím 7 F260).
+- Vòng lửa trên đất khi cắm kiếm: các cung còn lại lúc vòng vỡ là những vệt son phẳng (`#C14801`, sắc 22°) nằm trên đá, ở camera gần đọc như vệt sơn đỏ hay vệt máu (`k7c-240`; ẩn lớp vòng thì mất).
+- Lửa đất ở pha tàn là vòm cam phẳng có đáy thẳng, hai vòm chồng nhau như lát cam (`k1c-150`). Trên đá tối, đất cháy đọc như vũng nâu sáng hơn nền.
+- Hoa sen lúc tàn: lưỡi lửa cuối nguội thành bóng lửa nâu gỉ, hơi xỉn (`k7c-150`).
+- Sau `67b2026`, hoa sen chạy chậm vẫn có nhịp nhẹ mỗi ~7 khung (đỉnh / trung bình 1,50; trước 1,82). Mượt hẳn thì cần clip có nhiều khung hơn hoặc nội suy chuyển động giữa hai khung.
+
+**Video và ảnh (cho điều phối, chưa gửi anh):**
+
+- `tmp/shots/element-fire/r3check/fire-r3-play.mp4`: 14,3 s, camera chơi, phím 1 gõ ở 45 WPM (6 s, tới khi lửa đất tàn), rồi phím 7 (8,3 s, tới khi nhát chém và lửa đất của đường cắt tàn); H.264 1920×1080 60 fps, tốc độ thật, có tiếng (118 lượt; trung bình −12,8 dB, đỉnh −0,3 dB); 11,9 MiB.
+- `tmp/shots/element-fire/r3check/fire-r3-close.mp4`: 19,0 s; phím 1 gõ ở góc nhìn gần của người chơi, phím 1 gõ với camera gần trên chỗ trúng, phím 7 với camera gần trên sân; có tiếng (128 lượt; −13,5 / −0,1 dB); 20,2 MiB.
+- Mỗi đoạn một phụ đề tiếng Anh, không chồng nhau. `stills-r3-light-dark.jpg`: cùng bố cục với `fixes/stills-fixed-light-dark.jpg` (phím 1 F88, F180; phím 7 F186, F260; đá sáng và đá tối).
+- Khung thô của tôi đã xoá (giữ tấm, JSON, video, `evidence/`); server và bản xuất `tmp/r3check-before` đã dọn.
