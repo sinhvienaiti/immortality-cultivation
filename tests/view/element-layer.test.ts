@@ -574,6 +574,41 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(METAL.screen.frames).toBeUndefined();
   });
 
+  it("eases the charge's flame in by erosion and scale, never by turning its real alpha see-through", () => {
+    const spawns: { alpha: number | undefined; erode: number | undefined; size: number }[] = [];
+    const spy = vi.spyOn(FlipbookPool.prototype, "spawn").mockImplementation(function (this: FlipbookPool, _at, size, o) {
+      if (this.id === "fire-charge") spawns.push({ alpha: o?.alpha, erode: o?.erode, size });
+    });
+    try {
+      const cam = camera();
+      const tex = sheets();
+      const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
+      const stage = stageFor(new THREE.Group(), cam, tex, []);
+      fx.setElement(elementById("fire")!, stage);
+      for (const p of [0.2, 0.4]) {
+        fx.setCharge("k1", p, 0, -6);
+        for (let i = 0; i < 6; i += 1) {
+          stage.begin();
+          fx.update(1 / 60);
+          stage.update(1 / 60);
+        }
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    expect(spawns.length).toBeGreaterThan(4);
+    for (const s of spawns) expect(s.alpha ?? 1).toBe(1);
+    // The first frames show it part-eroded, then it fills in.
+    expect(spawns[0]!.erode!).toBeGreaterThan(0.3);
+    expect(spawns[spawns.length - 1]!.erode!).toBeLessThan(spawns[0]!.erode!);
+    // The pool writes the erosion for the shader.
+    const pool = new FlipbookPool("c", "rgba", 2, 12, new THREE.Texture());
+    pool.attach({ id: "c", url: "", cols: 4, rows: 4, frames: 16, fps: 24, loop: false, mode: "rgba", aspect: 1, pivot: [0.5, 0.5], start: 0, heading: 0 }, new THREE.Texture());
+    pool.spawn(new THREE.Vector3(), 1, { erode: 0.6 });
+    pool.update(1 / 60);
+    expect((pool.mesh.geometry.getAttribute("iAge").array as Float32Array)[3]).toBeCloseTo(0.6, 5);
+  });
+
   it("a ribbon pool swaps to the flame look and back without touching its ribbons", () => {
     const pool = new RibbonPool(4, 8, new THREE.Texture());
     const light = pool.mesh.material;

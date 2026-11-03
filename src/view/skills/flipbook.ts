@@ -212,7 +212,7 @@ attribute vec3 iPos;
 attribute vec4 iData;
 attribute vec4 iColor;
 attribute vec4 iDir;
-attribute vec3 iAge;
+attribute vec4 iAge;
 attribute vec2 iLift;
 uniform vec2 uPivot;
 uniform float uAspect;
@@ -224,7 +224,7 @@ varying vec3 vTint;
 varying vec3 vWorld;
 varying float vGround;
 varying float vOcclude;
-varying vec3 vAge;
+varying vec4 vAge;
 void main() {
   vUv = uv;
   vAge = iAge;
@@ -282,7 +282,7 @@ varying vec3 vTint;
 varying vec3 vWorld;
 varying float vGround;
 varying float vOcclude;
-varying vec3 vAge;
+varying vec4 vAge;
 ${NOISE_GLSL}
 ${SOFT_GLSL}
 vec2 vxCell(float f, vec2 uv) {
@@ -312,6 +312,13 @@ void main() {
     // RGBA, straight alpha: premultiply each frame, then crossfade (a straight crossfade fringes at the edges).
     vec3 pm = mix(t0.rgb * t0.a, t1.rgb * t1.a, w);
     float a = mix(t0.a, t1.a, w);
+    if (vAge.w > 0.0) {
+      // Eased in (or held part-shown) by erosion, thin parts first: its alpha keeps its matte, never see-through.
+      float thrE = vAge.w * 1.05 - 0.03;
+      float keepE = smoothstep(thrE, thrE + 0.05, a + (n - 0.5) * 0.2);
+      pm *= keepE;
+      a *= keepE;
+    }
     if (burn > 0.0) {
       float thr = burn * 1.05 - 0.03;
       float keep = smoothstep(thr, thr + 0.04, a + (n - 0.5) * 0.18);
@@ -404,6 +411,11 @@ export interface FlipOptions {
   lift?: number;
   /** With `dir`: the sprite's width is this many metres along `dir` as the camera sees it (foreshortened); 0: size × aspect. */
   span?: number;
+  /**
+   * "rgba": how much of it is eroded away (0 whole … 1 gone), thin parts first, through its life: a sprite eased in
+   * (or held part-shown) keeps its matte instead of turning see-through (the alpha law; `alpha` fades it).
+   */
+  erode?: number;
 }
 
 const WHITE = new THREE.Color(1, 1, 1);
@@ -427,9 +439,9 @@ export class FlipbookPool {
   private readonly iDir: Float32Array;
   private readonly iAge: Float32Array;
   private readonly iLift: Float32Array;
-  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span */
+  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode */
   private readonly state: Float32Array;
-  private static readonly STRIDE = 32;
+  private static readonly STRIDE = 33;
   private cursor = 0;
   live = 0;
 
@@ -444,7 +456,7 @@ export class FlipbookPool {
     this.iData = new Float32Array(capacity * 4);
     this.iColor = new Float32Array(capacity * 4);
     this.iDir = new Float32Array(capacity * 4);
-    this.iAge = new Float32Array(capacity * 3);
+    this.iAge = new Float32Array(capacity * 4);
     this.iLift = new Float32Array(capacity * 2);
     this.state = new Float32Array(capacity * FlipbookPool.STRIDE);
     const base = new THREE.PlaneGeometry(1, 1);
@@ -456,7 +468,7 @@ export class FlipbookPool {
     geometry.setAttribute("iData", new THREE.InstancedBufferAttribute(this.iData, 4).setUsage(THREE.DynamicDrawUsage));
     geometry.setAttribute("iColor", new THREE.InstancedBufferAttribute(this.iColor, 4).setUsage(THREE.DynamicDrawUsage));
     geometry.setAttribute("iDir", new THREE.InstancedBufferAttribute(this.iDir, 4).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute("iAge", new THREE.InstancedBufferAttribute(this.iAge, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute("iAge", new THREE.InstancedBufferAttribute(this.iAge, 4).setUsage(THREE.DynamicDrawUsage));
     geometry.setAttribute("iLift", new THREE.InstancedBufferAttribute(this.iLift, 2).setUsage(THREE.DynamicDrawUsage));
     geometry.instanceCount = 0;
     const material = new THREE.ShaderMaterial({
@@ -613,6 +625,7 @@ export class FlipbookPool {
     st[o + 29] = (i * 0.618034) % 1;
     st[o + 30] = options.lift ?? 0;
     st[o + 31] = options.span ?? 0;
+    st[o + 32] = Math.min(1, Math.max(0, options.erode ?? 0));
   }
 
   /** Draws each sprite at its age (frame 0 at age 0, full alpha unless it fades in), then ages it by `dt`. */
@@ -652,9 +665,10 @@ export class FlipbookPool {
       this.iDir[n * 4 + 1] = st[o + 25]!;
       this.iDir[n * 4 + 2] = st[o + 26]!;
       this.iDir[n * 4 + 3] = st[o + 20]!;
-      this.iAge[n * 3] = k;
-      this.iAge[n * 3 + 1] = st[o + 28]!;
-      this.iAge[n * 3 + 2] = st[o + 29]!;
+      this.iAge[n * 4] = k;
+      this.iAge[n * 4 + 1] = st[o + 28]!;
+      this.iAge[n * 4 + 2] = st[o + 29]!;
+      this.iAge[n * 4 + 3] = st[o + 32]!;
       this.iLift[n * 2] = st[o + 30]!;
       this.iLift[n * 2 + 1] = st[o + 31]!;
       n += 1;

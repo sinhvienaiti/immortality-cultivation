@@ -111,7 +111,7 @@ const opts: FlipOptions = {};
 /** Resets the shared flip options to plain values (reused for every spawn, no allocation). */
 function flip(): FlipOptions {
   const o = opts;
-  o.life = o.rate = o.frame = o.until = o.rot = o.spin = o.grow = o.alpha = o.intensity = o.occlude = undefined;
+  o.life = o.rate = o.frame = o.until = o.rot = o.spin = o.grow = o.alpha = o.intensity = o.occlude = o.erode = undefined;
   o.vx = o.vy = o.vz = o.drag = o.gravity = o.ground = o.fadeIn = o.fadeOut = o.delay = o.cool = o.lift = undefined;
   o.tint = undefined;
   o.dir = undefined;
@@ -445,10 +445,11 @@ class FireLayers {
     o.life = ONE_FRAME;
     o.rate = 0;
     o.frame = Math.min(15, 1 + L * 14.5);
-    o.alpha = f.vis;
+    // It eases in by erosion and a little scale on the first keys (its real alpha keeps its matte: no see-through).
+    o.erode = 1 - f.vis;
     o.lift = 0.6;
     o.rot = this.stage.time * 2.2;
-    this.charge.spawn(v.set(h.x, h.y, h.z), (1.7 - 0.85 * L) * f.scale, o);
+    this.charge.spawn(v.set(h.x, h.y, h.z), (1.7 - 0.85 * L) * f.scale * (0.8 + 0.2 * f.vis), o);
     // The point: small and hotter with every key (the only part that blooms).
     this.dot(h.x, h.y, h.z, (0.16 + 0.22 * L) * f.scale, (0.16 + 0.22 * L) * f.scale, -1, WHITE_GOLD, (1.4 + 3 * L) * f.vis);
     // Embers sucked in from round the caster.
