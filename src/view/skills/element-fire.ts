@@ -30,6 +30,7 @@ import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
 import type { EmberPool } from "./embers";
+import type { FirePointPool } from "./fire-points";
 import type { BeamPool, SpritePool } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
 import type { HeatRingPool } from "./heat-rings";
@@ -176,6 +177,8 @@ class FireLayers {
   private readonly line: FlipbookPool;
   /** Ember dots, pinpoints and shed sparks (additive thin light). */
   private readonly motes: SpritePool;
+  /** Where a blow lands, a beast dies or a sword is planted: a white-gold core in a star of flame tongues. */
+  private readonly points: FirePointPool;
   /** The release's pressure ring (matter on soot, a thin hot line). */
   private readonly rings: HeatRingPool;
   /** A cut: a molten crescent as matter (amber-vermilion, normal blend) with a thin added white-gold core. */
@@ -249,6 +252,9 @@ class FireLayers {
     this.groundRings.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
     // Sized for key 7's busiest moment (~1,850 live at once on High, 03/11 recheck): a full pool drops new embers.
     this.embers = stage.embers(2560, 13);
+    // Key 7's river strikes land by the dozen (a point lives ~0.2 s there).
+    this.points = stage.firePoints(256, 14);
+    this.points.setRamp(lin("#120A05"), SLASH_DEEP, k3(AMBER, 0.9), CORE, k3(CHAR, 1.3));
     this.embers.setRamp(EMBER_HOT, AMBER, EMBER_ORANGE, EMBER_DIM);
   }
 
@@ -270,6 +276,24 @@ class FireLayers {
     s.g = c[1] * k;
     s.b = c[2] * k;
     this.motes.emit();
+  }
+
+  /**
+   * A point of fire at (x, y, z) (round 3: the white dot × 3–4.5 read as a smooth white ball): a white-gold core
+   * `core` m across in a star of `tongues` flame tongues reaching `reach` m, cooling and eroding over `life` s.
+   */
+  private point(x: number, y: number, z: number, reach: number, core: number, life: number, heat = 1, tongues = 9): void {
+    const s = this.points.reset();
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    // Never a big ball: its tongues reach under a metre, its core stays a point.
+    s.reach = Math.min(0.95, reach);
+    s.core = Math.min(0.3, core);
+    s.life = life;
+    s.heat = heat;
+    s.tongues = tongues;
+    this.points.emit();
   }
 
   /** An ember thrown off (x, y, z) at speed `sp` round the ground direction (dx, dz), arcing down, living `lifeK` × ~0.6 s. */
@@ -519,7 +543,7 @@ class FireLayers {
       // its white-hot root in a straight line, 03/11 check).
       o.ground = p.y - 0.55;
       this.burst.spawn(v.set(p.x, p.y - 0.55, p.z), 1.05, o);
-      this.dot(p.x, p.y, p.z, 0.7, 0.3, 0.1, CORE, 3);
+      this.point(p.x, p.y, p.z, 0.42, 0.16, 0.2, 1, 7);
       this.sparkRays(p.x, p.y, p.z, 0.9, 1.1);
     }
     return true;
@@ -592,7 +616,7 @@ class FireLayers {
     const s = big ? 1.55 : 1;
     const p = a.at;
     // Burst at once: a white-gold pinpoint and the pressure ring at the hand on the key's frame.
-    this.dot(p.x, p.y, p.z, 0.95 * s, 0.5 * s, 0.1, WHITE_GOLD, 4.2);
+    this.point(p.x, p.y, p.z, 0.62 * s, 0.22 * s, 0.24, 1, 9);
     const r = this.rings.reset();
     r.x = p.x;
     r.y = p.y;
@@ -632,7 +656,7 @@ class FireLayers {
     // Its root fades softly in the air (no straight cut at the cell's edge).
     o.ground = p.y - 0.5;
     this.burst.spawn(v.set(p.x, p.y - 0.5, p.z), 1.0, o);
-    this.dot(p.x, p.y, p.z, 0.75, 0.35, 0.09, WHITE_GOLD, 3.6);
+    this.point(p.x, p.y, p.z, 0.5, 0.18, 0.2, 1, 8);
     this.sparkRays(p.x, p.y, p.z, 1.0, 1.2);
     return true;
   }
@@ -670,7 +694,7 @@ class FireLayers {
     const p = a.at;
     const s = a.scale * (a.big ? 1.3 : 1);
     // Pinpoint, then the lotus opens at the beast (in front of it: the beast burns), sparks and embers fly.
-    this.dot(p.x, p.y, p.z, 1.15 * s, 0.6 * s, 0.08, WHITE_GOLD, 4.5);
+    this.point(p.x, p.y, p.z, 0.75 * s, 0.26, 0.3, 1, 11);
     // It starts from a denser frame (frame 1 is a thin fringe), at the same rate.
     this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 2, 0.7, 0.48);
     this.sparkRays(p.x, p.y, p.z, 1.5 * s, 1.35);
@@ -723,7 +747,7 @@ class FireLayers {
     const R = this.stage.rand;
     const r = Math.max(0.3, a.radius);
     // It ignites from inside, the flame collapses, it falls into embers and ash.
-    this.dot(p.x, p.y, p.z, r * 2.2, r * 1.2, 0.1, WHITE_GOLD, 3);
+    this.point(p.x, p.y, p.z, Math.min(1.0, r * 1.6), 0.22, 0.34, 0.9, 9);
     const o = flip();
     o.rate = 1.1;
     o.frame = 9;
@@ -802,7 +826,7 @@ class FireLayers {
     const k = a.k;
     if (k >= 1.3) {
       // A lead blade: the lotus at the beast.
-      this.dot(a.x, a.y, a.z, 1.0 * k, 0.5 * k, 0.08, WHITE_GOLD, 4.2);
+      this.point(a.x, a.y, a.z, 0.65 * k, 0.24, 0.28, 1, 11);
       this.lotus(a.x + a.dx * 0.15, a.z + a.dz * 0.15, 1.45 * k, 1.3, 1, 0.6, 0.55);
       this.sparkRays(a.x, a.y, a.z, 1.1 * k, 1.3);
       this.emberBurst(a.x, a.y, a.z, 0.75 * k, 1.0);
@@ -810,7 +834,7 @@ class FireLayers {
       return true;
     }
     // A river sword stays thin (the field-wide river must not turn into flame soup): a pinpoint, spark rays, embers.
-    this.dot(a.x, a.y, a.z, 0.6 * k, 0.3 * k, 0.07, CORE, 3);
+    this.point(a.x, a.y, a.z, 0.38 * k, 0.13, 0.18, 0.9, 7);
     this.sparkRays(a.x, a.y, a.z, 0.65 * k, 0.8);
     for (let i = 0; i < 3; i += 1) this.ember(a.x, a.y, a.z, a.dx, a.dz, 5, 0.9, 1.1);
     return true;
@@ -990,7 +1014,7 @@ class FireLayers {
 
   /** A hero victim pinned by a lead sword: a white-gold point, a ring of fire on the ground, flame, burnt ground, embers. */
   plant(a: StreamPlantArgs): boolean {
-    this.dot(a.x, 0.35, a.z, 1.3, 0.7, 0.1, WHITE_GOLD, 3.2);
+    this.point(a.x, 0.35, a.z, 0.85, 0.26, 0.34, 1, 11);
     const r = this.groundRings.reset();
     r.x = a.x;
     r.y = 0.05;

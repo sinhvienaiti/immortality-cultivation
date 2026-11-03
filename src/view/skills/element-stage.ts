@@ -10,6 +10,7 @@ import type * as THREE from "three";
 import type { ElementHooks, ElementId, ElementKit } from "./element-kit";
 import { FlipbookPlayer, type FlipbookMeta } from "./flipbook";
 import { EmberPool } from "./embers";
+import { FirePointPool } from "./fire-points";
 import { BeamPool, Rand, RibbonPool, SpritePool, type SpriteBlend, type SpriteFacing, type SpritePoolOptions } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
 import { HeatRingPool } from "./heat-rings";
@@ -58,6 +59,7 @@ export class ElementStage {
   private readonly beamPools: BeamPool[] = [];
   private readonly emberPools: EmberPool[] = [];
   private readonly ringPools: HeatRingPool[] = [];
+  private readonly pointPools: FirePointPool[] = [];
   private readonly decalPools = new Map<string, GroundDecalPool>();
   private readonly hooks = new Map<ElementId, ElementHooks>();
 
@@ -157,6 +159,14 @@ export class ElementStage {
     return r;
   }
 
+  /** A pool of fire points (a white-gold core in a star of flame tongues, matter on its soot rim) of the kit's own (load time). */
+  firePoints(capacity: number, renderOrder = 14): FirePointPool {
+    const p = new FirePointPool(capacity, renderOrder);
+    this.pointPools.push(p);
+    this.layer.add(p.mesh);
+    return p;
+  }
+
   /** The ground decals drawn with texture `name` (null: the procedural char; one pool each, made on first use; load time). */
   decals(name: string | null, capacity = 64, renderOrder = 4): GroundDecalPool {
     const key = name ?? "";
@@ -183,6 +193,7 @@ export class ElementStage {
     for (const r of this.ribbonPools) r.update(dt, this.camera);
     for (const e of this.emberPools) e.update(dt);
     for (const r of this.ringPools) r.update(dt);
+    for (const p of this.pointPools) p.update(dt);
     for (const d of this.decalPools.values()) d.update(dt);
     this.flipbooks.update(dt);
   }
@@ -194,6 +205,7 @@ export class ElementStage {
     for (const r of this.ribbonPools) for (let i = 0; i < r.capacity; i += 1) r.kill(i);
     for (const e of this.emberPools) e.clear();
     for (const r of this.ringPools) r.clear();
+    for (const p of this.pointPools) p.clear();
     for (const d of this.decalPools.values()) d.clear();
     this.flipbooks.clear();
     this.rand.reseed(RAND_SEED);

@@ -5,9 +5,10 @@ import { METAL } from "../../src/view/skills/element-metal";
 import { ElementStage } from "../../src/view/skills/element-stage";
 import { DEFAULT_ELEMENT, elementById, elementKits, elementOrMetal } from "../../src/view/skills/elements";
 import { EmberPool } from "../../src/view/skills/embers";
+import { FirePointPool } from "../../src/view/skills/fire-points";
 import { FlipbookPool, frameAt, parseFlipbookManifest, playLife, type FlipbookMeta, type FlipOptions } from "../../src/view/skills/flipbook";
 import { GroundDecalPool } from "../../src/view/skills/ground-decals";
-import { RibbonPool } from "../../src/view/skills/fxkit";
+import { RibbonPool, SpritePool } from "../../src/view/skills/fxkit";
 import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
 import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
 import type { TargetField } from "../../src/view/skills/targets";
@@ -830,6 +831,55 @@ describe("Fire (Sword × Fire, canon D59)", () => {
       if (m?.defines && "MATTE" in m.defines) metalMatte += 1;
     });
     expect(metalMatte).toBe(0);
+  });
+
+  it("lands, kills and plants as points of fire, never smooth white balls (round 3: the dot × 3–4.5 up to 1.3 m)", () => {
+    const points: { reach: number; core: number; tongues: number }[] = [];
+    const balls: number[] = [];
+    const pe = vi.spyOn(FirePointPool.prototype, "emit");
+    const se = vi.spyOn(SpritePool.prototype, "emit");
+    pe.mockImplementation(function (this: FirePointPool) {
+      points.push({ reach: this.spec.reach, core: this.spec.core, tongues: this.spec.tongues });
+      return true;
+    });
+    se.mockImplementation(function (this: SpritePool) {
+      const sp = this.spec;
+      // A big bright added sprite: the old white ball.
+      if (Math.max(sp.size0, sp.size1) > 0.5 && Math.max(sp.r, sp.g, sp.b) > 2) balls.push(sp.size0);
+    });
+    try {
+      const cam = camera();
+      const tex = sheets();
+      const fx = new SwordSkillFx(swordHost(field(3, true), new THREE.Group(), cam), tex, "high");
+      const stage = stageFor(new THREE.Group(), cam, tex, []);
+      fx.setElement(elementById("fire")!, stage);
+      fx.cast("k1", 0, -6);
+      for (let i = 0; i < 120; i += 1) {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+      }
+      // A planted hero victim (key 7's plant hook).
+      stage.hooksOf(elementById("fire")!).stream!.plant!({ x: 1, z: -5, dx: 0, dz: -1 });
+    } finally {
+      pe.mockRestore();
+      se.mockRestore();
+    }
+    expect(balls).toEqual([]);
+    expect(points.length).toBeGreaterThan(3);
+    for (const p of points) {
+      // A small white-gold core (≤ 0.3 m) in flame tongues reaching at most ~1 m.
+      expect(p.core).toBeLessThanOrEqual(0.3);
+      expect(p.reach).toBeLessThanOrEqual(1.0);
+      expect(p.tongues).toBeGreaterThanOrEqual(5);
+    }
+    // The pool's body stays ≤ 0.9 a channel (matter), its core alone is HDR in the shader.
+    const pool = new FirePointPool(4);
+    const u = pool.mesh.material.uniforms;
+    expect(Math.max(...(u.uAmber!.value as THREE.Vector3).toArray(), ...(u.uDeep!.value as THREE.Vector3).toArray())).toBeLessThanOrEqual(0.9);
+    // A full pool drops the new point, never a live one.
+    for (let i = 0; i < 5; i += 1) pool.emit();
+    expect(pool.dropped).toBe(1);
   });
 
   it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {
