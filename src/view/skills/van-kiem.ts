@@ -33,9 +33,14 @@
  *   king; retarget on death; 18 % pick another beast near the best).
  * - F168–192: everything left climbs, spirals once and lines up into one huge
  *   diagonal stroke, the lead blades in its middle row.
- * - F192: the stroke slams down; its light sweeps out both ways over the field
- *   in 0.2 s (small beasts struck twice, elites and the king three times), the
- *   host's ultimate-strength finisher; a scar and a lit seam stay on the ground.
+ * - F192: the stroke becomes one wide tapered sword-qi slash (qi-slash.ts, round
+ *   3b item 4: hot white core, cyan body, deep-blue falloff, the authored
+ *   crescent's ragged edges), whole on its first frame; a white head runs it
+ *   from origin to tip in 0.26 s and every beast falls in that order (small
+ *   beasts struck twice, elites and the king three times), knocked along the
+ *   stroke; big beasts carry a glowing slice seam; the river swords melt into
+ *   the cut as the head passes; the slash erodes from its edges; an ink scar
+ *   and a lit seam stay on the ground.
  * - F192–207: the river folds into a point above the hero and is gone.
  * Halos stay ≤ 0.9 a channel, only thin cores are HDR. View only:
  * the sim owns damage; the host turns `struck` into its hit events. No
@@ -43,6 +48,7 @@
  */
 import * as THREE from "three";
 import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
+import { QiSlash } from "./qi-slash";
 import { RiverBody } from "./river-body";
 import { GraphicSwords, SWORD_FAR, SWORD_LEAD, SWORD_MID } from "./sword-grammar";
 import type { TargetField } from "./targets";
@@ -87,6 +93,8 @@ export interface VanKiemTextures {
   readonly scorch: THREE.Texture;
   /** A soft noise (the lead blades' ribbon trails erode with it). */
   readonly noise: THREE.Texture;
+  /** The authored slash crescent (white on black, used as alpha): the finisher's shape. Null: a computed taper. */
+  readonly slashMask?: THREE.Texture | null;
 }
 
 /** River size per tier: mid swords and far streaks (the diagnosis: ~6 leads, 16–32 readable swords, 40–100 streaks). */
@@ -130,7 +138,12 @@ const BATCH_SPAN = 3;
 const AIM_S = 0.12;
 const WOUND_S = 0.06;
 const FADE_S = 0.12;
-const SWEEP_S = 0.2;
+/** The finisher's head runs the slash from origin to tip in SWEEP_S; the slash holds, then erodes from its edges. */
+const SWEEP_S = 0.26;
+const SLASH_HOLD_S = 0.22;
+const SLASH_ERODE_S = 0.4;
+/** The slash's half width (px at 1080p) across its strip; the crescent's body fills about 40 % of it. */
+const SLASH_HALF_PX = 72;
 /** How far the cut's light runs out each way (m): past every beast of the field. */
 const SWEEP_R = 18;
 /** A lead blade rises from its wound into the crest over this (s), and one dives every LEAD_EVERY s of the hunt. */
@@ -237,6 +250,9 @@ export class VanKiemFx {
   private seedLeft = 0;
   private fillLeft = 0;
   private sweepT = -1;
+  /** The finisher's slash (round 3b, item 4) and its age (s), −1 when gone; it outlives the cast's timeline. */
+  private readonly qi: QiSlash;
+  private slashT = -1;
   /** The finisher's first blow has landed (it carries the "finisher" role; the rest of the sweep is secondary). */
   private finHit = false;
   private readonly sweepHit: Uint8Array;
@@ -280,7 +296,8 @@ export class VanKiemFx {
     this.beams = new BeamPool(160, 13);
     this.marks = new SpritePool(160, tex.ring, "add", "ground", 6, { twoSided: true });
     this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05, twoSided: true });
-    host.layer.add(this.scar.mesh, this.marks.mesh, this.body.group, this.ribbons.mesh, this.swords.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh);
+    this.qi = new QiSlash(tex.slashMask ?? null, 15);
+    host.layer.add(this.scar.mesh, this.marks.mesh, this.body.group, this.ribbons.mesh, this.swords.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh, this.qi.mesh);
     const N = this.cap;
     this.st = new Uint8Array(N);
     this.age = new Float32Array(N);
@@ -668,6 +685,7 @@ export class VanKiemFx {
     // The body opens with the river (F1–30), holds through the hunt and drains into the gather.
     const on = this.active ? smooth01((this.t - T_SEAM) / 0.35) * (1 - smooth01((this.t - T_GATHER) / 0.3)) : 0;
     this.body.update(this.pathFn, 3.3, on, this.t);
+    this.drawSlash(dt);
     this.drawSwords();
     this.ribbons.update(dt, this.host.camera);
     this.hits.update(dt);
@@ -1156,6 +1174,8 @@ export class VanKiemFx {
       p.b = (white ? CORE[2] : CYAN[2]) * 2.6;
       this.stars.emit();
     }
+    // Round 3b: the thin ground ring only under a lead blade's blow (a ring under every hit read as a stamp).
+    if (k < 1.3) return;
     const g = this.marks.spec.reset();
     g.x = x;
     g.y = 0.04;
@@ -1279,108 +1299,197 @@ export class VanKiemFx {
     seam.fadeBase = 0.05;
     seam.fadeTip = 0.05;
     this.beams.emit();
-    for (let k = 0; k < 5; k += 1) {
-      const side = k === 0 ? 0 : k <= 2 ? 1 : -1;
-      const back = k === 2 || k === 4;
-      const b = this.beams.spec.reset();
-      b.x = this.s0.x - (dx / l) * 3;
-      b.y = back ? 0.3 : 0.6;
-      b.z = this.s0.z - (dz / l) * 3;
-      b.dx = dx / l;
-      b.dy = 0;
-      b.dz = dz / l;
-      b.len0 = b.len1 = l + 6;
-      b.grow = side === 0 ? 0.05 : 0;
-      // Narrow fronts with hot cores (round 1's 3–4 m soft waves washed the field milky).
-      b.w0 = side === 0 ? 0.8 : back ? 0.55 : 0.7;
-      b.w1 = side === 0 ? 0.3 : back ? 0.8 : 0.35;
-      const lag = back ? 0.82 : 1;
-      b.vx = (this.sweepNx * side * SWEEP_R * lag) / SWEEP_S;
-      b.vz = (this.sweepNz * side * SWEEP_R * lag) / SWEEP_S;
-      b.life = side === 0 ? 0.4 : SWEEP_S + 0.08;
-      const halo = CYAN;
-      const kc = side === 0 ? 6 : back ? 3 : 4.5;
-      b.cr = CORE[0] * kc;
-      b.cg = CORE[1] * kc;
-      b.cb = CORE[2] * kc;
-      b.hr = halo[0] * (back ? 0.5 : 0.75);
-      b.hg = halo[1] * (back ? 0.5 : 0.75);
-      b.hb = halo[2] * (back ? 0.5 : 0.75);
-      b.fadeBase = 0.06;
-      b.fadeTip = 0.06;
-      this.beams.emit();
+    // Round 3b (item 4): no parallel light fronts (both judges read them as thin laser lines running into the void);
+    // one wide slash carries the cut, whole on this frame, its head running origin to tip with the deaths.
+    this.slashT = 0;
+    this.drawSlash(0);
+    // The river swords become the slash: they melt into it now (a row of them standing on it read as a fence); the
+    // lead blades stay and drive into the cut as the head passes them.
+    for (let i = HERO_N; i < this.cap; i += 1) {
+      if (this.st[i] !== S_STROKE && this.st[i] !== S_GATHER) continue;
+      this.st[i] = S_FADE;
+      this.age[i] = 0;
     }
-    // Sparks and glints thrown off the whole line.
-    for (let k = 0; k < 60; k += 1) {
-      const u = this.rand.next();
-      const p = this.stars.spec.reset();
-      p.x = this.s0.x + dx * u;
-      p.y = 0.5;
-      p.z = this.s0.z + dz * u;
-      const sd = this.rand.next() < 0.5 ? -1 : 1;
-      const sp = this.rand.range(6, 14);
-      p.vx = this.sweepNx * sd * sp;
-      p.vz = this.sweepNz * sd * sp;
-      p.vy = this.rand.range(2, 7);
-      p.gravity = -9;
-      p.drag = 2.5;
-      p.stretch = 0.04;
-      p.life = this.rand.range(0.3, 0.55);
-      p.size0 = this.rand.range(0.25, 0.45);
-      p.size1 = 0.06;
-      const white = k % 3 !== 0;
-      p.r = (white ? CORE[0] : CYAN[0]) * 3;
-      p.g = (white ? CORE[1] : CYAN[1]) * 3;
-      p.b = (white ? CORE[2] : CYAN[2]) * 3;
-      this.stars.emit();
-    }
+    // A few sparks off the slash's origin; the rest fly off its head as it runs (sweep).
+    for (let k = 0; k < 14; k += 1) this.slashSpark(this.rand.next() * 0.15);
   }
 
-  /** The sweep: the cut's light runs out both ways over SWEEP_S; each beast it passes is struck; then the fold. */
+  /** The slash's two ends in the world: from high over the far left down to the near right, past the field's beasts. */
+  private slashEnds(): { ax: number; ay: number; az: number; bx: number; by: number; bz: number } {
+    const dx = this.s1.x - this.s0.x;
+    const dz = this.s1.z - this.s0.z;
+    const l = Math.hypot(dx, dz);
+    const ux = dx / l;
+    const uz = dz / l;
+    const e = this.ends;
+    e.ax = this.s0.x - ux * 2.5;
+    e.ay = 2.8;
+    e.az = this.s0.z - uz * 2.5;
+    e.bx = this.s1.x + ux * 2.5;
+    e.by = 0.5;
+    e.bz = this.s1.z + uz * 2.5;
+    return e;
+  }
+
+  private readonly ends = { ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0 };
+
+  /** A spark thrown off the slash at `u` (0 origin, 1 tip) along it and out to either side. */
+  private slashSpark(u: number): void {
+    const e = this.slashEnds();
+    const p = this.stars.spec.reset();
+    p.x = e.ax + (e.bx - e.ax) * u;
+    p.y = e.ay + (e.by - e.ay) * u;
+    p.z = e.az + (e.bz - e.az) * u;
+    const sd = this.rand.next() < 0.5 ? -1 : 1;
+    const sp = this.rand.range(6, 13);
+    const l = Math.hypot(e.bx - e.ax, e.bz - e.az) || 1;
+    p.vx = this.sweepNx * sd * sp * 0.7 + ((e.bx - e.ax) / l) * sp * 0.6;
+    p.vz = this.sweepNz * sd * sp * 0.7 + ((e.bz - e.az) / l) * sp * 0.6;
+    p.vy = this.rand.range(1, 5);
+    p.gravity = -9;
+    p.drag = 2.5;
+    p.stretch = 0.045;
+    p.life = this.rand.range(0.25, 0.45);
+    p.size0 = this.rand.range(0.22, 0.4);
+    p.size1 = 0.05;
+    const white = this.rand.next() < 0.65;
+    p.r = (white ? CORE[0] : CYAN[0]) * 3;
+    p.g = (white ? CORE[1] : CYAN[1]) * 3;
+    p.b = (white ? CORE[2] : CYAN[2]) * 3;
+    this.stars.emit();
+  }
+
+  /** The slash as drawn: whole from its first frame, the head running with the sweep, then eroding from its edges. */
+  private drawSlash(dt: number): void {
+    if (this.slashT < 0) {
+      this.qi.hide();
+      return;
+    }
+    this.slashT += dt;
+    const t = this.slashT;
+    const run = Math.min(1, t / SWEEP_S);
+    const head = 1 - (1 - run) * (1 - run);
+    const er = smooth01((t - SWEEP_S - SLASH_HOLD_S) / SLASH_ERODE_S);
+    const fade = 1 - smooth01((t - SWEEP_S - SLASH_HOLD_S - SLASH_ERODE_S * 0.55) / (SLASH_ERODE_S * 0.45));
+    if (fade <= 0) {
+      this.slashT = -1;
+      this.qi.hide();
+      return;
+    }
+    const e = this.slashEnds();
+    // Widest on its first frames (the blow), settling a little as it holds.
+    const w = SLASH_HALF_PX * (1.12 - 0.12 * smooth01(t / 0.12));
+    this.qi.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, w, head, fade, er);
+  }
+
+  /** The head's place along the stroke (0 origin, 1 tip) after `t` s of the sweep (eased out, as drawn). */
+  private headAt(t: number): number {
+    const run = Math.min(1, t / SWEEP_S);
+    return 1 - (1 - run) * (1 - run);
+  }
+
+  /**
+   * Beast i cut by the finisher, knocked along (kx, kz): no stamp; the field flashes its body white and flings small
+   * beasts along the stroke; a big beast carries a glowing slice seam across its body along the stroke.
+   */
+  private cutReact(i: number, ux: number, uz: number, tier: number): void {
+    if (tier < 2) return;
+    const T = this.host.targets;
+    const R = T.radius(i) * 1.35 + 0.4;
+    const b = this.beams.spec.reset();
+    b.x = T.x(i) - ux * R;
+    b.y = T.midY(i) + 0.45;
+    b.z = T.z(i) - uz * R;
+    const l = Math.hypot(ux, 0.22, uz);
+    b.dx = ux / l;
+    b.dy = -0.22 / l;
+    b.dz = uz / l;
+    b.len0 = 0.2;
+    b.len1 = 2 * R;
+    b.grow = 0.05;
+    b.w0 = 0.26;
+    b.w1 = 0.26;
+    b.life = 0.65;
+    b.cr = CORE[0] * 5.5;
+    b.cg = CORE[1] * 5.5;
+    b.cb = CORE[2] * 5.5;
+    b.hr = CYAN[0] * 0.85;
+    b.hg = CYAN[1] * 0.85;
+    b.hb = CYAN[2] * 0.85;
+    b.fadeBase = 0.2;
+    b.fadeTip = 0.2;
+    this.beams.emit();
+  }
+
+  /**
+   * The sweep: the slash's head runs from origin to tip over SWEEP_S; each beast falls as the head passes its place
+   * along the stroke (the whole field, in that order), knocked along the stroke; the river swords melt into the cut
+   * as the head passes them, the lead blades drive into it; then the fold.
+   */
   private sweep(dt: number): void {
     const before = this.sweepT;
     this.sweepT += dt;
-    const k0 = Math.min(1, before / SWEEP_S);
-    const k1 = Math.min(1, this.sweepT / SWEEP_S);
-    const r0 = SWEEP_R * k0;
-    const r1 = SWEEP_R * k1;
+    const k0 = this.headAt(before);
+    const k1 = this.headAt(this.sweepT);
+    const dlx = this.s1.x - this.s0.x;
+    const dlz = this.s1.z - this.s0.z;
+    const L = Math.hypot(dlx, dlz);
+    const ux = dlx / L;
+    const uz = dlz / L;
     const T = this.host.targets;
     let first = !this.finHit;
     for (let i = 0; i < T.size; i += 1) {
       if (this.sweepHit[i] === 1 || !T.alive(i)) continue;
-      // Distance of the beast from the cut line (signed: which way the light reaches it from).
+      // Distance of the beast from the cut line (signed) and its place along it.
       const d = (T.x(i) - this.s0.x) * this.sweepNx + (T.z(i) - this.s0.z) * this.sweepNz;
-      const ad = Math.abs(d);
-      if (ad < r0 - 0.5 || ad > r1 + 0.5) continue;
+      if (Math.abs(d) > SWEEP_R + 0.5) continue;
+      const u = Math.min(1, Math.max(0, ((T.x(i) - this.s0.x) * ux + (T.z(i) - this.s0.z) * uz) / L));
+      if (u > k1 && k1 < 1) continue;
       this.sweepHit[i] = 1;
-      const nx = d < 0 ? -this.sweepNx : this.sweepNx;
-      const nz = d < 0 ? -this.sweepNz : this.sweepNz;
+      // Knocked along the stroke and a little away from the line.
+      const side = d < 0 ? -1 : 1;
+      let kx = ux * 0.8 + this.sweepNx * side * 0.55;
+      let kz = uz * 0.8 + this.sweepNz * side * 0.55;
+      const kl = Math.hypot(kx, kz) || 1;
+      kx /= kl;
+      kz /= kl;
       const tier = T.tier(i);
       const blows = tier >= 2 ? 3 : 2;
-      this.impactAt(T.x(i), T.midY(i), T.z(i), nx, nz, tier >= 2 ? 1.6 : 1.15);
+      this.cutReact(i, ux, uz, tier);
       for (let b = 0; b < blows && T.alive(i); b += 1) {
-        // The cut's light: power 1.2, past every other blow (the field flings small beasts on it).
-        const killed = T.hit(i, nx, nz, 1.2, CUT_RGB);
+        // The cut: power 1.2, past every other blow (the field flings small beasts on it).
+        const killed = T.hit(i, kx, kz, 1.2, CUT_RGB);
         this.strikes += 1;
-        this.host.struck(i, nx, nz, 1.2, first ? "finisher" : "secondary", killed);
+        this.host.struck(i, kx, kz, 1.2, first ? "finisher" : "secondary", killed);
         first = false;
         this.finHit = true;
       }
     }
-    // The stroke's swords plunge into the cut in the first 40 % of the sweep.
-    const drop = smooth01(k1 / 0.4);
+    // Sparks off the head as it runs.
+    const due = Math.round((k1 - k0) * 46);
+    for (let n = 0; n < due; n += 1) this.slashSpark(k0 + (k1 - k0) * this.rand.next());
+    // The river swords melt into the cut as the head passes them; the lead blades drive into it.
     for (let i = 0; i < this.cap; i += 1) {
       if (this.st[i] !== S_STROKE) continue;
+      const u = ((this.px[i]! - this.s0.x) * ux + (this.pz[i]! - this.s0.z) * uz) / L;
+      if (u > k1 + 0.02 && k1 < 1) continue;
+      if (i >= HERO_N) {
+        this.st[i] = S_FADE;
+        this.age[i] = 0;
+        if ((i & 3) === 0) this.glint(this.px[i]!, this.py[i]!, this.pz[i]!, 1.4);
+        continue;
+      }
       // A lead blade drives deep into the cut (its 6.4 m stands about 4.5 m out of the ground).
-      this.py[i] = this.ay[i]! + ((i < HERO_N ? 1.3 : 0.5) - this.ay[i]!) * drop;
-      this.turn(i, this.sweepNx * 0.25 + ((this.s1.x - this.s0.x) / 34.5) * 0.4, -0.88, this.sweepNz * 0.25 + ((this.s1.z - this.s0.z) / 34.5) * 0.4, this.kPlunge);
+      this.py[i] = this.py[i]! + (1.3 - this.py[i]!) * this.kPlunge;
+      this.turn(i, this.sweepNx * 0.25 + ux * 0.4, -0.88, this.sweepNz * 0.25 + uz * 0.4, this.kPlunge);
     }
     if (k1 >= 1) {
       this.sweepT = -1;
       // Fold: everything left converges on a point above the hero and is gone.
       this.host.caster(this.c);
       for (let i = 0; i < this.cap; i += 1) {
-        if (this.st[i] === S_OFF) continue;
+        // River swords already melting into the cut finish melting.
+        if (this.st[i] === S_OFF || this.st[i] === S_FADE) continue;
         this.st[i] = S_FOLD;
         this.age[i] = 0;
         this.dur[i] = (T_FOLD_END - T_FIN - SWEEP_S) * this.rand.range(0.7, 1) + 0.1;
@@ -1440,6 +1549,8 @@ export class VanKiemFx {
   reset(): void {
     this.active = false;
     this.sweepT = -1;
+    this.slashT = -1;
+    this.qi.hide();
     this.finHit = false;
     this.st.fill(S_OFF);
     this.tgt.fill(-1);

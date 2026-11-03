@@ -227,6 +227,8 @@ screen.intensity = Math.max(0, Math.min(1, Number(params.get("fx") ?? "1")));
 // The authored impact masks (round 3a, ChatGPT-made sheets of 03/11/2026, white ink on black, used as alpha): radial
 // rays and a sword-streak field on the full frames, a burst star and a slash crescent on local hits, a cracked brush
 // burst at the climax's strike. Dev assets in art-src (never shipped).
+/** The slash crescent mask: key 7's finisher slash takes its shape (round 3b, item 4). */
+let slashCrescent: THREE.Texture | null = null;
 {
   const dir = "/art-src/skills/impact-tex/";
   const mask = (name: string): THREE.Texture => {
@@ -234,7 +236,8 @@ screen.intensity = Math.max(0, Math.min(1, Number(params.get("fx") ?? "1")));
     t.colorSpace = THREE.NoColorSpace;
     return t;
   };
-  screen.setShapes({ rays: mask("radial-rays"), streaks: mask("sword-streak-field"), burst: mask("burst-star"), slash: mask("slash-crescent"), crack: mask("cracked-brush-burst") });
+  slashCrescent = mask("slash-crescent");
+  screen.setShapes({ rays: mask("radial-rays"), streaks: mask("sword-streak-field"), burst: mask("burst-star"), slash: slashCrescent, crack: mask("cracked-brush-burst") });
 }
 /** One event, every listener on the same frame (events.ts). */
 const bus = new LabBus();
@@ -497,6 +500,8 @@ bus.on((e) => {
   }
 });
 // Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.
+/** Set while key 7 lands a blow: its deaths dissolve into ink and qi motes. */
+let inkDeath = false;
 const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow, scorch: textures.scorch }, quality === "low");
 // Victim tiers (round 3a, P6): per cast of key 7 or K5, a few hero victims launched and pinned by a planted sword,
 // a shared hop for the secondary ones, the rim flash and dissolve for the rest; a hero's kill bursts after its pin.
@@ -511,7 +516,11 @@ const victims = new VictimDirector(
 bus.on((e) => {
   if (e.kind === "release") victims.cast(e.slot);
   else if (e.kind === "impact") victims.impact(e, frameNo);
-  else if (e.kind === "death" && !herd.isHero(e.target)) deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+  else if (e.kind === "death" && !herd.isHero(e.target)) {
+    // Key 7's deaths dissolve into ink and qi motes (round 3b, item 4); the other skills keep their light burst.
+    if (inkDeath) deathFx.dissolve(e.x, e.y, e.z, e.dx, e.dz, e.beastTier);
+    else deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+  }
 });
 // Key 7, Vạn Kiếm Triều Tông (canon D58 (2), POWER_RESEARCH): the field-wide prototype on the skill tier with an
 // ultimate-strength finisher. Its timeline calls the screen effects and the bus on the frame each phase starts.
@@ -543,7 +552,11 @@ const van = new VanKiemFx(
       } else if (role === "primary") screen.impact("skill", "secondary");
       // The hunt's hundreds of blows hold a low rumble under the shake (never stacking into a constant jolt).
       else if (role === "secondary" && van.clock < VAN_SWEEP_AT) screen.rumble(2.6, 0.14);
+      // The finisher's cut flashes each body white on its blow (round 3b, item 4).
+      if (van.clock >= VAN_SWEEP_AT) herd.silhouette(target);
+      inkDeath = true;
       emitImpact("k7", target, dx, dz, power, role, killed, skillRgb("k7"));
+      inkDeath = false;
     },
     phase(p: VanKiemPhase) {
       if (p === "open") {
@@ -582,7 +595,7 @@ const van = new VanKiemFx(
       lights.flash(at, view.camera.position, colour, intensity);
     },
   },
-  { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch, noise: ribbonNoise },
+  { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch, noise: ribbonNoise, slashMask: slashCrescent },
   VAN_KIEM_SWORDS[quality],
 );
 /**

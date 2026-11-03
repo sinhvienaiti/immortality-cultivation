@@ -232,6 +232,80 @@ export class DeathFx {
     }
   }
 
+  /**
+   * Round 3b (item 4): a death on key 7's sword qi, with no light stamp (no star, ring or lit pool): the body
+   * breaks into ink that blooms and drifts along the blow, and dissolves into qi motes rising out of it, white and
+   * cyan; a scorch stays. `beastTier` 0–4.
+   */
+  dissolve(x: number, y: number, z: number, dx: number, dz: number, beastTier: number): void {
+    const big = beastTier >= 2;
+    const k = beastTier >= 4 ? 2.2 : big ? 1.35 : 1;
+    // Ink blooming out of the body (normal blend, dark under the motes), drifting along the blow.
+    const nInk = Math.max(3, Math.round((big ? 7 : 4) * this.dens));
+    for (let i = 0; i < nInk; i += 1) {
+      const s = this.ink.spec.reset();
+      const a = this.rand.range(0, Math.PI * 2);
+      const r = this.rand.range(0.05, 0.35) * k;
+      s.x = x + Math.cos(a) * r;
+      s.y = y + this.rand.range(-0.25, 0.3) * k;
+      s.z = z + Math.sin(a) * r;
+      const sp = this.rand.range(0.8, 2.2);
+      s.vx = dx * sp + Math.cos(a) * 0.6;
+      s.vz = dz * sp + Math.sin(a) * 0.6;
+      s.vy = this.rand.range(0.3, 1.1);
+      s.drag = 2.4;
+      s.life = this.rand.range(0.6, 0.95);
+      s.fadeIn = 0.03;
+      s.size0 = this.rand.range(0.35, 0.55) * k;
+      s.size1 = s.size0 * this.rand.range(1.9, 2.5);
+      s.rot = this.rand.range(0, 6.28);
+      s.rotV = this.rand.range(-1.2, 1.2);
+      s.r = INK[0];
+      s.g = INK[1];
+      s.b = INK[2];
+      s.a = 0.82;
+      this.ink.emit();
+    }
+    // Qi motes rising out of the ink: slow, small, white and cyan; a few hot ones bloom.
+    const nMotes = Math.max(6, Math.round((big ? 22 : 11) * this.dens));
+    for (let i = 0; i < nMotes; i += 1) {
+      const a = this.rand.range(0, Math.PI * 2);
+      const r = this.rand.range(0.05, 0.4) * k;
+      const s = this.sparks.spec.reset();
+      s.x = x + Math.cos(a) * r;
+      s.y = y + this.rand.range(-0.3, 0.3) * k;
+      s.z = z + Math.sin(a) * r;
+      s.vx = Math.cos(a) * this.rand.range(0.3, 0.9) + dx * 0.8;
+      s.vz = Math.sin(a) * this.rand.range(0.3, 0.9) + dz * 0.8;
+      s.vy = this.rand.range(0.9, 2.4);
+      s.drag = 1.4;
+      s.gravity = 1.2;
+      s.stretch = 0.03;
+      s.life = this.rand.range(0.7, 1.25);
+      s.fadeIn = 0.06;
+      s.size0 = this.rand.range(0.07, 0.13) * (k > 2 ? 1.4 : 1);
+      s.size1 = 0.03;
+      const hot = i % 4 === 0;
+      s.r = hot ? 2.6 : 0.05 * 2.2;
+      s.g = hot ? 2.8 : 0.6 * 2.2;
+      s.b = hot ? 3 : 0.95 * 2.2;
+      this.sparks.emit();
+    }
+    const g = this.scorch.spec.reset();
+    g.x = x;
+    g.y = 0.02;
+    g.z = z;
+    g.life = 2.4;
+    g.size0 = 1.2 * k;
+    g.size1 = 1.6 * k;
+    g.rot = this.rand.range(0, 6.28);
+    g.r = INK[0];
+    g.g = INK[1];
+    g.b = INK[2];
+    g.a = 0.72;
+    this.scorch.emit();
+  }
+
   update(dt: number): void {
     this.burst.update(dt);
     this.ring.update(dt);
