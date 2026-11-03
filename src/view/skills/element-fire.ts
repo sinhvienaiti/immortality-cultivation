@@ -68,7 +68,8 @@ const SPARK_TINT = new THREE.Color().setRGB(1, 0.5, 0.12);
  */
 const SEAL_SOOT = lin("#17140F");
 const SEAL_BODY = lin("#E0561A");
-const SEAL_LIT = lin("#FFAE34");
+// Lit gold held at 0.9 a channel (SigilLook: halos and rings never reach the bloom; #FFAE34 itself is 1.0 in red).
+const SEAL_LIT = k3(lin("#FFAE34"), 0.9);
 const SEAL_CORE: Rgb = [1, 0.72, 0.3];
 /** The flame slash's deep body: a vermilion kept off red (hue ~21°). */
 const SLASH_DEEP = lin("#E8560E");

@@ -557,6 +557,28 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(embers).toBeGreaterThan(20);
   });
 
+  it("keeps every kit's seal and ring body at 0.9 a channel at most, cool and lit (only the thin line may bloom; 03/11 recheck)", () => {
+    for (const kit of elementKits()) {
+      const g = kit.sigil;
+      if (g === undefined) continue;
+      for (const c of [g.body, g.lit]) for (const v of c) expect(v).toBeLessThanOrEqual(0.9);
+    }
+    // The heat rings take the same matter.
+    const stage = stageFor(new THREE.Group(), camera(), sheets(), []);
+    stage.hooksOf(elementById("fire")!);
+    let rings = 0;
+    stage.layer.traverse((o) => {
+      if (o.name !== "fx-heat-rings") return;
+      rings += 1;
+      const u = (o as THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial>).material.uniforms;
+      for (const k of ["uBody", "uLit"]) {
+        const c = u[k]!.value as THREE.Vector3;
+        expect(Math.max(c.x, c.y, c.z)).toBeLessThanOrEqual(0.9);
+      }
+    });
+    expect(rings).toBe(2);
+  });
+
   it("draws the seal and its rings as matter in Fire (soot underlay, a thin hot line) and as light in Metal", () => {
     const cam = camera();
     const tex = sheets();
