@@ -614,7 +614,14 @@ void main() {
   vRim = aRim;
   vMode = aMode;
   vSide = mod(float(gl_VertexID), 2.0);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec3 p = position;
+  // The silk lies 0.12 m behind in depth (the pool sits at the origin: positions are world): a silk ribbon trailing past
+  // another sword at its depth stays behind that sword's blade (the gates' blade-keep map, 03/11).
+  if (aMode > 0.5) {
+    vec3 e = p - cameraPosition;
+    p += e / max(length(e), 1e-3) * 0.12;
+  }
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }`;
 
 const MODED_RIBBON_FRAGMENT = /* glsl */ `
@@ -647,7 +654,7 @@ void main() {
   float strands = mix(1.0, smoothstep(0.25, 0.6, texture2D(map, vec2(vT * 3.0 - uTime * 0.8, vSide * 0.5 + 0.25)).a), smoothstep(0.45, 0.95, vT));
   float a = vCol.a * edge * strands * (1.0 - smoothstep(0.75, 1.0, vT));
   vec3 col = mix(vCol.rgb, vRim * fold, inner) + vec3(0.32, 0.36, 0.4) * sheen * fold;
-  gl_FragColor = vec4(min(col, vec3(0.85)) * a, a * 0.88);
+  gl_FragColor = vec4(min(col, vec3(0.85)) * a * 0.86, a * 0.76);
 }`;
 
 /** A flame atlas for RibbonPool.setFlame: its texture and grid, and the heat ramp (linear). */

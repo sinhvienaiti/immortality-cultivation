@@ -1615,7 +1615,8 @@ void (async () => {
         if (auraMantle.hull !== null) auraMantle.hull.visible = on && auraMantle.hull.count > 0;
       }
       if (part === "star" || part === "all") meshes[1]!.visible = on && (meshes[1] as THREE.Mesh & { geometry: THREE.InstancedBufferGeometry }).geometry.instanceCount > 0;
-      if (part === "silk" || part === "all") {
+      // Fire's SilkTail is its flame trail, drawn with the aura off too: "all" keeps it (only "silk" hides it).
+      if (part === "silk" || (part === "all" && fx.element.trail.flame === undefined)) {
         fx.ribbonMesh.visible = on;
         myriad.auraDebug.ribbons.visible = on;
         auraSolo.silk.mesh.visible = on;

@@ -300,9 +300,11 @@ void main() {
       float hard = mix(0.25, 0.04, uShape.x);
       float cover = smoothstep(0.0, hard * 4.0 + 0.6 / max(tongue, 1.0), heat) * step(0.0, d + 0.5);
       float body = smoothstep(0.18, 0.32, heat);
-      float amber = smoothstep(0.78, 0.86, heat) * (1.0 - smoothstep(0.93, 0.98, heat));
+      float amber = smoothstep(0.82, 0.88, heat) * (1.0 - smoothstep(0.93, 0.97, heat));
       vec3 col = mix(uSoot, mix(uDeep, uBody, smoothstep(0.3, 0.75, heat)), body);
-      col = mix(col, uEdge, amber * 0.85);
+      // The amber band leans to orange (hue ~32°): pure amber (#FFB703, 43°) sat on the reserved gold #FFB020 / #FFC83A
+      // (the gates' reserved map: up to 10 % of the aura's pixels on light stone).
+      col = mix(col, mix(uEdge, uBody, 0.75), amber * 0.85);
       float root = band(d, -0.5 * px, 0.7 * px) * (0.6 + 0.4 * flick);
       light = col * cover * 0.9 + uCore * root * 0.42 * (0.4 + 0.6 * coreK);
       inkA = cover * mix(uInk.a, 0.9, body) + uInk.a * rootGap * 0.8;
@@ -355,7 +357,8 @@ void main() {
   // plate's front and its hem (the concept's plates: bright vanes, dark lines between them).
   vec3 bed = mix(uDeep, uBody, smoothstep(0.0, 0.7, st));
   // The vanes' crests take the seam's pale silver toward the plate's front: bright, never white (≤ 0.85).
-  vec3 vane = mix(bed, uEdge, smoothstep(0.55, 1.0, st) * (0.15 + 0.4 * front));
+  // Silver only on the crests' very fronts: on light stone a silver vane washed out to a pale band (the gates' pale map).
+  vec3 vane = mix(bed, uEdge, smoothstep(0.65, 1.0, st) * (0.06 + 0.24 * front));
   float lit = (0.78 + 0.22 * front) * (0.5 + 0.5 * st);
   // Where a plate tucks under the one behind it (its back), a shade; each plate its own sheen (they read as pieces).
   float tuck = mix(0.5, 1.0, smoothstep(0.0, 0.3, fp));
@@ -397,12 +400,14 @@ void main() {
   float plateSeam = (1.0 - plateIn) * step(0.0, d) * step(ax, outer) * seamOn * (1.0 - inNeedle);
   // The seam between two plates reads as a cut line: darker right at the plate's back edge.
   plateSeam = max(plateSeam, (1.0 - smoothstep(gapF, gapF + 1.6 * px / max(platePx, 1.0), fp)) * step(0.0, d) * step(d, edgePx) * seamOn * (1.0 - inNeedle) * 0.6);
-  vec3 hemC = mix(uEdge, uCore, coreK);
-  light = min(plateC + uEdge * (hemLine * 0.35 + tipGlint * 0.9), vec3(0.85)) * body + hemC * (hem + curl) * mix(0.8, 1.0, coreK) + uCore * (glint * 0.8 + tipSpark * 0.7 * body);
+  vec3 hemC = mix(mix(uEdge, uBody, 0.3), uCore, coreK);
+  light = min(plateC + uEdge * (hemLine * 0.3 + tipGlint * 0.85), vec3(0.85)) * body + hemC * (hem + curl) * mix(0.72, 1.0, coreK) + uCore * (glint * 0.8 + tipSpark * 0.7 * body);
   // Matter under the light (premultiplied): a bed under each plate (the light reads saturated on pale stone), the
   // rim's and the gap's ink, lighter seams between plates.
   float seamInk = mix(0.6, 1.4, smoothstep(4.0 * px, 12.0 * px, M));
-  inkA = body * 0.6 + uInk.a * (rim * 1.6 + inGap * 1.4 + plateSeam * seamInk + curl * 0.4);
+  // The plates are matter (0.78): their own colour, not light added on the stone (on light stone the added light washed
+  // the plates pale; measured on the gates' pale map, 03/11).
+  inkA = body * 0.78 + uInk.a * (rim * 1.6 + inGap * 1.4 + plateSeam * seamInk + curl * 0.4);
   float a = vF.x * uLayer * alive * ground * open;
   gl_FragColor = vec4((uInk.rgb * inkA + light) * a, min(inkA, 0.9) * a);
   #include <tonemapping_fragment>
@@ -485,7 +490,7 @@ void main() {
   if (kind > 1.5) {
     // The jade ring's pulse for a perfect or flash word (≤ 0.9, 8 frames): a soft ring of pale jade light.
     float R = vArm.x;
-    float ring = exp(-pow((r - R) / max(0.22 * R, 1.2 * px), 2.0));
+    float ring = exp(-pow((r - R) / max(0.08 * R, 1.1 * px), 2.0));
     light = vec3(0.62, 0.85, 0.78) * ring * 0.85 * level;
     gl_FragColor = vec4(light * alpha, 0.0);
     #include <tonemapping_fragment>
@@ -507,7 +512,7 @@ void main() {
     float arms = max(leaf, crossLeaf);
     float heat = 1.0 - smoothstep(0.0, max(L, C), max(abs(a), abs(c)) * 1.15);
     vec3 col = mix(uDeep, uBody, smoothstep(0.1, 0.6, heat));
-    col = mix(col, uEdge, smoothstep(0.82, 0.95, heat) * 0.8);
+    col = mix(col, mix(uEdge, uBody, 0.75), smoothstep(0.82, 0.95, heat) * 0.8);
     float core = 1.0 - smoothstep(coreR - 0.5, coreR + 0.5, r);
     light = col * arms * 0.85 * clamp(level / 0.5, 0.0, 1.0) + uCore * core * vL.y * level;
     float soot = max(arm(a, c, L * 1.3, w * 2.0), arm(c, a, C * 1.3, w * 1.6));
@@ -587,8 +592,8 @@ void main() {
   float graze = 1.0 - abs(dot(normalize(vN), normalize(vV)));
   float plates = uAnch.w;
   float fp = fract((vY - uAnch.x) / (1.0 - uAnch.x) * plates + vSeed);
-  float st = mix(0.62, texture2D(tStreak, vec2(-(vY + vFlow) * 2.0, 0.2 + 0.6 * graze)).r, uOpt.x);
-  vec3 col = mix(uDeep, uBody, st) * (0.6 + 0.4 * smoothstep(0.3, 1.0, fp));
+  // Plates only (the streak texture across a grazing band read as glyphs).
+  vec3 col = mix(uDeep, uBody, 0.55 + 0.45 * smoothstep(0.2, 1.0, fp)) * (0.6 + 0.4 * smoothstep(0.3, 1.0, fp));
   col = mix(col, uEdge, smoothstep(0.75, 0.95, graze));
   // The band's part nearest the blade fades out (the cards' 1 px gap at the steel; the hull never touches the edge).
   float a = vW * uLayer * on * smoothstep(0.45, 0.75, graze);
