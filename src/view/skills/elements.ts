@@ -1,6 +1,6 @@
 /**
  * The element registry (canon D59): every material kit the skills can be drawn in, by id. Metal is the default and
- * the base layers; Fire is registered (its look is being built). A new element: write its kit (element-kit.ts,
+ * the base layers; Fire is built (Sword × Fire, key 1 and key 7). A new element: write its kit (element-kit.ts,
  * like element-fire.ts) and add it to KITS, or call registerElement at load time.
  */
 import type { ElementId, ElementKit } from "./element-kit";

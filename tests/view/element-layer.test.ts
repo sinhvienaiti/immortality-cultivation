@@ -6,6 +6,7 @@ import { ElementStage } from "../../src/view/skills/element-stage";
 import { DEFAULT_ELEMENT, elementById, elementKits, elementOrMetal } from "../../src/view/skills/elements";
 import { FlipbookPool, parseFlipbookManifest } from "../../src/view/skills/flipbook";
 import { GroundDecalPool } from "../../src/view/skills/ground-decals";
+import { RibbonPool } from "../../src/view/skills/fxkit";
 import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
 import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
 import type { TargetField } from "../../src/view/skills/targets";
@@ -128,11 +129,17 @@ function testKit(replace: readonly (keyof SwordHooks)[], streamReplace: readonly
 }
 
 describe("element registry (canon D59)", () => {
-  it("Metal is the default; Fire is registered and draws as Metal until its look lands", () => {
+  it("Metal is the default; Fire is built: its own hooks, furnace blade, flame trail, burn and sound", () => {
     expect(DEFAULT_ELEMENT).toBe("metal");
     expect(elementKits()[0]).toBe(METAL);
     const fire = elementById("fire")!;
-    expect(fire.fallback).toBe("metal");
+    expect(fire.fallback).toBeUndefined();
+    expect(fire.attach).toBeDefined();
+    expect(fire.blade.mode).toBe("furnace");
+    expect(fire.trail.flame?.clip).toBe("dragonhold-flame-trail");
+    expect(fire.trail.silk).toBe(false);
+    expect(fire.foe?.kind).toBe("burn");
+    expect(fire.screen.distortion).toBe(0);
     expect(fire.sound).toBe("fire");
     expect(elementOrMetal("nope")).toBe(METAL);
     expect(METAL.sound).toBe("");
@@ -305,5 +312,132 @@ describe("key 7 through the element kit", () => {
     expect(calls.glint).toBeGreaterThan(0);
     expect(calls.finisher).toBe(1);
     expect(targets.statuses.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Fire (Sword × Fire, canon D59)", () => {
+  const hsl = { h: 0, s: 0, l: 0 };
+  const hue = (c: readonly number[]): number => {
+    new THREE.Color().setRGB(c[0]!, c[1]!, c[2]!).getHSL(hsl, THREE.SRGBColorSpace);
+    return hsl.h * 360;
+  };
+
+  it("keeps every light warm and away from the enemy red: cores, halos, key 7's tone, the blade's heat and edge", () => {
+    const fire = elementById("fire")!;
+    const pal = fire.palette({ id: "clear-wind" } as never, "k1");
+    for (const c of [pal.core, pal.halo, pal.rim, fire.stream.core, fire.stream.halo, fire.stream.trailCore, fire.blade.edge, fire.blade.heat!]) {
+      expect(hue(c)).toBeGreaterThan(15);
+      expect(hue(c)).toBeLessThan(60);
+    }
+    // Halos and the heat band stay under the bloom threshold; the edge line is the thin HDR part.
+    expect(Math.max(...pal.halo, ...fire.stream.halo, ...fire.blade.heat!)).toBeLessThanOrEqual(0.9);
+    expect(Math.max(...fire.blade.edge)).toBeGreaterThan(1);
+    expect(fire.foe!.rgb).not.toBe(0xff4a4a);
+  });
+
+  function stageFor(layer: THREE.Object3D, cam: THREE.Camera, tex: SwordSkillTextures, accents: number[]): ElementStage {
+    return new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/", accent: (_x, _y, _z, k) => accents.push(k) });
+  }
+
+  it("draws key 1 in its own layers and replaces Metal's: fewer base sprites, its layers lit, the burn left on the beasts", () => {
+    const run = (fire: boolean): { base: number; kit: number; statuses: number; accents: number[] } => {
+      const base = new THREE.Group();
+      const kitLayer = new THREE.Group();
+      const cam = camera();
+      const targets = field(3);
+      const tex = sheets();
+      const accents: number[] = [];
+      const fx = new SwordSkillFx(swordHost(targets, base, cam), tex, "high");
+      const stage = stageFor(kitLayer, cam, tex, accents);
+      if (fire) fx.setElement(elementById("fire")!, stage);
+      let kit = 0;
+      const step = (): void => {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+        kit = Math.max(kit, liveSprites(kitLayer));
+      };
+      fx.setCharge("k1", 0.4, 0, -6);
+      step();
+      fx.setCharge("k1", 0.8, 0, -6);
+      step();
+      fx.cast("k1", 0, -6);
+      let baseMax = 0;
+      for (let i = 0; i < 90; i += 1) {
+        step();
+        baseMax = Math.max(baseMax, liveSprites(base));
+      }
+      return { base: baseMax, kit, statuses: targets.statuses.length, accents };
+    };
+    const metal = run(false);
+    const fire = run(true);
+    expect(fire.kit).toBeGreaterThan(0);
+    expect(metal.kit).toBe(0);
+    expect(fire.base).toBeLessThan(metal.base * 0.5);
+    expect(fire.statuses).toBeGreaterThan(0);
+    // The third blade is the big one: its blow asks for the warm flash.
+    expect(fire.accents.length).toBeGreaterThan(0);
+  });
+
+  it("draws key 7 in fire: flame ribbons on the lead blades, their sheaths, the river's trails in the fire tone", () => {
+    const kitLayer = new THREE.Group();
+    const cam = camera();
+    const targets = field(12);
+    const host = {
+      layer: new THREE.Group(),
+      camera: cam,
+      targets,
+      caster(out: { x: number; z: number; fx: number; fz: number }) {
+        out.x = 0;
+        out.z = 3;
+        out.fx = 0;
+        out.fz = -1;
+      },
+      hand(out: THREE.Vector3) {
+        out.set(0.3, 1.2, 2.8);
+      },
+      struck() {},
+      phase() {},
+      flyby() {},
+      flash() {},
+    };
+    const tex = { glow: new THREE.Texture(), slash: new THREE.Texture(), star: new THREE.Texture(), ring: new THREE.Texture(), scorch: new THREE.Texture(), noise: new THREE.Texture() };
+    const fx = new MyriadSwordsFx(host, tex, { mid: 16, far: 24 });
+    const stage = stageFor(kitLayer, cam, sheets(), []);
+    const fire = elementById("fire")!;
+    // Its flame band is a clip of its folder: without the atlas (no fetch here) the ribbons keep sword-light.
+    fx.setElement(fire, stage);
+    expect(fx.tone).toBe(fire.stream);
+    fx.cast();
+    for (let i = 0; i < 120; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+    }
+    // The river's trails stay (one-frame beams in the fire tone); the kit drew its sparks, embers and pinpoints.
+    const beams = (fx as unknown as { beams: { mesh: THREE.Mesh<THREE.InstancedBufferGeometry> } }).beams.mesh;
+    expect(beams.geometry.instanceCount).toBeGreaterThan(10);
+    expect(liveSprites(kitLayer)).toBeGreaterThan(0);
+  });
+
+  it("a ribbon pool swaps to the flame look and back without touching its ribbons", () => {
+    const pool = new RibbonPool(4, 8, new THREE.Texture());
+    const light = pool.mesh.material;
+    pool.setFlame({ texture: new THREE.Texture(), cols: 2, rows: 8, frames: 16, fps: 12, soot: [0.02, 0, 0], deep: [0.7, 0.04, 0], amber: [1, 0.47, 0], core: [1, 0.98, 0.87] });
+    const flame = pool.mesh.material as THREE.ShaderMaterial;
+    expect(flame).not.toBe(light);
+    expect(flame.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    pool.setFlame(null);
+    expect(pool.mesh.material).toBe(light);
+  });
+
+  it("a heat-field flipbook pool reads 'heat' from a manifest and takes its ramp and taper", () => {
+    const m = parseFlipbookManifest({ flipbooks: { trail: { file: "t.png", cols: 2, rows: 8, frames: 16, mode: "heat", loop: true } } }, "/v/");
+    expect(m.get("trail")!.mode).toBe("heat");
+    const pool = new FlipbookPool("trail", "heat", 4, 11, new THREE.Texture());
+    pool.setHeatRamp([0.7, 0.04, 0], [1, 0.47, 0], [1, 0.98, 0.87]);
+    pool.taper = 0.85;
+    expect(pool.mesh.material.uniforms.uMode!.value).toBe(3);
+    expect(pool.mesh.material.uniforms.uTaper!.value).toBe(0.85);
   });
 });
