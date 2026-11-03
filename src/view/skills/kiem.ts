@@ -1379,8 +1379,9 @@ export class KiemFx {
     k.ribbon = r;
     k.ribbonOn = true;
     k.silk = this.startSilk(k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, 0.1);
-    this.beamAt(k.ax, 0.9, k.az, dx, 0, dz, 14, 1.5, 0.55, 1.0, 0.8, 0.02, 0.1, T_K2_HIT);
-    this.beamAt(k.ax, 0.9, k.az, dx, 0, dz, 14, 0.4, 0.5, 1.3, 0.5, 0.02, 0.08, T_K2_HIT);
+    // Narrow, and fading at its head where the sword runs (03/11: a 1.5 m beam hid the real sword inside it).
+    this.beamAt(k.ax, 0.9, k.az, dx, 0, dz, 14, 0.5, 0.55, 0.8, 0.55, 0.02, 0.3, T_K2_HIT);
+    this.beamAt(k.ax, 0.9, k.az, dx, 0, dz, 14, 0.16, 0.5, 1.2, 0.4, 0.02, 0.3, T_K2_HIT);
   }
 
   private castGuard(): void {
