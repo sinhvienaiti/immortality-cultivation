@@ -95,7 +95,8 @@ void main() {
   float thr = smoothstep(0.35, 1.0, u) * 1.08;
   float keep = smoothstep(thr, thr + 0.08, (1.0 - r / max(reach, 0.2)) * 0.75 + n * 0.3 + 0.05);
   float a = body * keep;
-  float coreA = (1.0 - smoothstep(vCore * 0.55, vCore, r)) * smoothstep(0.05, 0.45, heat);
+  // The core: a point, white-gold only while hot (a big HDR core bloomed into a white ball on pale stone).
+  float coreA = (1.0 - smoothstep(vCore * 0.45, vCore, r)) * smoothstep(0.3, 0.75, heat);
   if (a < 0.003 && coreA < 0.003) discard;
   float t = r / max(reach, 1e-3);
   vec3 col = mix(uAmber, uDeep, smoothstep(0.2, 0.85, t));
@@ -103,7 +104,7 @@ void main() {
   // A thin soot rim along the tongues' edge (the dark under the bright: contrast on pale stone).
   float rim = smoothstep(0.0, 0.07, body) * (1.0 - smoothstep(0.07, 0.3, body)) + smoothstep(0.82, 1.0, t) * 0.6;
   col = mix(col, uSoot, clamp(rim, 0.0, 1.0) * 0.7);
-  vec3 rgb = col * a + uCore * coreA * (1.0 + 2.2 * heat);
+  vec3 rgb = col * a + uCore * coreA * (0.45 + 0.9 * heat);
   gl_FragColor = vec4(rgb, a);
 }`;
 
@@ -183,7 +184,7 @@ export class FirePointPool {
     this.mesh.name = "fx-fire-points";
   }
 
-  /** Its ramp (linear): the soot rim, the vermilion tips, the amber heart (≤ 0.9), the core (× up to 3.2 hot), the char it cools to. */
+  /** Its ramp (linear): the soot rim, the vermilion tips, the amber heart (≤ 0.9), the core (added, × up to 1.35 hot), the char it cools to. */
   setRamp(soot: Rgb, deep: Rgb, amber: Rgb, core: Rgb, char: Rgb): void {
     const u = this.mesh.material.uniforms;
     (u.uSoot!.value as THREE.Vector3).set(soot[0], soot[1], soot[2]);
