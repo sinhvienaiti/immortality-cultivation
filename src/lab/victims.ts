@@ -54,8 +54,11 @@ interface Pin {
   dz: number;
 }
 
-/** The pinned swords' rim (the river's cyan, linear) and how deep their tips go into the ground (m). */
-const PIN_RIM = [0.03, 0.44, 0.76] as const;
+/** The pinned swords' rim (the river's cyan, linear; the element's halo, setTone) and how deep their tips go into the ground (m). */
+const PIN_RIM: [number, number, number] = [0.03, 0.44, 0.76];
+/** The plant's contact star (HDR) and ground ring (≤ 0.9), linear; the element swaps them (setTone). */
+const PLANT_STAR: [number, number, number] = [2.4, 3.2, 3.6];
+const PLANT_RING: [number, number, number] = [0.04 * 0.95, 0.55 * 0.95, 0.95 * 0.95];
 const PIN_DEPTH = 0.35;
 
 export class VictimDirector {
@@ -188,9 +191,9 @@ export class VictimDirector {
     s.size0 = 1.6;
     s.size1 = 0.9;
     s.rot = this.time * 3.1;
-    s.r = 2.4;
-    s.g = 3.2;
-    s.b = 3.6;
+    s.r = PLANT_STAR[0];
+    s.g = PLANT_STAR[1];
+    s.b = PLANT_STAR[2];
     this.stars.emit();
     const r = this.rings.spec.reset();
     r.x = x;
@@ -199,9 +202,9 @@ export class VictimDirector {
     r.life = 0.38;
     r.size0 = 0.4;
     r.size1 = 3.0;
-    r.r = 0.04 * 0.95;
-    r.g = 0.55 * 0.95;
-    r.b = 0.95 * 0.95;
+    r.r = PLANT_RING[0];
+    r.g = PLANT_RING[1];
+    r.b = PLANT_RING[2];
     r.a = 0.9;
     this.rings.emit();
     const c = this.scorch.spec.reset();
@@ -217,6 +220,19 @@ export class VictimDirector {
     c.b = 0.06;
     c.a = 0.75;
     this.scorch.emit();
+  }
+
+  /**
+   * The element's light on the plants (canon D59): the contact star (HDR), the ground ring and the pinned swords' rim
+   * (≤ 0.9), linear; null: Metal's white-cyan, cyan and river cyan. Load time.
+   */
+  setTone(tone: { readonly star: readonly number[]; readonly ring: readonly number[]; readonly rim: readonly number[] } | null): void {
+    const t = tone ?? { star: [2.4, 3.2, 3.6], ring: [0.04 * 0.95, 0.55 * 0.95, 0.95 * 0.95], rim: [0.03, 0.44, 0.76] };
+    for (let k = 0; k < 3; k += 1) {
+      PLANT_STAR[k] = t.star[k]!;
+      PLANT_RING[k] = t.ring[k]!;
+      PIN_RIM[k] = t.rim[k]!;
+    }
   }
 
   /** World time: the planted swords slam, hold and fade; the heroes' screen motion is measured (real view size). */

@@ -55,6 +55,7 @@ import { Rand } from "../view/skills/fxkit";
 import { MYRIAD_SWORDS_PER_TIER, MyriadSwordsFx, type SwordPose, type MyriadSwordsPhase } from "../view/skills/myriad-swords";
 import { DEFAULT_ELEMENT, elementById, elementKits } from "../view/skills/elements";
 import { ElementStage } from "../view/skills/element-stage";
+import type { DeathArgs } from "../view/skills/element-kit";
 import type { FlipbookMode } from "../view/skills/flipbook";
 import { CasterPresence } from "./presence";
 import { SWORD_LIGHT } from "../view/skills/sword-material";
@@ -521,12 +522,35 @@ const victims = new VictimDirector(
   { ring: textures.ring, star: textures.star, scorch: textures.scorch },
   view.camera,
   () => ({ width: innerWidth, height: innerHeight }),
-  (x, y, z, dx, dz, rgb, beastTier) => deathFx.spawn(x, y, z, dx, dz, rgb, beastTier),
+  (x, y, z, dx, dz, rgb, beastTier) => {
+    // A held kill of a hero victim: the element's own death when it has one (it replaces the lab's light burst).
+    if (!elementDeath(x, y, z, dx, dz, beastTier >= 2 ? 0.8 : 0.45, true)) deathFx.spawn(x, y, z, dx, dz, rgb, beastTier);
+  },
 );
+const deathArgs: DeathArgs = { slot: "k1", at: new THREE.Vector3(), dx: 0, dz: -1, radius: 0.5, pal: weaponById(DEFAULT_WEAPON)!.glow };
+/**
+ * A death in the element's material (canon D59: replace, never stack): with a kit whose death hook draws, the lab's
+ * own death layers (death-fx.ts) stay out. `draw`: the hook has not drawn this death yet (key 7's and the held hero
+ * kills; the Kiếm skills call it from their strike). False: Metal, the lab's layers draw.
+ */
+function elementDeath(x: number, y: number, z: number, dx: number, dz: number, radius: number, draw: boolean): boolean {
+  const hook = stage.hooksOf(fx.element).sword?.death;
+  if (hook === undefined) return false;
+  if (!draw) return true;
+  const a = deathArgs;
+  a.at.set(x, y, z);
+  a.dx = dx;
+  a.dz = dz;
+  a.radius = radius;
+  a.pal = fx.paletteOf("k1");
+  return hook(a);
+}
 bus.on((e) => {
   if (e.kind === "release") victims.cast(e.slot);
   else if (e.kind === "impact") victims.impact(e, frameNo);
   else if (e.kind === "death" && !herd.isHero(e.target)) {
+    // An element with its own death draws it (key 7's here; the Kiếm skills' in their strike).
+    if (elementDeath(e.x, e.y, e.z, e.dx, e.dz, herd.radius(e.target), inkDeath)) return;
     // Key 7's deaths dissolve into ink and qi motes (round 3b, item 4); the other skills keep their light burst.
     if (inkDeath) deathFx.dissolve(e.x, e.y, e.z, e.dx, e.dz, e.beastTier);
     else deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
@@ -698,7 +722,8 @@ function kitTexture(name: string): THREE.Texture {
   }
   return t;
 }
-const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE });
+// A kit's big blow asks for its screen accent (Fire: the warm flash).
+const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k) });
 const elementListeners: ((id: string) => void)[] = [];
 /** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
 async function setElement(id: string): Promise<boolean> {
@@ -711,6 +736,13 @@ async function setElement(id: string): Promise<boolean> {
   fx.setElement(kit, stage);
   myriad.setElement(kit, stage);
   sound.element = kit.sound;
+  // The screen accent, the herd's hit silhouette and the hero victims' plants follow the element (Metal: their own).
+  const flash = kit.screen.flash;
+  screen.setAccent(flash === null ? null : [flash.tint[0] * flash.strength, flash.tint[1] * flash.strength, flash.tint[2] * flash.strength], kit.screen.frames ?? null);
+  const metal = kit.attach === undefined;
+  const t = myriad.tone;
+  herd.setElementLook(metal ? null : [t.core[0] * 2.2, t.core[1] * 2.2, t.core[2] * 2.2], metal ? null : [t.halo[0], t.halo[1], t.halo[2]]);
+  victims.setTone(metal ? null : { star: [t.core[0] * 3.2, t.core[1] * 3.2, t.core[2] * 3.2], ring: [t.halo[0], t.halo[1], t.halo[2]], rim: [t.halo[0] * 0.85, t.halo[1] * 0.85, t.halo[2] * 0.85] });
   for (const f of elementListeners) f(kit.id);
   return true;
 }
@@ -1126,6 +1158,8 @@ function frame(dt: number): void {
 
 // A second view of the same frame for captures: the caster close up at 55° (no time passes).
 const savedCamPos = new THREE.Vector3();
+/** The fx layers' own visibility while __lab.debugShow("fx", false) hides them. */
+const fxShown = new Map<THREE.Object3D, boolean>();
 /** The orbit view's angles (view("orbit")): yaw from the south, pitch above level, degrees; its centre: the right hand or the held sword's middle. */
 const orbit = { yawDeg: 30, pitchDeg: 25, onSword: false };
 const savedCamQuat = new THREE.Quaternion();
@@ -1442,7 +1476,15 @@ void (async () => {
         if (fx.blades.swarm !== null) fx.blades.swarm.visible = on;
       } else if (part === "blades") fx.blades.mesh.visible = on;
       else if (part === "fx") {
-        for (const c of view.layers.fx.children) if (c !== fx.blades.mesh) c.visible = on;
+        // Hiding remembers each layer's own state and showing puts it back (pools and sigils hidden while empty stay so).
+        for (const c of view.layers.fx.children) {
+          if (c === fx.blades.mesh) continue;
+          if (!on) {
+            fxShown.set(c, c.visible);
+            c.visible = false;
+          } else c.visible = fxShown.get(c) ?? true;
+        }
+        if (on) fxShown.clear();
       } else view.layers.actors.visible = on;
       view.render(0);
     },

@@ -126,7 +126,15 @@ const SPAWN_EDGE = [0.42, 0.1, 0.06] as const;
 /** Per-instance dissolve: the vertex passes its threshold, edge colour and model-space point to the fragment. */
 const DISSOLVE_VERT_PARS = "attribute float iDissolve;\nattribute vec3 iEdge;\nattribute vec3 iRim;\nattribute vec4 iCut;\nattribute float iWhite;\nvarying float vDissolve;\nvarying vec3 vEdge;\nvarying vec3 vRim;\nvarying vec4 vCut;\nvarying vec3 vDisP;\nvarying float vWhite;\n";
 const DISSOLVE_VERT = "#include <begin_vertex>\n\tvDissolve = iDissolve;\n\tvEdge = iEdge;\n\tvRim = iRim;\n\tvCut = iCut;\n\tvDisP = position;\n\tvWhite = iWhite;";
-const DISSOLVE_FRAG_PARS = `varying float vWhite;
+/**
+ * The element's look on the herd (canon D59): the one-frame hit silhouette's light (linear HDR; Metal white-cyan,
+ * Fire white-gold) and a hero victim's rim (linear; Metal cyan). Set by the lab's element switch.
+ */
+const HERD_LOOK = { white: { value: new THREE.Vector3(1.5, 2.0, 2.2) } };
+const HERO_RIM: [number, number, number] = [0.06, 0.55, 0.95];
+
+const DISSOLVE_FRAG_PARS = `uniform vec3 uLabWhite;
+varying float vWhite;
 varying float vDissolve;
 varying vec3 vEdge;
 varying vec3 vRim;
@@ -318,6 +326,7 @@ export class LabHerd implements TargetField {
   /** The species' own material, with the per-instance noise dissolve and its glowing edge (emissive, HDR only on the thin edge). */
   private static dissolvable(material: THREE.MeshStandardMaterial): void {
     material.onBeforeCompile = (shader) => {
+      shader.uniforms.uLabWhite = HERD_LOOK.white;
       shader.vertexShader = DISSOLVE_VERT_PARS + shader.vertexShader.replace("#include <begin_vertex>", DISSOLVE_VERT);
       shader.fragmentShader =
         DISSOLVE_FRAG_PARS +
@@ -329,7 +338,7 @@ export class LabHerd implements TargetField {
               // The hit rim: fresnel in the blow's colour (HDR on the silhouette, a faint fill inside so it reads at 30 px).
               "\n\tfloat labRim = 1.0 - clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );\n\ttotalEmissiveRadiance += vRim * ( 0.12 + 1.6 * labRim * labRim );" +
               // A hero victim's one-frame silhouette: the whole body white-cyan light (round 3a, P6).
-              "\n\tdiffuseColor.rgb *= 1.0 - vWhite;\n\ttotalEmissiveRadiance = mix( totalEmissiveRadiance, vec3( 1.5, 2.0, 2.2 ), vWhite );",
+              "\n\tdiffuseColor.rgb *= 1.0 - vWhite;\n\ttotalEmissiveRadiance = mix( totalEmissiveRadiance, uLabWhite, vWhite );",
           );
     };
     material.customProgramCacheKey = () => "lab-herd-dissolve";
@@ -511,6 +520,19 @@ export class LabHerd implements TargetField {
     if (this.tier(i) >= 4) return;
     this.airV[i] = this.tier(i) >= 2 ? HOP_VY * 0.7 : HOP_VY;
     this.air[i] = 0.001;
+  }
+
+  /**
+   * The element's look on the herd (canon D59): the one-frame hit silhouette's light (linear HDR; null: Metal's
+   * white-cyan) and a hero victim's rim (linear; null: Metal's cyan). Load time.
+   */
+  setElementLook(white: readonly number[] | null, heroRim: readonly number[] | null): void {
+    if (white === null) HERD_LOOK.white.value.set(1.5, 2.0, 2.2);
+    else HERD_LOOK.white.value.set(white[0]!, white[1]!, white[2]!);
+    const r = heroRim ?? [0.06, 0.55, 0.95];
+    HERO_RIM[0] = r[0]!;
+    HERO_RIM[1] = r[1]!;
+    HERO_RIM[2] = r[2]!;
   }
 
   /** A one-frame white-cyan silhouette on a struck beast (the basic shot's and slot 1's target, round 3a P8). */
@@ -741,7 +763,7 @@ export class LabHerd implements TargetField {
       } else if (this.pin[i]! > 0 || this.hero[i] === 1) {
         // A hero victim keeps a cyan rim while it flies and lies pinned (it reads at a quarter of the frame's size).
         const lv = 1.4 * Math.min(1, this.hero[i] === 1 ? 1 : this.pin[i]! / 0.3);
-        rimA.setXYZ(idx, 0.06 * lv, 0.55 * lv, 0.95 * lv);
+        rimA.setXYZ(idx, HERO_RIM[0] * lv, HERO_RIM[1] * lv, HERO_RIM[2] * lv);
       } else if (this.statusT[i]! > 0 && this.dying[i] === 0) {
         const left = this.statusT[i]! / Math.max(1e-3, this.statusLen[i]!);
         const flick = this.statusFlicker[i] === 1 ? 0.62 + 0.38 * Math.sin(this.time * 29 + i * 7.3) * Math.sin(this.time * 13 + i * 2.1) : 1;
