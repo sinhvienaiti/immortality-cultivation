@@ -26,7 +26,7 @@
  * Element (canon D59, ELEMENT_LAYER.md): ?element=metal|fire (default metal), the panel's Element list, E cycles the
  * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
  * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
- * they exist.
+ * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -58,7 +58,8 @@ import { ElementStage } from "../view/skills/element-stage";
 import type { DeathArgs } from "../view/skills/element-kit";
 import type { FlipbookMode } from "../view/skills/flipbook";
 import { CasterPresence } from "./presence";
-import { SWORD_LIGHT } from "../view/skills/sword-material";
+import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
+import { FIRE_FURNACE_BLADE } from "../view/skills/element-fire";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
 
@@ -725,6 +726,8 @@ function kitTexture(name: string): THREE.Texture {
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k) });
 const elementListeners: ((id: string) => void)[] = [];
+/** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
+const BLADE_HEAT = params.get("bladeHeat");
 /** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
 async function setElement(id: string): Promise<boolean> {
   const kit = elementById(id);
@@ -735,6 +738,7 @@ async function setElement(id: string): Promise<boolean> {
   await stage.prepare(kit);
   fx.setElement(kit, stage);
   myriad.setElement(kit, stage);
+  if (BLADE_HEAT === "furnace" && kit.id === "fire") applyBladeLook(FIRE_FURNACE_BLADE);
   sound.element = kit.sound;
   // The screen accent, the herd's hit silhouette and the hero victims' plants follow the element (Metal: their own).
   const flash = kit.screen.flash;

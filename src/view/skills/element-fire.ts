@@ -8,9 +8,10 @@
  * - release: on the last key's frame a point of fire (fire-points.ts) and a ring of fire at the hand (flame tongues
  *   licking out of it, shedding embers), an anime flame lotus (fire-burst, real alpha) bursting behind the caster,
  *   spark rays and embers (key 7's release bigger, with a scorch);
- * - travel: the real Clear Wind silhouette as a fire blade (sword-material.ts furnace: hot-iron body, molten
- *   white-gold edge, an orange heat band), wrapped in a flame sheath (Dragonhold's flame band in the heat-field mode,
- *   tapered to a soot tail) and trailing a flame ribbon (fxkit flame look), shedding embers;
+ * - travel: the real Clear Wind silhouette as a fire blade (sword-material.ts furnace; SWORD_AURA Q3: dark hot-edged
+ *   steel, a molten white-gold edge line and the heat band only along the cutting edges), wrapped in a flame sheath
+ *   (Dragonhold's flame band in the heat-field mode, tapered to a soot tail; with the sword aura on, the aura's flame
+ *   mantle instead) and trailing a flame ribbon (fxkit flame look), shedding embers;
  * - impact: a point of fire (a small gold core in flame tongues, never a white ball), the fire-burst lotus at the
  *   beast (real alpha, its white-hot base graded to gold matter: solid and saturated on pale and dark stone), spark
  *   rays and loose embers, a cut as a molten crescent of matter; key 7's river strikes stay thin (a small point,
@@ -32,7 +33,7 @@
  * DRAGON_FIRE_DIAGNOSIS); only thin cores are HDR. No allocation per frame.
  */
 import * as THREE from "three";
-import type { AftermathArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
+import type { AftermathArgs, BladeLook, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
 import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
@@ -866,8 +867,8 @@ class FireLayers {
   // ── Stream hooks (myriad-swords.ts, key 7) ────────────────────────────────
 
   streamTravel(a: StreamTravelArgs): boolean {
-    // River swords keep the shape's thin trail behind the pommel, in the fire tone (white-gold core, orange rim): the
-    // furnace blades carry the fire, and ~90 flame cards across the field read as burning planks (03/11 captures).
+    // River swords keep the shape's thin trail behind the pommel, in the fire tone (white-gold core, orange rim): ~90
+    // flame cards across the field read as burning planks (03/11 captures). Their blades are hot-edged steel (Q3).
     if (a.cls !== 0) return false;
     if (a.dissolve > 0.6) return true;
     // A lead blade: its sheath hugs it (its ribbon is the flame trail).
@@ -1173,6 +1174,15 @@ export const FIRE_AURA: SwordAuraLook = {
   reduced: { flow: 0.3, flickerHz: 2 },
 };
 
+/**
+ * Fire's blade (SWORD_AURA Q3, owner 03/11/2026: "Có, đổi"): dark hot-edged steel, the heat band only along the cutting
+ * edges (from 0.55 of the edge field) and the steel's own body at 0.4 of its albedo, so the fire licks AROUND the blade
+ * instead of the whole blade glowing orange like heated iron; the molten white-gold edge line stays.
+ */
+export const FIRE_BLADE: BladeLook = { mode: "furnace", edge: [3.4, 2.3, 0.95], heat: [0.9, 0.3, 0.03], char: 0.4, heatFrom: 0.55 };
+/** The furnace blade before Q3 (the whole face hot iron): the lab's ?bladeHeat=furnace, for comparison only. */
+export const FIRE_FURNACE_BLADE: BladeLook = { mode: "furnace", edge: [3.4, 2.3, 0.95], heat: [0.9, 0.3, 0.03], char: 0.12, heatFrom: 0.05 };
+
 export const FIRE: ElementKit = {
   id: "fire",
   name: "Fire",
@@ -1181,7 +1191,7 @@ export const FIRE: ElementKit = {
   palette: firePalette,
   stream: FIRE_STREAM,
   trail: { widthM: 0.16, core: k3(CORE, 2), rimK: 0.8, silk: false, flame: { clip: "dragonhold-flame-trail", soot: SOOT, deep: VERMILION, amber: AMBER, core: WHITE_GOLD } },
-  blade: { mode: "furnace", edge: [3.4, 2.3, 0.95], heat: [0.9, 0.3, 0.03], char: 0.12 },
+  blade: FIRE_BLADE,
   swordAura: FIRE_AURA,
   textures: {},
   flipbooks: {

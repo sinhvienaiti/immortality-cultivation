@@ -10,7 +10,7 @@
  * frame. Key 7's far river and K5's gate ring use it; mid and hero swords are the textured meshes (blades.ts).
  */
 import * as THREE from "three";
-import { SWORD_LIGHT, SWORD_LOOK } from "./sword-material";
+import { HEAT_BAND, SWORD_LIGHT, SWORD_LOOK } from "./sword-material";
 
 /** The atlas' layout (<id>-impostor.json). */
 export interface SwordAtlasMeta {
@@ -125,6 +125,7 @@ uniform float uLight;
 uniform float uMode;
 uniform vec3 uHeat;
 uniform float uChar;
+uniform float uHeatFrom;
 varying vec2 vUv;
 varying float vRoll;
 varying vec3 vFx;
@@ -148,7 +149,7 @@ void main() {
   if (uMode > 0.5) {
     // Furnace (sword-material.ts): hot iron under the light, a heat band from the spine to the edges.
     col *= uChar;
-    col += uHeat * smoothstep(0.05, 0.85, field) * m.g * (0.55 + 0.45 * vFx.x);
+    col += uHeat * ${HEAT_BAND("uHeatFrom", "field")} * m.g * (0.55 + 0.45 * vFx.x);
   }
   col += c.rgb * min(vFx.y, 1.5) * 0.55;
   col += uEdge * line * min(vFx.x + vFx.y, 1.6);
@@ -206,6 +207,7 @@ export class SwordImpostors {
         uMode: SWORD_LOOK.mode,
         uHeat: SWORD_LOOK.heat,
         uChar: SWORD_LOOK.char,
+        uHeatFrom: SWORD_LOOK.heatFrom,
         // The bake is the lab's lookdev light through no tone curve; the meshes' light gain follows the darkening.
         uGain: { value: 1 },
         uLight: SWORD_LIGHT,

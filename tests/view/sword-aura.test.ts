@@ -1,10 +1,11 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { standInModel } from "../../src/view/skills/blades";
-import { FIRE } from "../../src/view/skills/element-fire";
+import { FIRE, FIRE_FURNACE_BLADE } from "../../src/view/skills/element-fire";
 import { METAL } from "../../src/view/skills/element-metal";
 import { elementKits } from "../../src/view/skills/elements";
 import { applySwordAuraLook, AURA_BODY_MAX, SWORD_AURA_LOOK } from "../../src/view/skills/sword-aura";
+import { applyBladeLook, SWORD_LOOK } from "../../src/view/skills/sword-material";
 
 /** Hue (degrees, on sRGB) and saturation of a linear colour. */
 function hsl(c: { x: number; y: number; z: number } | readonly number[]): { h: number; s: number; l: number } {
@@ -72,5 +73,19 @@ describe("sword aura contract (SWORD_AURA §4.8)", () => {
     expect(max).toBeGreaterThan(0.01);
     // The profile only narrows toward the tip.
     expect(a.profile[95]!).toBeLessThanOrEqual(a.profile[10]! + 1e-6);
+  });
+
+  it("Q3: Fire's blade is dark hot-edged steel by default; the old furnace stays for comparison; Metal reads no heat", () => {
+    expect(FIRE.blade.mode).toBe("furnace");
+    expect(FIRE.blade.heatFrom).toBeCloseTo(0.55);
+    expect(FIRE.blade.char).toBeCloseTo(0.4);
+    expect(FIRE_FURNACE_BLADE.heatFrom).toBeCloseTo(0.05);
+    expect(FIRE_FURNACE_BLADE.char).toBeCloseTo(0.12);
+    applyBladeLook(FIRE.blade);
+    expect(SWORD_LOOK.heatFrom.value).toBeCloseTo(0.55);
+    applyBladeLook(METAL.blade);
+    expect(METAL.blade.mode).toBe("steel");
+    expect(SWORD_LOOK.mode.value).toBe(0);
+    expect(SWORD_LOOK.heatFrom.value).toBeCloseTo(0.05);
   });
 });

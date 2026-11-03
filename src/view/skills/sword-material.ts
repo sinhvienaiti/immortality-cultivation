@@ -30,25 +30,36 @@ export const EDGE_HOT: readonly [number, number, number] = [0.62 * 3.6, 0.88 * 3
  * swords' materials and the impostors. `edge` is the edge line's light (Metal: EDGE_HOT); `mode` 0 steel, 1 furnace.
  * Furnace (Fire, 03/11/2026): the same real sword, its body darkened to hot iron (× `char`), a heat band (`heat`,
  * ≤ 0.9 with its flicker) rising from the spine to the cutting edges and flickering along the blade on `time`, the
- * edge line in molten white-gold, and the jade turned to embers. Steel never reads `heat`, `char` or `time`.
+ * edge line in molten white-gold, and the jade turned to embers. Steel never reads `heat`, `char`, `heatFrom` or
+ * `time`. `heatFrom` (SWORD_AURA Q3, owner 03/11: "Có, đổi"): where the heat band starts on the edge field; 0.05 is
+ * the old furnace (the whole face glowing like heated iron), Fire's 0.55 leaves dark steel with hot edges and the fire
+ * round the blade.
  */
 export const SWORD_LOOK = {
   edge: { value: new THREE.Vector3(EDGE_HOT[0], EDGE_HOT[1], EDGE_HOT[2]) },
   mode: { value: 0 },
   heat: { value: new THREE.Vector3(0, 0, 0) },
   char: { value: 1 },
+  heatFrom: { value: 0.05 },
   /** Seconds for the furnace's flicker (the element kit advances it while it draws). */
   time: { value: 0 },
 };
 
 /** Puts an element's blade look on every skill sword (no allocation). */
-export function applyBladeLook(look: { readonly mode: "steel" | "furnace"; readonly edge: readonly [number, number, number]; readonly heat?: readonly [number, number, number]; readonly char?: number }): void {
+export function applyBladeLook(look: { readonly mode: "steel" | "furnace"; readonly edge: readonly [number, number, number]; readonly heat?: readonly [number, number, number]; readonly char?: number; readonly heatFrom?: number }): void {
   SWORD_LOOK.edge.value.set(look.edge[0], look.edge[1], look.edge[2]);
   SWORD_LOOK.mode.value = look.mode === "furnace" ? 1 : 0;
   const h = look.heat ?? [0, 0, 0];
   SWORD_LOOK.heat.value.set(h[0], h[1], h[2]);
   SWORD_LOOK.char.value = look.char ?? 1;
+  SWORD_LOOK.heatFrom.value = look.heatFrom ?? 0.05;
 }
+
+/**
+ * The heat band's start on the edge field: the old furnace keeps its constant expression (0.05, bit for bit), any
+ * other start reads the uniform (GLSL, shared by the swords' material and the impostors).
+ */
+export const HEAT_BAND = (heatFrom: string, field: string): string => `(${heatFrom} <= 0.0501 ? smoothstep(0.05, 0.85, ${field}) : smoothstep(${heatFrom}, 0.85, ${field}))`;
 
 const PARS_VERTEX = /* glsl */ `
 attribute float aEdge;
@@ -65,6 +76,7 @@ uniform vec3 uSwEdge;
 uniform float uSwMode;
 uniform vec3 uSwHeat;
 uniform float uSwChar;
+uniform float uSwHeatFrom;
 uniform float uSwTime;
 uniform vec3 uSwJade;
 uniform float uSwLight;
@@ -118,7 +130,7 @@ const EMIT = /* glsl */ `
     // blade as it flies (noise on the blade's own space and time); the edge line above is the molten white-gold.
     swJadeE = uSwHeat * swJade * (0.35 + 0.35 * swGlow + 0.4 * min(swFlash, 1.0));
     float swFl = swNoise(vec3(vSwP.x * 9.0, vSwP.y * 10.0 - uSwTime * 2.8, vSwFx.w * 5.0 + uSwTime * 0.6));
-    float swBand = smoothstep(0.05, 0.85, vSwE) * swOn;
+    float swBand = ${HEAT_BAND("uSwHeatFrom", "vSwE")} * swOn;
     totalEmissiveRadiance += uSwHeat * swBand * (0.55 + 0.45 * swFl) * (0.75 + 0.5 * swGlow + 0.5 * min(swFlash, 1.0));
   }
   totalEmissiveRadiance += swJadeE;
@@ -156,6 +168,7 @@ export function patchSwordMaterial(material: THREE.MeshStandardMaterial, opts: S
     uSwMode: SWORD_LOOK.mode,
     uSwHeat: SWORD_LOOK.heat,
     uSwChar: SWORD_LOOK.char,
+    uSwHeatFrom: SWORD_LOOK.heatFrom,
     uSwTime: SWORD_LOOK.time,
     uSwJade: { value: new THREE.Vector3(opts.jade[0], opts.jade[1], opts.jade[2]) },
     uSwLight: SWORD_LIGHT,
