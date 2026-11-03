@@ -8,7 +8,7 @@
  */
 import type * as THREE from "three";
 import type { ElementHooks, ElementId, ElementKit } from "./element-kit";
-import { FlipbookPlayer } from "./flipbook";
+import { FlipbookPlayer, type FlipbookMeta } from "./flipbook";
 import { BeamPool, Rand, RibbonPool, SpritePool, type SpriteBlend, type SpriteFacing, type SpritePoolOptions } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
 import type { SwordSkillTextures } from "./sword-skills";
@@ -25,6 +25,11 @@ export interface ElementStageOptions {
   readonly texture: (name: string) => THREE.Texture;
   /** Folder holding one flipbook folder per element (the lab: /art-src/lab/vfx/). */
   readonly vfxBase: string;
+  /**
+   * A kit's screen accent on a big blow (its ScreenAccent.flash, at a world point, strength 0–1): the host's screen
+   * effects answer it (the lab: screen-fx.ts warm). Absent: none.
+   */
+  readonly accent?: (x: number, y: number, z: number, strength: number) => void;
 }
 
 const NO_HOOKS: ElementHooks = {};
@@ -45,6 +50,7 @@ export class ElementStage {
   /** World seconds since the stage was made (frame by frame). */
   time = 0;
   private readonly resolve: (name: string) => THREE.Texture;
+  private readonly onAccent: ((x: number, y: number, z: number, strength: number) => void) | null;
   private readonly sprites: SpritePool[] = [];
   private readonly ribbonPools: RibbonPool[] = [];
   private readonly beamPools: BeamPool[] = [];
@@ -59,6 +65,7 @@ export class ElementStage {
     this.dens = opts.quality === "low" ? 0.5 : opts.quality === "medium" ? 0.75 : 1;
     this.textures = opts.textures;
     this.resolve = opts.texture;
+    this.onAccent = opts.accent ?? null;
     this.flipbooks = new FlipbookPlayer(opts.vfxBase);
     this.layer.add(this.flipbooks.group);
   }
@@ -84,6 +91,16 @@ export class ElementStage {
       if (missing.length > 0) console.warn(`[element-stage] ${kit.id}: clips not found in its manifest: ${missing.join(", ")}`);
     }
     return h;
+  }
+
+  /** A kit's screen accent on a big blow at (x, y, z), strength 0–1 (the host's, when it gave one). */
+  accent(x: number, y: number, z: number, strength: number): void {
+    this.onAccent?.(x, y, z, strength);
+  }
+
+  /** A loaded clip's atlas and layout in `folder` (a flame trail's band), or null before it arrives. */
+  clip(folder: string, id: string): { texture: THREE.Texture; meta: FlipbookMeta } | null {
+    return this.flipbooks.library(folder).get(id);
   }
 
   /** A named texture (a kit's sheet or decal). */

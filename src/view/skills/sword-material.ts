@@ -27,18 +27,27 @@ export const EDGE_HOT: readonly [number, number, number] = [0.62 * 3.6, 0.88 * 3
 
 /**
  * The element's look on every skill sword (canon D59; element-kit.ts BladeLook): one set of uniforms shared by the
- * swords' materials and the impostors. `edge` is the edge line's light (Metal: EDGE_HOT); `mode` 0 steel, 1 furnace
- * (Fire's hot blade: its shader branch lands with the Fire look, nothing reads it yet).
+ * swords' materials and the impostors. `edge` is the edge line's light (Metal: EDGE_HOT); `mode` 0 steel, 1 furnace.
+ * Furnace (Fire, 03/11/2026): the same real sword, its body darkened to hot iron (× `char`), a heat band (`heat`,
+ * ≤ 0.9 with its flicker) rising from the spine to the cutting edges and flickering along the blade on `time`, the
+ * edge line in molten white-gold, and the jade turned to embers. Steel never reads `heat`, `char` or `time`.
  */
 export const SWORD_LOOK = {
   edge: { value: new THREE.Vector3(EDGE_HOT[0], EDGE_HOT[1], EDGE_HOT[2]) },
   mode: { value: 0 },
+  heat: { value: new THREE.Vector3(0, 0, 0) },
+  char: { value: 1 },
+  /** Seconds for the furnace's flicker (the element kit advances it while it draws). */
+  time: { value: 0 },
 };
 
 /** Puts an element's blade look on every skill sword (no allocation). */
-export function applyBladeLook(look: { readonly mode: "steel" | "furnace"; readonly edge: readonly [number, number, number] }): void {
+export function applyBladeLook(look: { readonly mode: "steel" | "furnace"; readonly edge: readonly [number, number, number]; readonly heat?: readonly [number, number, number]; readonly char?: number }): void {
   SWORD_LOOK.edge.value.set(look.edge[0], look.edge[1], look.edge[2]);
   SWORD_LOOK.mode.value = look.mode === "furnace" ? 1 : 0;
+  const h = look.heat ?? [0, 0, 0];
+  SWORD_LOOK.heat.value.set(h[0], h[1], h[2]);
+  SWORD_LOOK.char.value = look.char ?? 1;
 }
 
 const PARS_VERTEX = /* glsl */ `
@@ -53,6 +62,10 @@ varying vec3 vSwRim;
 
 const PARS_FRAGMENT = /* glsl */ `
 uniform vec3 uSwEdge;
+uniform float uSwMode;
+uniform vec3 uSwHeat;
+uniform float uSwChar;
+uniform float uSwTime;
 uniform vec3 uSwJade;
 uniform float uSwLight;
 uniform float uSwBladeFrom;
@@ -82,6 +95,8 @@ const DISSOLVE = /* glsl */ `
 const JADE = /* glsl */ `
   vec3 swC = diffuseColor.rgb;
   float swJade = smoothstep(0.07, 0.17, (swC.g - swC.r) / max(swC.g, 0.04)) * smoothstep(-0.05, 0.0, swC.g - swC.b);
+  // Furnace: the body darkens to hot iron under the scene's light (its own heat is emitted below).
+  if (uSwMode > 0.5) diffuseColor.rgb *= uSwChar;
 `;
 
 const EMIT = /* glsl */ `
@@ -98,6 +113,14 @@ const EMIT = /* glsl */ `
   totalEmissiveRadiance += vSwRim * swFr * (0.22 + 0.4 * swGlow + 0.5 * min(swFlash, 1.0));
   vec3 swTint = swC / max(max(swC.r, swC.g), max(swC.b, 1e-3));
   vec3 swJadeE = swTint * uSwJade * swJade * (0.16 + 0.24 * swGlow + 0.4 * min(swFlash, 1.0));
+  if (uSwMode > 0.5) {
+    // Furnace: the jade burns as embers; a heat band rises from the spine to the cutting edges, flickering along the
+    // blade as it flies (noise on the blade's own space and time); the edge line above is the molten white-gold.
+    swJadeE = uSwHeat * swJade * (0.35 + 0.35 * swGlow + 0.4 * min(swFlash, 1.0));
+    float swFl = swNoise(vec3(vSwP.x * 9.0, vSwP.y * 10.0 - uSwTime * 2.8, vSwFx.w * 5.0 + uSwTime * 0.6));
+    float swBand = smoothstep(0.05, 0.85, vSwE) * swOn;
+    totalEmissiveRadiance += uSwHeat * swBand * (0.55 + 0.45 * swFl) * (0.75 + 0.5 * swGlow + 0.5 * min(swFlash, 1.0));
+  }
   totalEmissiveRadiance += swJadeE;
   totalEmissiveRadiance += swC * min(swFlash, 1.5) * 0.55;
   totalEmissiveRadiance += uSwEdge * swDe * 0.7;
@@ -130,6 +153,10 @@ export interface SwordMaterialOptions {
 export function patchSwordMaterial(material: THREE.MeshStandardMaterial, opts: SwordMaterialOptions): THREE.MeshStandardMaterial {
   const uniforms = {
     uSwEdge: SWORD_LOOK.edge,
+    uSwMode: SWORD_LOOK.mode,
+    uSwHeat: SWORD_LOOK.heat,
+    uSwChar: SWORD_LOOK.char,
+    uSwTime: SWORD_LOOK.time,
     uSwJade: { value: new THREE.Vector3(opts.jade[0], opts.jade[1], opts.jade[2]) },
     uSwLight: SWORD_LIGHT,
     uSwBladeFrom: { value: opts.bladeFrom },

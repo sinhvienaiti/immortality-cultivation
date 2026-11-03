@@ -54,13 +54,14 @@
  */
 import * as THREE from "three";
 import { BladeSet, loadSwordModels } from "./blades";
-import type { ElementKit, StreamGlintArgs, StreamHooks, StreamSeamArgs, StreamSegmentArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone } from "./element-kit";
+import type { ElementKit, StreamGlintArgs, StreamHooks, StreamSeamArgs, StreamSegmentArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs } from "./element-kit";
 import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
 import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
 import { QiSlash } from "./qi-slash";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
 import { applyBladeLook, FaceRoll } from "./sword-material";
+import { flameOf } from "./sword-skills";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
 
@@ -287,6 +288,9 @@ export class MyriadSwordsFx {
   private readonly aSeg: StreamSegmentArgs = { ax: 0, az: 0, bx: 0, bz: 0 };
   private readonly aSpark: StreamSparkArgs = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
   private readonly aSeam: StreamSeamArgs = { target: -1, ux: 1, uz: 0 };
+  private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0 };
+  /** The lead blades' trail width over Metal's (the element's trail width ÷ Metal's 0.14 m). */
+  private trailK = 1;
   private readonly aLead = { x: 0, z: 0 };
   /** Strikes and dives so far in this cast (the perceived-strikes check) and the lead blades' dives. */
   strikes = 0;
@@ -394,6 +398,8 @@ export class MyriadSwordsFx {
     const sl = kit.stream.slash;
     this.qi.setColours(sl.white, sl.body, sl.bodyLit, sl.deep);
     applyBladeLook(kit.blade);
+    this.ribbons.setFlame(flameOf(kit, stage));
+    this.trailK = kit.trail.flame !== undefined ? kit.trail.widthM / TRAIL_M : 1;
   }
 
   /** Sword i's class: 0 lead, 1 mid, 2 far streak. */
@@ -452,7 +458,7 @@ export class MyriadSwordsFx {
       this.lenM[i] = HERO_M;
       this.flown[i] = 0;
       this.reserved[target] = this.reserved[target]! + 1;
-      this.startRibbon(i, TRAIL_M);
+      this.startRibbon(i, TRAIL_M * this.trailK);
       this.host.flyby(this.v.x, this.v.y, this.v.z, 30);
     }
   }
@@ -1121,8 +1127,8 @@ export class MyriadSwordsFx {
     this.u[i] = Math.min(0.9, Math.max(0.05, (this.px[i]! + 19.5) / 39));
     this.lenFrom[i] = this.lenM[i]!;
     this.tgt[i] = -1;
-    if (!this.ribbons.isOn(i)) this.startRibbon(i, TRAIL_M);
-    else this.ribbons.setWidth(i, TRAIL_M);
+    if (!this.ribbons.isOn(i)) this.startRibbon(i, TRAIL_M * this.trailK);
+    else this.ribbons.setWidth(i, TRAIL_M * this.trailK);
   }
 
   /** Moves sword i to (x, y, z), turning it along its motion (damped, so it never snaps). */
@@ -1684,6 +1690,24 @@ export class MyriadSwordsFx {
         const lead = cls === SWORD_LEAD;
         const halo = this.tone.halo;
         B.look(i, lead ? 1 : 0.45 + 0.55 * b, st === S_WOUND ? 0.6 : 0, halo[0] * 0.8, halo[1] * 0.8, halo[2] * 0.8, dissolve, i * 0.37);
+      }
+      // The element's sword in flight (its hook) in place of the trail below.
+      const travel = this.hooks.travel;
+      if (travel !== undefined) {
+        const a = this.aTravel;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        a.dx = dx;
+        a.dy = dy;
+        a.dz = dz;
+        a.len = len;
+        a.cls = cls;
+        a.bright = b;
+        a.dissolve = dissolve;
+        a.diving = st === S_DIVE;
+        a.trailM = cls === SWORD_LEAD || st === S_WOUND ? 0 : (st === S_DIVE ? 0.9 : st === S_GATHER || st === S_FOLD ? 0.6 : st === S_STROKE || st === S_AIM ? 0.25 : 0.45) * len;
+        if (travel(a)) continue;
       }
       // The trail: long while diving, a short flowing one in the river (the lead blades have their ribbons).
       if (cls !== SWORD_LEAD && dissolve < 0.5 && st !== S_WOUND) {

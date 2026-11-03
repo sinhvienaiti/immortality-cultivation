@@ -532,6 +532,63 @@ void main() {
   gl_FragColor = vec4(rgb * a, a);
 }`;
 
+/**
+ * The flame look of a ribbon (an element kit's trail, canon D59): a flame atlas on black (Dragonhold's flame band)
+ * scrolled along the trail and read as HEAT, shaped by the ribbon (hot along its middle and near its head, cooling
+ * down its tail), then coloured through a soot-rimmed ramp and drawn premultiplied (Gemini's heat field, 03/11/2026):
+ * eroded under ~0.12, a soot edge at alpha 0.85 that covers the pale floor (never an orange veil), an orange-to-amber
+ * body at 0.95, and a white-gold core (× 2.2) that alone blooms. Fades cool it instead of thinning it.
+ */
+const FLAME_RIBBON_FRAGMENT = /* glsl */ `
+uniform sampler2D map;
+uniform vec2 uGrid;
+uniform float uFrames;
+uniform float uFps;
+uniform float uTime;
+uniform vec3 uSoot;
+uniform vec3 uDeep;
+uniform vec3 uAmber;
+uniform vec3 uCore;
+varying float vT;
+varying vec4 vCol;
+varying vec3 vRim;
+varying float vSide;
+void main() {
+  float s = clamp(1.0 - abs(vSide * 2.0 - 1.0), 0.0, 1.0);
+  float f = mod(floor(uTime * uFps), uFrames);
+  vec2 cell = vec2(mod(f, uGrid.x), uGrid.y - 1.0 - floor(f / uGrid.x));
+  // Stretched along the trail and read soft (a mip bias): the band's cells become flame streaks, not a crust.
+  vec2 cuv = vec2(clamp(fract(vT * 0.45 - uTime * 1.1), 0.004, 0.996), 0.5 + (vSide - 0.5) * 0.7);
+  vec4 t = texture2D(map, (cell + cuv) / uGrid, 0.8);
+  float lum = pow(clamp(max(t.r, max(t.g, t.b)), 0.0, 1.0), 0.4545);
+  // Hot along the middle near the head; down the tail it cools and breaks into tongues that erode away (a soot
+  // rim only at its edges, never a dark band left lying across the field).
+  float prof = smoothstep(0.0, 0.75, s) * (1.0 - smoothstep(0.3, 1.0, vT));
+  float heat = prof * (0.3 + 0.9 * lum) * vCol.a;
+  float edge = 0.14 + 0.16 * vT + (0.5 - lum) * 0.12;
+  float a = smoothstep(edge, edge + 0.04, heat);
+  if (a <= 0.002) discard;
+  float b = smoothstep(edge + 0.08, edge + 0.16, heat);
+  float c = smoothstep(0.84, 0.96, heat) * (1.0 - smoothstep(0.1, 0.35, vT));
+  vec3 col = mix(uSoot, mix(uDeep, uAmber, smoothstep(0.35, 0.8, heat)), b);
+  col = mix(col, uCore * 2.2, c);
+  a *= mix(0.85, 0.95, b);
+  gl_FragColor = vec4(col * a, a);
+}`;
+
+/** A flame atlas for RibbonPool.setFlame: its texture and grid, and the heat ramp (linear). */
+export interface RibbonFlame {
+  readonly texture: THREE.Texture;
+  readonly cols: number;
+  readonly rows: number;
+  readonly frames: number;
+  readonly fps: number;
+  readonly soot: readonly number[];
+  readonly deep: readonly number[];
+  readonly amber: readonly number[];
+  readonly core: readonly number[];
+}
+
 /** World seconds between two ribbon samples: a trail's shape follows time, not frames (the same at 60 and 120 Hz, frozen in a hit-stop). */
 const RIBBON_SAMPLE_S = 1 / 60;
 /**
@@ -583,6 +640,8 @@ export class RibbonPool {
   private readonly attrs: PrefixAttribute[];
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: THREE.ShaderMaterial;
+  /** The flame look (setFlame), made on first use; null: the light look. */
+  private flameMaterial: THREE.ShaderMaterial | null = null;
   private readonly camPos = new THREE.Vector3();
   private readonly tmpA = new THREE.Vector3();
   private readonly tmpB = new THREE.Vector3();
@@ -658,6 +717,44 @@ export class RibbonPool {
 
   set texture(t: THREE.Texture) {
     this.material.uniforms.map!.value = t;
+  }
+
+  /**
+   * Draws every ribbon of the pool as flame (an element's trail; load time) or, with null, as sword-light again (the
+   * default look, unchanged). The ribbons keep their paths, widths and fades; only their material changes.
+   */
+  setFlame(flame: RibbonFlame | null): void {
+    if (flame === null) {
+      this.mesh.material = this.material;
+      return;
+    }
+    let m = this.flameMaterial;
+    if (m === null) {
+      const v3 = (): { value: THREE.Vector3 } => ({ value: new THREE.Vector3() });
+      m = new THREE.ShaderMaterial({
+        vertexShader: RIBBON_VERTEX,
+        fragmentShader: FLAME_RIBBON_FRAGMENT,
+        uniforms: { map: { value: flame.texture }, uGrid: { value: new THREE.Vector2(1, 1) }, uFrames: { value: 1 }, uFps: { value: 12 }, uTime: this.material.uniforms.uTime!, uSoot: v3(), uDeep: v3(), uAmber: v3(), uCore: v3() },
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneMinusSrcAlphaFactor,
+      });
+      this.flameMaterial = m;
+    }
+    const u = m.uniforms;
+    u.map!.value = flame.texture;
+    (u.uGrid!.value as THREE.Vector2).set(flame.cols, flame.rows);
+    u.uFrames!.value = flame.frames;
+    u.uFps!.value = flame.fps;
+    (u.uSoot!.value as THREE.Vector3).fromArray(flame.soot);
+    (u.uDeep!.value as THREE.Vector3).fromArray(flame.deep);
+    (u.uAmber!.value as THREE.Vector3).fromArray(flame.amber);
+    (u.uCore!.value as THREE.Vector3).fromArray(flame.core);
+    this.mesh.material = m;
   }
 
   /** Starts ribbon `i` at a point with a width and an HDR colour; it eases in over `fadeIn` s (smoothstep). */

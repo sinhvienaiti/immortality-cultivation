@@ -122,6 +122,9 @@ uniform vec4 uCell;
 uniform vec3 uEdge;
 uniform float uGain;
 uniform float uLight;
+uniform float uMode;
+uniform vec3 uHeat;
+uniform float uChar;
 varying vec2 vUv;
 varying float vRoll;
 varying vec3 vFx;
@@ -142,6 +145,11 @@ void main() {
   float field = m.r / max(m.a, 1e-3);
   float line = smoothstep(0.8, 0.95, field) * m.g;
   vec3 col = c.rgb * uGain * uLight;
+  if (uMode > 0.5) {
+    // Furnace (sword-material.ts): hot iron under the light, a heat band from the spine to the edges.
+    col *= uChar;
+    col += uHeat * smoothstep(0.05, 0.85, field) * m.g * (0.55 + 0.45 * vFx.x);
+  }
   col += c.rgb * min(vFx.y, 1.5) * 0.55;
   col += uEdge * line * min(vFx.x + vFx.y, 1.6);
   gl_FragColor = vec4(col * a, c.a * a);
@@ -195,6 +203,9 @@ export class SwordImpostors {
         tLit: { value: null },
         tMask: { value: null },
         uEdge: SWORD_LOOK.edge,
+        uMode: SWORD_LOOK.mode,
+        uHeat: SWORD_LOOK.heat,
+        uChar: SWORD_LOOK.char,
         // The bake is the lab's lookdev light through no tone curve; the meshes' light gain follows the darkening.
         uGain: { value: 1 },
         uLight: SWORD_LIGHT,

@@ -88,6 +88,9 @@ export const SCREEN_TIERS: Readonly<Record<ScreenTier, TierFx>> = {
   ultimate: { shakePx: 16, shakeS: 0.35, rollDeg: 0.35, punch: 0.04, punchS: 0.3, stopMs: 50, finisherStopMs: 110, slow: 0.3, slowS: 0.28, dark: 0.45, darkS: 0.5, hold: 0.45, desat: 0.6, frames: 2, localFrame: true, localPx: 110 },
 };
 
+/** The graphic frames' own palette (display values): navy world, paper, cyan (Metal's; an element may swap it). */
+const FRAME_PALETTE = { navy: [0.035, 0.06, 0.15], paper: [0.95, 0.975, 1.0], accent: [0.22, 0.82, 1.0] } as const;
+
 /** Graphic frame modes (ImpactPass uMode). */
 export const IMPACT_DARK = 1;
 export const IMPACT_INVERT = 2;
@@ -174,7 +177,11 @@ function hash(i: number, seed: number): number {
   return ((h >>> 0) / 4294967295) * 2 - 1;
 }
 
-/** The linear pass before the OutputPass: darkening (when the host has no light hook), vignette, desaturation. */
+/**
+ * The linear pass before the OutputPass: darkening (when the host has no light hook), vignette, desaturation, and an
+ * element's warm flash on a big blow (Fire: the world, not its hot light, lifts toward amber for ~0.16 s; a gain, not
+ * an added tint, so no milky veil).
+ */
 const SCREEN_SHADER = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
@@ -182,6 +189,7 @@ const SCREEN_SHADER = {
     uVignette: { value: 0 },
     uDesat: { value: 0 },
     uAspect: { value: 16 / 9 },
+    uWarm: { value: new THREE.Vector3() },
   },
   vertexShader: /* glsl */ `
 varying vec2 vUv;
@@ -195,6 +203,7 @@ uniform float uDark;
 uniform float uVignette;
 uniform float uDesat;
 uniform float uAspect;
+uniform vec3 uWarm;
 varying vec2 vUv;
 void main() {
   vec4 c = texture2D(tDiffuse, vUv);
@@ -213,6 +222,7 @@ void main() {
   }
   float vig = 1.0 - uVignette * smoothstep(0.3, 1.05, r);
   c.rgb *= mix((1.0 - uDark) * vig, 1.0, keep);
+  c.rgb *= vec3(1.0) + uWarm * (1.0 - keep);
   gl_FragColor = c;
 }`,
 };
@@ -494,6 +504,11 @@ export class ScreenFx {
   private darkAmp = 0;
   private darkAge = 1;
   private darkS = 0.2;
+  /** The element's warm flash (setAccent, warm): its tint (zero: none), strength, age and length. */
+  private readonly warmTint = new THREE.Vector3();
+  private warmAmp = 0;
+  private warmAge = 1;
+  private warmS = 0.16;
   /** A held darkening a running skill sets (its world change), 0 when none; and its desaturation. */
   private darkHoldGoal = 0;
   private darkHold = 0;
@@ -542,7 +557,7 @@ export class ScreenFx {
    * Shown values this frame (checks and captures). impactStep: the graphic frame's index in its sequence (−1 none);
    * impactMode: 0 none, 1 dark, 2 invert; impactLocal: a local burst shows (1) or the whole screen (0).
    */
-  readonly shown = { dark: 0, light: 1, desat: 0, impactStep: -1, impactMode: 0, impactLocal: 0, impactFrames: 0, shakePx: 0, rollDeg: 0, punch: 0, worldScale: 1, stopping: false };
+  readonly shown = { dark: 0, light: 1, desat: 0, warm: 0, impactStep: -1, impactMode: 0, impactLocal: 0, impactFrames: 0, shakePx: 0, rollDeg: 0, punch: 0, worldScale: 1, stopping: false };
 
   constructor(private readonly host: ScreenFxHost) {
     this.pass = new ScreenPass();
@@ -561,6 +576,37 @@ export class ScreenFx {
     composer.insertPass(this.impactPass, at + 2);
     // The fallback quad goes first in the overlay list, so later overlays (damage numbers) draw over it.
     this.removeQuad = host.addOverlay(this.quad);
+  }
+
+  /**
+   * An element's accent (canon D59, element-kit.ts ScreenAccent): the warm flash's tint (linear gain per channel at
+   * full strength; null: none) and the graphic frames' palette (display values: the dark frame's world tone, the
+   * inverted frame's paper, the accent round figures and cores; null: Metal's navy, paper and cyan).
+   */
+  setAccent(warm: readonly number[] | null, frames: { readonly navy: readonly number[]; readonly paper: readonly number[]; readonly accent: readonly number[] } | null): void {
+    if (warm === null) this.warmTint.set(0, 0, 0);
+    else this.warmTint.set(warm[0]!, warm[1]!, warm[2]!);
+    const u = this.impactPass.uniforms;
+    const f = frames ?? FRAME_PALETTE;
+    u.uNavy.value.set(f.navy[0]!, f.navy[1]!, f.navy[2]!);
+    u.uPaper.value.set(f.paper[0]!, f.paper[1]!, f.paper[2]!);
+    u.uCyan.value.set(f.accent[0]!, f.accent[1]!, f.accent[2]!);
+  }
+
+  /** The element's warm flash on a big blow: `strength` (0–1) of its tint, rising in 20 ms and gone in `seconds`. */
+  warm(strength: number, seconds = 0.16): void {
+    const now = this.warmLevel();
+    if (strength <= now || (this.warmTint.x === 0 && this.warmTint.y === 0 && this.warmTint.z === 0)) return;
+    this.warmAmp = strength;
+    this.warmAge = 0;
+    this.warmS = Math.max(0.05, seconds);
+  }
+
+  private warmLevel(): number {
+    if (this.warmAge >= this.warmS) return 0;
+    const rise = smooth01(this.warmAge / 0.02);
+    const fall = 1 - smooth01((this.warmAge - 0.03) / Math.max(0.02, this.warmS - 0.03));
+    return this.warmAmp * rise * fall;
   }
 
   /** The authored impact masks (white on black, read as alpha); missing ones fall back as the class comment says. */
@@ -853,7 +899,10 @@ export class ScreenFx {
     u.uDark.value = lights ? 0 : dark;
     u.uVignette.value = lights ? dark * VIGNETTE_SHARE : 0;
     u.uDesat.value = desat;
-    const active = u.uDark.value > 0.002 || u.uVignette.value > 0.002 || desat > 0.002;
+    this.warmAge += dt;
+    const warm = this.warmLevel() * k;
+    u.uWarm.value.copy(this.warmTint).multiplyScalar(warm);
+    const active = u.uDark.value > 0.002 || u.uVignette.value > 0.002 || desat > 0.002 || warm > 0.002;
     const viaComposer = this.host.composerOn();
     this.pass.enabled = active && viaComposer && !this.bypass;
     // The graphic frame: the full-screen step wins over a local burst.
@@ -901,6 +950,7 @@ export class ScreenFx {
     s.dark = dark;
     s.light = light;
     s.desat = desat;
+    s.warm = warm;
     s.impactStep = this.impactPass.enabled ? (local === 1 ? 0 : this.step) : -1;
     s.impactMode = this.impactPass.enabled ? mode : 0;
     s.impactLocal = local;
@@ -945,7 +995,7 @@ export class ScreenFx {
   reset(): void {
     this.trauma = this.traumaRate = this.rollPeak = 0;
     this.rumbleLevel = this.rumbleLeft = 0;
-    this.punchAge = this.darkAge = 10;
+    this.punchAge = this.darkAge = this.warmAge = 10;
     this.darkHold = this.darkHoldGoal = 0;
     this.step = this.localStep = -1;
     this.stepFresh = this.localFresh = false;

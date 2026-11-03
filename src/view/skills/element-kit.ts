@@ -35,11 +35,26 @@ export interface ElementRamp {
   readonly soot: Rgb;
 }
 
-/** The real sword's material mode (sword-material.ts SWORD_LOOK): Metal's steel, Fire's furnace (built with Fire). */
+/** The real sword's material mode (sword-material.ts SWORD_LOOK): Metal's steel, Fire's furnace. */
 export interface BladeLook {
   readonly mode: "steel" | "furnace";
-  /** The edge line's light (linear HDR): Metal's cyan-tinted white EDGE_HOT. */
+  /** The edge line's light (linear HDR): Metal's cyan-tinted white EDGE_HOT, Fire's molten white-gold. */
   readonly edge: Rgb;
+  /** Furnace: the heat band's light from the spine to the edges (linear, ≤ 0.9) and the body's albedo share (hot iron). */
+  readonly heat?: Rgb;
+  readonly char?: number;
+}
+
+/**
+ * A trail drawn as flame (fxkit RibbonPool.setFlame): a clip of the kit's flipbook folder used as the flame band, and
+ * the heat ramp it is coloured through (linear: soot edge, deep body, amber body, white-gold core).
+ */
+export interface FlameTrail {
+  readonly clip: string;
+  readonly soot: Rgb;
+  readonly deep: Rgb;
+  readonly amber: Rgb;
+  readonly core: Rgb;
 }
 
 /** Ribbon trails behind flying swords (sword-skills.ts launch, Nhất Tuyến, the guard): width and HDR core; the rim is the slot's palette rim. */
@@ -50,6 +65,8 @@ export interface TrailLook {
   readonly rimK: number;
   /** The weapon's silk ribbons fly beside the trail (Clear Wind's tassel). */
   readonly silk: boolean;
+  /** Drawn as flame instead of sword-light (absent: light). */
+  readonly flame?: FlameTrail;
 }
 
 /** Key 7's (myriad-swords.ts) light, drawn from constants before the element layer. */
@@ -106,6 +123,11 @@ export interface ScreenAccent {
   readonly flash: { readonly tint: Rgb; readonly strength: number } | null;
   /** Share of the shared distortion pass (heat haze, refraction, pressure); 0: none. */
   readonly distortion: number;
+  /**
+   * The graphic impact frames' palette (screen-fx.ts ImpactPass; display values): the dark frame's world tone, the
+   * inverted frame's paper and the accent round figures and cores. Absent: the frames' own (Metal's navy and cyan).
+   */
+  readonly frames?: { readonly navy: Rgb; readonly paper: Rgb; readonly accent: Rgb };
 }
 
 /** The base sprite sheets a kit may swap, by layer (SwordSkillTextures' keys). */
@@ -257,6 +279,11 @@ export interface DeathArgs {
 
 /** Phase hooks of sword-skills.ts (the Kiếm slots, key 1's Threefold Sword Command among them). */
 export interface SwordHooks {
+  /**
+   * Charge: every frame a blade waits at its place for its launch (Ngự Kiếm's blades behind the shoulders): its guard
+   * point, tip direction and length as TravelArgs (`u` is its presence 0..1). Replaces the glint running up it.
+   */
+  waiting?(a: TravelArgs): boolean;
   /** Charge: one key of a word (keyBeat's glint, star, ground pulse, a blade's arrival). */
   chargeKey?(a: ChargeKeyArgs): boolean;
   /** Charge: every frame while the caster gathers (updateAura's halo, ground glow and dark disc, rising and spiralling motes; the seal stays). */
@@ -320,6 +347,26 @@ export interface StreamSparkArgs {
   vz: number;
 }
 
+/** A key-7 sword as drawn this frame (myriad-swords.ts drawSwords). */
+export interface StreamTravelArgs {
+  /** The sword's middle (m), unit tip direction, shown length (m). */
+  x: number;
+  y: number;
+  z: number;
+  dx: number;
+  dy: number;
+  dz: number;
+  len: number;
+  /** 0 lead blade, 1 mid sword, 2 far sword. */
+  cls: number;
+  /** Its stream brightness (0..1), its dissolve (0 whole … 1 gone), and whether it dives on a beast now. */
+  bright: number;
+  dissolve: number;
+  diving: boolean;
+  /** The trail length Metal would draw behind its pommel (m; 0 for a lead blade, which has its ribbon). */
+  trailM: number;
+}
+
 export interface StreamSeamArgs {
   /** The beast and the stroke's ground direction. */
   target: number;
@@ -329,6 +376,8 @@ export interface StreamSeamArgs {
 
 /** Phase hooks of myriad-swords.ts (key 7). Its release is sword-skills' `release` with skill "k7". */
 export interface StreamHooks {
+  /** Travel: every sword drawn this frame (its trail behind its pommel; the sword is drawn by the shape). */
+  travel?(a: StreamTravelArgs): boolean;
   /** Impact: a river sword or lead blade reaches its beast (impactAt). */
   strike?(a: StreamStrikeArgs): boolean;
   /** Impact and aftermath: a lead blade's heavy blow on the ground (leadImpact). */

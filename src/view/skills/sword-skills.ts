@@ -55,6 +55,7 @@ import { applyBladeLook, FaceRoll } from "./sword-material";
 import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate, GATE_SWORDS } from "./sword-rain";
 import type { TargetField } from "./targets";
 import { DEFAULT_WEAPON, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
+import type { RibbonFlame } from "./fxkit";
 
 export type SwordSlot = "auto" | "k1" | "k2" | "guard" | "dash" | "k4" | "k5";
 
@@ -338,6 +339,15 @@ const SLOTS: readonly SwordSlot[] = ["auto", "k1", "k2", "guard", "dash", "k4", 
 const NO_HOOKS: SwordHooks = {};
 /** A colour set the hook arguments hold until their first call (each call sets the slot's). */
 const START_GLOW: WeaponGlow = weaponById(DEFAULT_WEAPON)!.glow;
+
+/** A kit's flame trail on `stage` for RibbonPool.setFlame (null: sword-light; also while its clip has not loaded). */
+export function flameOf(kit: ElementKit, stage: ElementStage | null): RibbonFlame | null {
+  const f = kit.trail.flame;
+  if (f === undefined || stage === null) return null;
+  const c = stage.clip(kit.id, f.clip);
+  if (c === null) return null;
+  return { texture: c.texture, cols: c.meta.cols, rows: c.meta.rows, frames: c.meta.frames, fps: c.meta.fps, soot: f.soot, deep: f.deep, amber: f.amber, core: f.core };
+}
 const casterPose = (): { x: number; z: number; fx: number; fz: number } => ({ x: 0, z: 0, fx: 0, fz: -1 });
 
 interface Flight {
@@ -751,6 +761,7 @@ export class SwordSkillFx {
       for (const target of this.texTargets[layer]) target.texture = t;
     }
     applyBladeLook(kit.blade);
+    this.ribbons.setFlame(flameOf(kit, stage));
     this.skillPal = this.skillPals(this.weaponDef);
     this.use(this.palSlot);
     this.applyColours(this.weaponDef);
@@ -3094,9 +3105,27 @@ export class SwordSkillFx {
         R[j] = this.bPres[HERO.k1 + j]! <= 0 ? rollGoal : R[j]! + (rollGoal - R[j]!) * kf;
         this.show(HERO.k1 + j, bx, by, bz, dx, dy, dz, 1.35, true, 1, R[j]!);
         this.bladeTint(HERO.k1 + j, 1.3 + 0.5 * Math.max(0, p1) + 0.15 * Math.sin(this.time * 3.3 + ph));
+        const pres = smooth01(this.bPres[HERO.k1 + j]!);
+        // The element's waiting blade (its hook) in place of the glint below.
+        const waiting = this.hooks.waiting;
+        if (waiting !== undefined && pres > 0.01) {
+          const a = this.aTravel;
+          a.slot = "k1";
+          a.blade = HERO.k1 + j;
+          a.x = bx;
+          a.y = by;
+          a.z = bz;
+          a.dx = dx;
+          a.dy = dy;
+          a.dz = dz;
+          a.tipM = L;
+          a.u = pres;
+          a.dt = dt;
+          a.pal = this.pal;
+          if (waiting(a)) continue;
+        }
         // A glint runs from the guard to the tip every 0.9 s (0.3 s a run), its size eased: one-frame cards.
         const gp = ((this.time + j * 0.31) % 0.9) / 0.3;
-        const pres = smooth01(this.bPres[HERO.k1 + j]!);
         if (gp < 1 && pres > 0.01) {
           const e = Math.sin(Math.PI * gp) * pres;
           const along = L * (0.12 + 0.82 * gp);

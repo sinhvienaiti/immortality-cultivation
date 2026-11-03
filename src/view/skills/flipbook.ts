@@ -1,4 +1,4 @@
-// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density) and a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded); its test A/B/C modes, the mask output and the burn-lift dropped; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
+// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
 /**
  * Flipbook sprites for the element layer (canon D59, ELEMENT_LAYER §3 "FlipbookPlayer"): Fire, Thunder and Wind
  * clips, and RGBA clips with real alpha of every element, cut from Adobe Firefly Video into atlases. Media stays
@@ -6,7 +6,7 @@
  *
  * Manifest (one per element folder):
  *   { "version": 1, "flipbooks": { "<id>": { "file": "<id>.png", "cols": 4, "rows": 4, "frames": 16, "fps": 24,
- *     "cell": 256 | [w, h], "loop": false, "mode": "rgba" | "fire" | "smoke", "pivot": [0.5, 0.5], "start": 0,
+ *     "cell": 256 | [w, h], "loop": false, "mode": "rgba" | "fire" | "smoke" | "heat", "pivot": [0.5, 0.5], "start": 0,
  *     "heading": 0, "alpha": "straight" } } }
  * "clips" may stand for "flipbooks" (an object, or an array of entries with "id"), "atlas" for "file", "grid":
  * [cols, rows] for cols and rows. URLs are built from the folder and the file name, never taken from the JSON.
@@ -20,12 +20,18 @@
  *   `occlude`; with occlude 0 it is purely additive. Use it only for thin energy (embers, sparks, cores), never as a
  *   fire body over the ground.
  * - "smoke": a density (alpha, else luminance) coloured by `tint`, lit from the top, normal blend.
+ * - "heat" (Gemini's heat field, ELEMENT_LAYER research 03/11/2026): a clip on black (Dragonhold's fire atlases) read as a
+ *   HEAT field 0..1 (its light, perceptual, × the sprite's intensity) and coloured here through four bands, drawn
+ *   premultiplied: under ~0.12 eroded away with noise (crisp tongues); 0.12–0.35 the cooling edge in soot at alpha 0.85
+ *   (it covers the pale floor round the flame: the anti-veil); 0.35–0.8 the body from deep orange to amber at 0.95;
+ *   over 0.8 the white-gold core (× 2.2, the only part that blooms). The ramp is the pool's (`setHeatRamp`); a pool's
+ *   `taper` cools the clip from its head (cell right, the way `dir` points) to its tail (a trail behind a blade).
  * The material: frames blended in time, a pivot, billboards that turn to follow a world direction on screen (a
  * flame along a flight), analytic soft particles against the ground, and an exact depth lift.
  */
 import * as THREE from "three";
 
-export type FlipbookMode = "rgba" | "fire" | "smoke";
+export type FlipbookMode = "rgba" | "fire" | "smoke" | "heat";
 
 export interface FlipbookMeta {
   readonly id: string;
@@ -85,7 +91,7 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
     const px = pivot[0]! > 1 || pivot[1]! > 1 ? [pivot[0]! / cw, pivot[1]! / ch] : pivot;
     const start = typeof entry.start === "number" && Number.isInteger(entry.start) && entry.start >= 0 && entry.start < frames ? entry.start : 0;
     const straight = entry.alpha === true || entry.alpha === "straight";
-    const mode: FlipbookMode = entry.mode === "fire" || entry.mode === "smoke" || entry.mode === "rgba" ? entry.mode : straight ? "rgba" : entry.blend === "normal" ? "smoke" : "fire";
+    const mode: FlipbookMode = entry.mode === "fire" || entry.mode === "smoke" || entry.mode === "rgba" || entry.mode === "heat" ? entry.mode : straight ? "rgba" : entry.blend === "normal" ? "smoke" : "fire";
     const md5 = typeof entry.md5 === "string" && /^[0-9a-f]{32}$/.test(entry.md5) ? "?v=" + entry.md5 : "";
     out.set(id, {
       id,
@@ -207,7 +213,7 @@ attribute vec4 iData;
 attribute vec4 iColor;
 attribute vec4 iDir;
 attribute vec3 iAge;
-attribute float iLift;
+attribute vec2 iLift;
 uniform vec2 uPivot;
 uniform float uAspect;
 uniform float uHeading;
@@ -229,14 +235,18 @@ void main() {
   vOcclude = iDir.w;
   vec4 view = modelViewMatrix * vec4(iPos, 1.0);
   float angle = iData.y;
-  // Turned to follow a world direction on screen (a flame along a flight).
+  vec2 local = vec2((uv.x - uPivot.x) * uAspect, uv.y - uPivot.y) * iData.x;
+  // Turned to follow a world direction on screen (a flame along a flight); with a span (iLift.y, m) its width is that
+  // length along the direction as the camera sees it (foreshortened like the blade it wraps), its height the size.
   if (dot(iDir.xyz, iDir.xyz) > 1e-8) {
     vec3 d = mat3(viewMatrix) * iDir.xyz;
-    if (dot(d.xy, d.xy) > 1e-10) angle += atan(d.y, d.x) - uHeading;
+    if (dot(d.xy, d.xy) > 1e-10) {
+      angle += atan(d.y, d.x) - uHeading;
+      if (iLift.y > 0.0) local.x = (uv.x - uPivot.x) * length(d.xy) / max(length(d), 1e-5) * iLift.y;
+    }
   }
   float c = cos(angle);
   float s = sin(angle);
-  vec2 local = vec2((uv.x - uPivot.x) * uAspect, uv.y - uPivot.y) * iData.x;
   vec2 corner = vec2(local.x * c - local.y * s, local.x * s + local.y * c);
   view.xy += corner;
   vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
@@ -244,8 +254,8 @@ void main() {
   vWorld = (modelMatrix * vec4(iPos, 1.0)).xyz + right * corner.x + up * corner.y;
   gl_Position = projectionMatrix * view;
   // Drawn nearer the eye by iLift (depth only: it projects where it stands).
-  if (iLift != 0.0) {
-    vec4 moved = projectionMatrix * vec4(view.xy, view.z + iLift, 1.0);
+  if (iLift.x != 0.0) {
+    vec4 moved = projectionMatrix * vec4(view.xy, view.z + iLift.x, 1.0);
     gl_Position.z = moved.z / moved.w * gl_Position.w;
   }
 }`;
@@ -260,6 +270,11 @@ uniform float uStep;
 uniform float uSoftM;
 uniform float uVignette;
 uniform vec3 uSoot;
+uniform vec3 uHeatDeep;
+uniform vec3 uHeatAmber;
+uniform vec3 uHeatCore;
+uniform float uTaper;
+uniform float uBlur;
 varying vec2 vUv;
 varying float vFrame;
 varying float vAlpha;
@@ -284,8 +299,8 @@ void main() {
   float w = uStep > 0.5 ? 0.0 : f - f0;
   // A cell's last texel row and column never bleed into the next (mip levels): fade a thin border.
   vec2 uv = clamp(vUv, 0.004, 0.996);
-  vec4 t0 = texture2D(uMap, vxCell(f0, uv));
-  vec4 t1 = texture2D(uMap, vxCell(f1, uv));
+  vec4 t0 = texture2D(uMap, vxCell(f0, uv), uBlur);
+  vec4 t1 = texture2D(uMap, vxCell(f1, uv), uBlur);
   float border = smoothstep(0.0, 0.025, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y)));
   border *= 1.0 - uVignette * smoothstep(0.6, 0.98, length(vUv - 0.5) * 2.0);
   float soft = vxSoftGround(vWorld, vGround, uSoftM) * border * vAlpha;
@@ -310,6 +325,24 @@ void main() {
   }
   vec4 t = mix(t0, t1, w);
   float lum = max(t.r, max(t.g, t.b));
+  if (uMode > 2.5) {
+    // Heat field: the clip's light (perceptual) × the sprite's intensity, cooled toward the tail and as it burns out.
+    // Its fades cool it (the heat falls through the bands and erodes) instead of making it see-through.
+    float heat = pow(clamp(lum, 0.0, 1.0), 0.4545) * max(vTint.r, max(vTint.g, vTint.b)) * vAlpha;
+    if (uTaper > 0.0) heat *= mix(1.0, smoothstep(0.0, 0.85, vUv.x), uTaper);
+    heat *= 1.0 - 0.75 * burn;
+    soft = vxSoftGround(vWorld, vGround, uSoftM) * border;
+    float edge = 0.12 + (n - 0.5) * 0.1 + burn * 0.12;
+    float a = smoothstep(edge, edge + 0.04, heat);
+    if (a <= 0.002) discard;
+    float b = smoothstep(0.3, 0.4, heat);
+    float c = smoothstep(0.76, 0.9, heat);
+    vec3 col = mix(uSoot, mix(uHeatDeep, uHeatAmber, smoothstep(0.35, 0.8, heat)), b);
+    col = mix(col, uHeatCore * 2.2, c);
+    a *= mix(0.85, 0.95, b) + 0.05 * c;
+    gl_FragColor = vec4(col * a * soft, a * soft);
+    return;
+  }
   if (uMode > 1.5) {
     // Smoke: a density (its alpha, else its light), coloured here; lighter toward the top; eroded as it burns out.
     float d = t.a < 0.999 ? t.a : sqrt(lum);
@@ -369,6 +402,8 @@ export interface FlipOptions {
   cool?: number;
   /** Drawn this much nearer the eye (m, depth only). */
   lift?: number;
+  /** With `dir`: the sprite's width is this many metres along `dir` as the camera sees it (foreshortened); 0: size × aspect. */
+  span?: number;
 }
 
 const WHITE = new THREE.Color(1, 1, 1);
@@ -377,7 +412,7 @@ const WHITE = new THREE.Color(1, 1, 1);
 export const ONE_FRAME = 1e-4;
 
 /** Fragment shader modes (uMode). */
-const MODE_INDEX: Record<FlipbookMode, number> = { rgba: 0, fire: 1, smoke: 2 };
+const MODE_INDEX: Record<FlipbookMode, number> = { rgba: 0, fire: 1, smoke: 2, heat: 3 };
 
 /**
  * One clip's sprites in one draw call (hidden while empty). Built at load with a blank texture and its mode, so its
@@ -392,9 +427,9 @@ export class FlipbookPool {
   private readonly iDir: Float32Array;
   private readonly iAge: Float32Array;
   private readonly iLift: Float32Array;
-  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift */
+  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span */
   private readonly state: Float32Array;
-  private static readonly STRIDE = 31;
+  private static readonly STRIDE = 32;
   private cursor = 0;
   live = 0;
 
@@ -410,7 +445,7 @@ export class FlipbookPool {
     this.iColor = new Float32Array(capacity * 4);
     this.iDir = new Float32Array(capacity * 4);
     this.iAge = new Float32Array(capacity * 3);
-    this.iLift = new Float32Array(capacity);
+    this.iLift = new Float32Array(capacity * 2);
     this.state = new Float32Array(capacity * FlipbookPool.STRIDE);
     const base = new THREE.PlaneGeometry(1, 1);
     const geometry = new THREE.InstancedBufferGeometry();
@@ -422,7 +457,7 @@ export class FlipbookPool {
     geometry.setAttribute("iColor", new THREE.InstancedBufferAttribute(this.iColor, 4).setUsage(THREE.DynamicDrawUsage));
     geometry.setAttribute("iDir", new THREE.InstancedBufferAttribute(this.iDir, 4).setUsage(THREE.DynamicDrawUsage));
     geometry.setAttribute("iAge", new THREE.InstancedBufferAttribute(this.iAge, 3).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute("iLift", new THREE.InstancedBufferAttribute(this.iLift, 1).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute("iLift", new THREE.InstancedBufferAttribute(this.iLift, 2).setUsage(THREE.DynamicDrawUsage));
     geometry.instanceCount = 0;
     const material = new THREE.ShaderMaterial({
       uniforms: {
@@ -435,6 +470,12 @@ export class FlipbookPool {
         uSoftM: { value: 0.8 },
         uVignette: { value: 0 },
         uSoot: { value: new THREE.Vector3(0.03, 0.022, 0.02) },
+        // The heat ramp (mode "heat"): Gemini's vermilion #D93800, amber #FFB703 and white-gold #FFFDF0 (linear).
+        uHeatDeep: { value: new THREE.Vector3(0.693, 0.04, 0) },
+        uHeatAmber: { value: new THREE.Vector3(1, 0.473, 0.001) },
+        uHeatCore: { value: new THREE.Vector3(1, 0.982, 0.871) },
+        uTaper: { value: 0 },
+        uBlur: { value: 0 },
         uPivot: { value: new THREE.Vector2(0.5, 0.5) },
         uAspect: { value: 1 },
         uHeading: { value: 0 },
@@ -493,9 +534,30 @@ export class FlipbookPool {
     this.mesh.material.uniforms.uStep!.value = on ? 1 : 0;
   }
 
-  /** What a burning-out RGBA sprite darkens toward (linear). */
+  /** What a burning-out RGBA sprite darkens toward (linear); in mode "heat", its cooling edge. */
   setSoot(r: number, g: number, b: number): void {
     (this.mesh.material.uniforms.uSoot!.value as THREE.Vector3).set(r, g, b);
+  }
+
+  /** Mode "heat": the body's deep and amber ends and the core (linear; the core is drawn × 2.2). */
+  setHeatRamp(deep: readonly number[], amber: readonly number[], core: readonly number[]): void {
+    const u = this.mesh.material.uniforms;
+    (u.uHeatDeep!.value as THREE.Vector3).set(deep[0]!, deep[1]!, deep[2]!);
+    (u.uHeatAmber!.value as THREE.Vector3).set(amber[0]!, amber[1]!, amber[2]!);
+    (u.uHeatCore!.value as THREE.Vector3).set(core[0]!, core[1]!, core[2]!);
+  }
+
+  /**
+   * A mip bias on the atlas (0: sharp): a heat-field band read soft, so a lava-like clip's dark cells close into a
+   * flame body instead of a crust.
+   */
+  set blur(value: number) {
+    this.mesh.material.uniforms.uBlur!.value = value;
+  }
+
+  /** Mode "heat": 0 the clip as it is … 1 it cools from its head (cell right) to soot at its tail (a trail). */
+  set taper(value: number) {
+    this.mesh.material.uniforms.uTaper!.value = value;
   }
 
   /** Seconds one pass of the clip lasts at `rate`. */
@@ -550,6 +612,7 @@ export class FlipbookPool {
     st[o + 28] = options.cool ?? 0;
     st[o + 29] = (i * 0.618034) % 1;
     st[o + 30] = options.lift ?? 0;
+    st[o + 31] = options.span ?? 0;
   }
 
   /** Draws each sprite at its age (frame 0 at age 0, full alpha unless it fades in), then ages it by `dt`. */
@@ -592,7 +655,8 @@ export class FlipbookPool {
       this.iAge[n * 3] = k;
       this.iAge[n * 3 + 1] = st[o + 28]!;
       this.iAge[n * 3 + 2] = st[o + 29]!;
-      this.iLift[n] = st[o + 30]!;
+      this.iLift[n * 2] = st[o + 30]!;
+      this.iLift[n * 2 + 1] = st[o + 31]!;
       n += 1;
       const keep = Math.exp(-st[o + 15]! * dt);
       st[o + 3] = st[o + 3]! * keep;
