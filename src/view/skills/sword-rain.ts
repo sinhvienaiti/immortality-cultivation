@@ -4,19 +4,23 @@
  * aftermath: planted swords with lit bases, a wide glowing rift). Round 3a's flat ground spiral read as a floor decal
  * at the 55° play camera; this composition lives in vertical space. The drawing only; the timeline, targets and
  * strikes stay in KiemFx (kiem.ts). Pieces:
- * - SkyGate: a camera-facing ellipse high over the far field, a dark aperture with a white-hot rim and a ring of
- *   sword silhouettes pointing out (white spines, navy bodies), drawn analytically in one quad;
+ * - SkyGate: a camera-facing ellipse high over the far field, a dark aperture with a white-hot rim and a torn
+ *   corona, drawn analytically in one quad; its ring of swords pointing out is the real sword (03/11/2026:
+ *   impostors of the Clear Wind model, real-swords.ts, placed by KiemFx at `swordAt`), never a drawn silhouette;
  * - LightStrips: screen-space strips from a base to a top (columns linking sky and ground, landing pillars), a thin
  *   HDR core in a cyan body with travelling bright segments, one instanced draw;
  * - GroundMarks: ground decals, a star of jagged cracks where a blade lands and the wide rift of the climax (a white
  *   seam, a cyan glow, scorched ink edges, branches), one instanced draw;
- * - the swords themselves are the Sword school's grammar (sword-grammar.ts GraphicSwords).
+ * - the falling, planted and heaven swords are the real textured model (blades.ts BladeSet in KiemFx).
  * White, cyan and deep navy only; bodies premultiplied, only thin cores reach the bloom. No allocation per frame.
  */
 import * as THREE from "three";
 import { GRAMMAR } from "./sword-grammar";
 
 const v3 = (c: readonly number[]): THREE.Vector3 => new THREE.Vector3(c[0], c[1], c[2]);
+
+/** Swords round the gate's rim (every other one longer), and the corona's spikes between them. */
+export const GATE_SWORDS = 16;
 
 const PREMULT = {
   transparent: true,
@@ -55,7 +59,6 @@ uniform vec3 uCyanLit;
 uniform vec3 uNavy;
 varying vec2 vUv;
 float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-float inside(float x, float h, float aa) { return clamp((h - abs(x)) / aa + 0.5, 0.0, 1.0); }
 void main() {
   vec2 p = vec2(vUv.x, vUv.y / uSquash);
   float r = length(p);
@@ -81,36 +84,8 @@ void main() {
   float core = 1.0 - smoothstep(rimW, rimW + aa * 1.5, d);
   float glow = exp(-d * (34.0 - 12.0 * uFlare));
   add += uWhite * core * (4.0 + 3.0 * uFlare) + uCyanLit * glow * (0.55 + 0.3 * uFlare) * (1.0 - core);
-  // A ring of swords round the rim, points out (f5): white spine, cyan bevel, navy edge, a platinum guard.
-  float N = 16.0;
-  float sector = 6.2831853 / N;
-  float aa2 = ang - uSpin;
-  float idx = floor(aa2 / sector + 0.5);
-  float loc = (aa2 - idx * sector) * r;
-  float big = step(0.5, fract(idx * 0.5));
-  float L = (0.3 + 0.14 * big) * uOpen;
-  float r0 = R + 0.025;
-  float u = (r - r0) / max(L, 1e-3);
-  float hw = 0.027 + 0.01 * big;
-  if (u > -0.02 && u < 1.05) {
-    float taper = u < 0.72 ? 1.0 : pow(max(0.0, (1.0 - u) / 0.28), 0.9);
-    float bladeU = step(0.2, u);
-    float blade = inside(loc, hw * taper, aa) * bladeU * step(u, 1.0);
-    float edge = blade * (1.0 - inside(loc, hw * taper - aa * 1.6, aa));
-    vec3 bc = mix(uCyan, uCyanLit, step(0.0, loc));
-    vec3 sb = mix(bc, uNavy, edge);
-    float guard = inside(loc, hw * 2.6, aa) * step(0.15, u) * step(u, 0.2);
-    float grip = inside(loc, hw * 0.55, aa) * step(0.0, u) * step(u, 0.15);
-    vec3 plat = vec3(0.72, 0.78, 0.86);
-    float hA = max(guard, grip);
-    vec3 sc = mix(sb, mix(uNavy * 3.0, plat, guard), hA);
-    float sa = max(blade, hA) * 0.96;
-    body = mix(body, sc, sa);
-    a = max(a, sa);
-    float spine = inside(loc, max(aa, hw * 0.24), aa) * bladeU * step(u, 0.94);
-    add += uWhite * spine * (2.4 + 2.0 * uFlare);
-  }
   // Short dark spikes between the swords (the gate's torn corona), under everything.
+  float N = 16.0;
   float spikes = pow(abs(cos(ang * N * 0.5 + uSpin * N * 0.5 + 1.5708)), 6.0);
   float corona = smoothstep(R + 0.02, R, r - spikes * 0.12 * uOpen) * (1.0 - ap) * step(R, r);
   body = mix(uNavy * 0.8, body, max(a, 1.0 - corona * 0.85));
@@ -165,6 +140,33 @@ export class SkyGate {
     const size = (share * viewW) / 0.88;
     this.u.uSize!.value = size;
     this.radius = 0.44 * size * 0.5;
+  }
+
+  /**
+   * Sword `k` of the rim's ring (of GATE_SWORDS) for `camera`, pointing out: its pommel's end and tip (m), and
+   * whether it is one of the longer ones. Follows the gate's open, spin and squash as set this frame.
+   */
+  swordAt(camera: THREE.Camera, k: number, base: THREE.Vector3, tip: THREE.Vector3): boolean {
+    const right = this.sRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = this.sUp.setFromMatrixColumn(camera.matrixWorld, 1);
+    const open = this.u.uOpen!.value as number;
+    const sq = this.u.uSquash!.value as number;
+    const half = (this.u.uSize!.value as number) * 0.5;
+    const a = (this.u.uSpin!.value as number) + (k * Math.PI * 2) / GATE_SWORDS;
+    const big = (k & 1) === 1;
+    // Uv units of the quad (its half size is 1): the rim at 0.44·open, swords from just outside it.
+    const r0 = (0.44 * open + 0.02) * half;
+    const r1 = r0 + (0.3 + 0.14 * (big ? 1 : 0)) * open * half;
+    const c = Math.cos(a);
+    const s = Math.sin(a) * sq;
+    base.copy(this.centre).addScaledVector(right, c * r0).addScaledVector(up, s * r0);
+    tip.copy(this.centre).addScaledVector(right, c * r1).addScaledVector(up, s * r1);
+    return big;
+  }
+
+  /** The gate's alpha and flare as set this frame (its ring of swords fades and flares with it). */
+  get look(): { alpha: number; flare: number; open: number } {
+    return { alpha: this.u.uAlpha!.value as number, flare: this.u.uFlare!.value as number, open: this.u.uOpen!.value as number };
   }
 
   /** A point on the rim (m) at angle `a` on screen (0 right, π/2 up), for the camera that placed the gate. */

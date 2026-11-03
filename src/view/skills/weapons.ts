@@ -127,8 +127,10 @@ export interface WeaponDef {
   readonly model: string;
   /** How the GLB maps onto the jian convention when the automatic fit guesses wrong. */
   readonly fit?: BladeFit;
-  /** A reduced copy of the GLB for Thiên Hà's swarm (an LOD; the hero copies keep `model`). */
+  /** The textured LOD of the GLB for the mid skill swords (swarm_lod.py; the hero copies keep `model`). */
   readonly swarm?: string;
+  /** The impostor atlas of the GLB for far and tiny skill swords (bake_sword_impostor.py): `<impostor>.png/-mask.png/.json`. */
+  readonly impostor?: string;
   /** The weapon's own motifs in its skills (Clear Wind). */
   readonly motif?: WeaponMotif;
   /** The hand prop and tassel (Clear Wind). */
@@ -265,6 +267,7 @@ function weapon(e: Entry): WeaponDef {
   const fire = e.element === "fire";
   const accent = ELEMENT_ACCENT[e.element];
   const { swarm, ...rest } = e;
+  // A weapon with a textured LOD has its impostor atlas too (both are built from its full model).
   return {
     ...rest,
     accent,
@@ -273,7 +276,7 @@ function weapon(e: Entry): WeaponDef {
     rail: railOf(accent),
     glow: fire ? glowOfRamp(FIRE_RAMP) : glowOf(accent, GLOW_CHROMA, rimOf(e.element === "metal" ? FAMILY_ACCENT[e.family] : accent, RIM_GAMMA[e.element])),
     model: MODEL_DIR + e.id + ".glb",
-    ...(swarm === true ? { swarm: MODEL_DIR + e.id + "-swarm.glb" } : {}),
+    ...(swarm === true ? { swarm: MODEL_DIR + e.id + "-swarm.glb", impostor: MODEL_DIR + e.id + "-impostor" } : {}),
   };
 }
 

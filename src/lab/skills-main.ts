@@ -31,7 +31,7 @@ import type { Quality } from "../content/types";
 import { CameraZoom } from "../view/camera-zoom";
 import { createRenderer, placeCamera } from "../view/renderer";
 import { K5_MAX, KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
-import { loadBladeGeometry, loadWeaponModel, standInBlade, type BladeSet } from "../view/skills/blades";
+import { loadSwordModels, loadWeaponModel, standInModel, type BladeSet } from "../view/skills/blades";
 import { SpritePool } from "../view/skills/fxkit";
 import { DEFAULT_WEAPON, weaponById, weaponsOf, type WeaponId } from "../view/skills/weapons";
 import { CLIP_RELEASE_S, LabCaster, type CasterClip } from "./caster";
@@ -50,6 +50,7 @@ import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
 import { VAN_KIEM_COLOUR, VAN_KIEM_SWORDS, VanKiemFx, type SwordPose, type VanKiemPhase } from "../view/skills/van-kiem";
 import { CasterPresence } from "./presence";
+import { SWORD_LIGHT } from "../view/skills/sword-material";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
 
@@ -186,6 +187,8 @@ function worldLight(k: number): void {
   }
   for (const w of worldLights) w.light.intensity = w.base * k;
   if (envBase >= 0) view.scene.environmentIntensity = envBase * k;
+  // The real skill swords keep the scene's normal light on the darkened field (sword-material.ts SWORD_LIGHT).
+  SWORD_LIGHT.value = 1 / Math.max(0.3, k);
 }
 /**
  * The figures for the graphic impact frame (round 3a, P2): beasts, Lam and the held sword as alpha coverage, drawn
@@ -651,6 +654,8 @@ async function setWeapon(id: string): Promise<boolean> {
   const ok = await fx.setWeapon(def);
   if (ok) {
     await van.setWeapon(def);
+    // The pinned swords of the hero victims: the same real sword (its full model).
+    victims.setSword((await loadSwordModels(def)).full);
     for (const f of weaponListeners) f(def.id);
   }
   return ok;
@@ -1601,13 +1606,12 @@ void (async () => {
     sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played }),
     async swarm(mode) {
       const def = fx.weaponInfo;
-      const hero = await loadBladeGeometry(def.model, def.fit);
-      // No LOD file (not built yet): −1, the swarm keeps what it draws.
+      const models = await loadSwordModels(def);
+      // No LOD file (not built yet): −1, the mid swords keep what they draw.
       if (mode === "lod" && (def.swarm === undefined || (await loadWeaponModel(def.swarm)) === null)) return -1;
-      const g = mode === "standin" ? standInBlade() : mode === "lod" ? await loadBladeGeometry(def.swarm, def.fit) : hero;
-      fx.blades.setGeometry(hero, g);
-      const index = g.getIndex();
-      return (index !== null ? index.count : g.getAttribute("position").count) / 3;
+      const m = mode === "standin" ? standInModel() : mode === "lod" ? models.lod : models.full;
+      fx.blades.setModel(models.full, m);
+      return m.triangles;
     },
   };
   if (params.get("herd") === "march") herd.setMode("march");

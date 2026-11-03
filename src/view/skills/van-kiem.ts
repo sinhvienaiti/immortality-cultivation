@@ -3,25 +3,17 @@
  * field-wide prototype of the power pass (canon D58 (2); POWER_RESEARCH.md
  * "Chiêu cả sân mẫu", direction A "Celestial Sword River"). The four readable
  * states: the sky changes, the swords gather, each sword picks its prey, one
- * stroke ends it. Round 3a (P3, the diagnosis of 03/11/2026: round 2's 328
- * near-identical mint GLB swords with ring hilts read as "keys, toothpicks,
- * neon confetti"; every sword was primary, so none was) keeps the motion,
- * the targeting and the timeline and replaces the art with the Sword school's
- * grammar (sword-grammar.ts), three tiers of value and importance:
- * - LEAD blades (6): the swords that leave the hand on F0, drawn as graphic
- *   swords with gold hilts (the only gold), a navy edge, a two-tone cyan body
- *   and a white spine of HDR 6; after their first strike they rise into the
- *   river growing to 4.2 m (~150–190 px at the play camera), ride its crest,
- *   dive one at a time on the gravest prey, and take the middle of the final
- *   stroke; a white ribbon trail with a cyan rim;
- * - MID swords (32 on High): no hilt, a white tapered spine (HDR 4.5, brighter
- *   in waves running down the stream), a cyan body, a narrow navy edge and a
- *   short streak, flowing in five braided lanes;
- * - FAR streaks (100 on High): directional white-to-cyan streaks in the river's
- *   outer lanes and above it, for scale only.
- * Every sword flies tip first. White, cyan and deep navy only; bodies are
- * premultiplied alpha, only spines, streaks, sparks and glints are added; no
- * broad glow cards or lit ground pools (they washed the field to mid-grey).
+ * stroke ends it. Round 3a (P3) kept the motion, the targeting and the
+ * timeline and set three tiers of value and importance; 03/11/2026 they are
+ * the real sword (below):
+ * - LEAD blades (6): the swords that leave the hand on F0; after their first
+ *   strike they rise into the river, ride its crest, dive one at a time on
+ *   the gravest prey, and take the middle of the final stroke; a thin trail;
+ * - MID swords (24 on High), brighter in waves running down the stream,
+ *   flowing in five braided lanes;
+ * - FAR swords (64 on High) in the river's outer lanes and above it.
+ * Every sword flies tip first. White, cyan and deep navy light only; no broad
+ * glow cards or lit ground pools (they washed the field to mid-grey).
  * Timeline at 60 Hz from the last key (F0):
  * - F0: 8 lead blades leave the hand for the nearest threats (strike ~F15).
  * - F1–20: the world darkens (the host) and a jade seam opens across the sky.
@@ -42,17 +34,34 @@
  *   the cut as the head passes; the slash erodes from its edges; an ink scar
  *   and a lit seam stay on the ground.
  * - F192–207: the river folds into a point above the hero and is gone.
+ * Real swords (owner 03/11/2026: "hình dải kiếm, kiếm to bạn có vẻ đang tự
+ * style chứ k sử dụng hình ảnh"): every sword above is now the equipped
+ * weapon's own model under the scene's light, not a drawn strip: the lead
+ * blades the full textured GLB, the mid swords its textured LOD (blades.ts),
+ * the far swords impostors photographed from it (real-swords.ts); the river is
+ * those swords flowing in their braided lanes (the ribbon "river body" band is
+ * gone). Around each only a narrow white-hot edge line (sword-material.ts), a
+ * thin cyan trail behind its pommel, a soft rim and the impact flashes.
+ * Lengths, pommel to tip: lead 2.8 m leaving the hand, 3.06 m in the river,
+ * mid 2.55 m, far 2.3 m (2.3–3× the 1.02 m hand sword; ≥ 20 px at the play
+ * camera).
  * Halos stay ≤ 0.9 a channel, only thin cores are HDR. View only:
  * the sim owns damage; the host turns `struck` into its hit events. No
  * allocation per frame.
  */
 import * as THREE from "three";
+import { BladeSet, loadSwordModels } from "./blades";
 import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
 import { QiSlash } from "./qi-slash";
-import { RiverBody } from "./river-body";
-import { GraphicSwords, SWORD_FAR, SWORD_LEAD, SWORD_MID } from "./sword-grammar";
+import { loadSwordAtlas, SwordImpostors } from "./real-swords";
+import { FaceRoll } from "./sword-material";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
+
+/** Sword classes (poseOf's `cls`): lead blades, mid swords, far swords. */
+const SWORD_LEAD = 0;
+const SWORD_MID = 1;
+const SWORD_FAR = 2;
 
 export type VanKiemRole = "primary" | "secondary" | "finisher";
 export type VanKiemPhase = "open" | "hunt" | "gather" | "hush" | "climax" | "close" | "end";
@@ -97,27 +106,21 @@ export interface VanKiemTextures {
   readonly slashMask?: THREE.Texture | null;
 }
 
-/** River size per tier: mid swords and far streaks (the diagnosis: ~6 leads, 16–32 readable swords, 40–100 streaks). */
-/** Round 3b (item 3): 64 % fewer swords than round 3a (32 + 100 on High), each 2–3× larger, inside one river body. */
-export const VAN_KIEM_SWORDS = { low: { mid: 8, far: 16 }, medium: { mid: 10, far: 26 }, high: { mid: 12, far: 36 }, ultra: { mid: 12, far: 36 } } as const;
+/**
+ * River size per tier: mid swords (the textured LOD) and far swords (impostors). 03/11: with the ribbon body gone,
+ * the swords themselves carry the river's mass, so there are twice round 3b's (12 + 36 on High).
+ */
+export const VAN_KIEM_SWORDS = { low: { mid: 10, far: 24 }, medium: { mid: 16, far: 40 }, high: { mid: 24, far: 64 }, ultra: { mid: 32, far: 80 } } as const;
 const HERO_N = 6;
 const SEEDS = 20;
-/** Lengths (m): a mid sword, a far streak, the lead blades leaving the hand and the lead blades in the river. */
-const SWORD_M = 4.4;
-const FAR_M = 6.2;
-const HERO_M = 3.0;
-const LEAD_M = 7.0;
-/** Blade half widths (m) and half-width floors (px at 1080p): lead, mid, far. */
-const LEAD_HALF = 0.16;
-const MID_HALF = 0.12;
-const FAR_HALF = 0.045;
-const LEAD_FLOOR_PX = 8;
-const MID_FLOOR_PX = 6;
-const FAR_FLOOR_PX = 3.5;
-/** Spine levels (linear HDR entering the bloom; the diagnosis asks 4–8 at threshold 1): lead, mid (× the stream's wave), far head. */
-const LEAD_SPINE = 5.5;
-const MID_SPINE = 5.2;
-const FAR_HEAD = 1.6;
+/** Lengths pommel to tip (m): a mid sword, a far sword, the lead blades leaving the hand and the lead blades in the river. */
+const SWORD_M = 2.55;
+const FAR_M = 2.3;
+const HERO_M = 2.8;
+const LEAD_M = 3.06;
+/** The thin trail behind a sword's pommel: width (m) and its cyan-tinted white core (HDR, a thin line). */
+const TRAIL_M = 0.14;
+const TRAIL_CORE = [0.62 * 1.8, 0.88 * 1.8, 1.8] as const;
 
 /** Timeline (s) at 60 Hz. */
 const TICK = 1 / 60;
@@ -191,11 +194,12 @@ const HIT_RGB = 0x8fdcff;
 const CUT_RGB = 0xc4ecff;
 
 export class VanKiemFx {
-  /** Every sword of the cast, one instanced draw (sword-grammar.ts): far streaks, then mid swords, then lead blades. */
-  private readonly swords: GraphicSwords;
-  /** The river as one luminous body the swords ride in (round 3b, river-body.ts). */
-  private readonly body: RiverBody;
-  private readonly pathFn = (u: number, lat: number, h: number, out: THREE.Vector3): THREE.Vector3 => this.riverAt(u, lat, h, out);
+  /** The lead blades (the full model) and the mid swords (its LOD), one instanced draw each (blades.ts). */
+  private readonly blades: BladeSet;
+  /** The far swords: impostors of the same model (real-swords.ts). */
+  private readonly far: SwordImpostors;
+  private readonly faces = new FaceRoll();
+  private readonly camW = new THREE.Vector3();
   private readonly ribbons: RibbonPool;
   private readonly hits: SpritePool;
   private readonly stars: SpritePool;
@@ -287,17 +291,18 @@ export class VanKiemFx {
     this.mid = Math.max(8, Math.min(64, Math.floor(counts.mid)));
     this.n = this.mid + Math.max(8, Math.min(200, Math.floor(counts.far)));
     this.cap = HERO_N + this.n;
-    this.swords = new GraphicSwords(this.cap, 12);
-    this.body = new RiverBody(9);
+    this.blades = new BladeSet(HERO_N + this.mid, 1.1, HERO_N);
+    this.far = new SwordImpostors(this.n - this.mid, 12);
     this.ribbons = new RibbonPool(HERO_N, 46, tex.noise, 11);
     this.hits = new SpritePool(160, tex.slash, "add", "camera", 13);
     this.stars = new SpritePool(220, tex.star, "add", "camera", 14);
     this.glitter = new SpritePool(160, tex.star, "add", "camera", 14);
-    this.beams = new BeamPool(160, 13);
+    // Hit beams, and a one-frame trail behind every river sword.
+    this.beams = new BeamPool(160 + this.cap, 13);
     this.marks = new SpritePool(160, tex.ring, "add", "ground", 6, { twoSided: true });
     this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05, twoSided: true });
     this.qi = new QiSlash(tex.slashMask ?? null, 15);
-    host.layer.add(this.scar.mesh, this.marks.mesh, this.body.group, this.ribbons.mesh, this.swords.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh, this.qi.mesh);
+    host.layer.add(this.scar.mesh, this.marks.mesh, this.ribbons.mesh, this.blades.mesh, this.far.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh, this.qi.mesh);
     const N = this.cap;
     this.st = new Uint8Array(N);
     this.age = new Float32Array(N);
@@ -346,12 +351,11 @@ export class VanKiemFx {
     }
   }
 
-  /**
-   * The equipped weapon (D55). Round 3a draws every sword of this skill in the school's grammar (white spine, cyan
-   * body, navy edge, gold lead hilts), not as copies of the weapon's model: kept for the host's call.
-   */
-  async setWeapon(_def: WeaponDef): Promise<void> {
-    return Promise.resolve();
+  /** The equipped weapon (D55): every sword of the river is its real model (full, LOD, impostor). */
+  async setWeapon(def: WeaponDef): Promise<void> {
+    const [models, atlas] = await Promise.all([loadSwordModels(def), loadSwordAtlas(def.impostor)]);
+    this.blades.setModel(models.full, models.lod);
+    this.far.setAtlas(atlas);
   }
 
   /** Sword i's class: 0 lead, 1 mid, 2 far streak. */
@@ -410,7 +414,7 @@ export class VanKiemFx {
       this.lenM[i] = HERO_M;
       this.flown[i] = 0;
       this.reserved[target] = this.reserved[target]! + 1;
-      this.startRibbon(i, 0.28);
+      this.startRibbon(i, TRAIL_M);
       this.host.flyby(this.v.x, this.v.y, this.v.z, 30);
     }
   }
@@ -681,12 +685,9 @@ export class VanKiemFx {
   // ── Per frame ─────────────────────────────────────────────────────────────
 
   update(dt: number): void {
+    // Last frame's one-frame trails go first (they would hold capacity through a hit-stop).
+    this.beams.dropOneFrame();
     if (this.active) this.step(dt);
-    // The body opens with the river (F1–30), holds through the hunt and drains into the gather.
-    // Round 3b: it drains in 0.12 s and narrows as it goes (a slow fade left a thin grey line across the field).
-    const drain = 1 - smooth01((this.t - T_GATHER) / 0.12);
-    const on = this.active ? smooth01((this.t - T_SEAM) / 0.35) * drain : 0;
-    this.body.update(this.pathFn, 3.3 * (0.4 + 0.6 * drain), on * on, this.t);
     this.drawSlash(dt);
     this.drawSwords();
     this.ribbons.update(dt, this.host.camera);
@@ -847,7 +848,7 @@ export class VanKiemFx {
 
   /** A lead blade's trail: a thin white core in a deep cyan rim, ≥ 4 px wide at the play camera (0.3 m ≈ 13 px). */
   private startRibbon(i: number, widthM: number): void {
-    this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, widthM, 0.62 * 2.2, 0.88 * 2.2, 2.2, 1, 0.08);
+    this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, widthM, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1, 0.08);
     this.ribbons.setRim(i, CYAN[0] * 0.55, CYAN[1] * 0.55, CYAN[2] * 0.55);
   }
 
@@ -1054,10 +1055,10 @@ export class VanKiemFx {
         break;
       }
     }
-    // The lead blades' ribbon heads trail from the guard end.
+    // The lead blades' thin trails start at the pommel's end (never over the sword).
     if (i < HERO_N && this.st[i] !== S_OFF) {
       const L = this.lenM[i]! * (0.55 + 0.45 * this.sc[i]!);
-      this.ribbons.push(i, this.px[i]! - this.dx[i]! * L * 0.45, this.py[i]! - this.dy[i]! * L * 0.45, this.pz[i]! - this.dz[i]! * L * 0.45);
+      this.ribbons.push(i, this.px[i]! - this.dx[i]! * L * 0.5, this.py[i]! - this.dy[i]! * L * 0.5, this.pz[i]! - this.dz[i]! * L * 0.5);
     }
   }
 
@@ -1069,8 +1070,8 @@ export class VanKiemFx {
     this.u[i] = Math.min(0.9, Math.max(0.05, (this.px[i]! + 19.5) / 39));
     this.lenFrom[i] = this.lenM[i]!;
     this.tgt[i] = -1;
-    if (!this.ribbons.isOn(i)) this.startRibbon(i, 0.4);
-    else this.ribbons.setWidth(i, 0.4);
+    if (!this.ribbons.isOn(i)) this.startRibbon(i, TRAIL_M);
+    else this.ribbons.setWidth(i, TRAIL_M);
   }
 
   /** Moves sword i to (x, y, z), turning it along its motion (damped, so it never snaps). */
@@ -1114,7 +1115,7 @@ export class VanKiemFx {
     dx /= l;
     dz /= l;
     const lead = i < HERO_N;
-    const big = lead && this.lenM[i]! > HERO_M + 0.5;
+    const big = lead && this.lenM[i]! > HERO_M + 0.13;
     this.impactAt(T.x(t), T.midY(t), T.z(t), dx, dz, big ? 2.0 : lead ? 1.3 : this.cls(i) === SWORD_MID ? 0.9 : 0.6);
     // A river sword takes one stand-in HP (TargetField.hit below power 0.5); a lead blade lands a heavy blow.
     const power = big ? 1.05 : lead ? 0.85 : 0.3;
@@ -1517,44 +1518,72 @@ export class VanKiemFx {
   // ── Drawing ───────────────────────────────────────────────────────────────
 
   /**
-   * Every shown sword as a graphic sword, tip first: far streaks first, then mid swords, then the lead blades on
-   * top (one instanced draw, in that order). A sword's point (px) is its middle; it scales in and out with `sc`.
+   * Every shown sword as the real sword, tip first: the lead blades on the full model and the mid swords on its LOD
+   * (their flats turned to the camera, so the hollow ring reads as an O), the far swords as impostors. A sword's
+   * point (px) is its middle; it grows in and melts out with `sc` (its length eases and it dissolves into light).
+   * The stream's waves of light run down the swords' edge lines; each river sword trails a thin cyan line behind
+   * its pommel.
    */
   private drawSwords(): void {
-    const S = this.swords;
-    S.begin();
-    for (let pass = SWORD_FAR; pass >= SWORD_LEAD; pass -= 1) {
-      const from = pass === SWORD_LEAD ? 0 : pass === SWORD_MID ? HERO_N : HERO_N + this.mid;
-      const to = pass === SWORD_LEAD ? HERO_N : pass === SWORD_MID ? HERO_N + this.mid : this.cap;
-      for (let i = from; i < to; i += 1) {
-        const s = this.st[i] === S_OFF ? 0 : this.sc[i]!;
-        if (s <= 0.01) continue;
-        const st = this.st[i];
-        const len = this.lenM[i]! * (0.55 + 0.45 * s);
-        const h = len * 0.5;
-        const tx = this.px[i]! + this.dx[i]! * h;
-        const ty = this.py[i]! + this.dy[i]! * h;
-        const tz = this.pz[i]! + this.dz[i]! * h;
-        const bx = this.px[i]! - this.dx[i]! * h;
-        const by = this.py[i]! - this.dy[i]! * h;
-        const bz = this.pz[i]! - this.dz[i]! * h;
-        // Brighter where the stream's wave runs (river swords), full on a dive and on the lead blades.
-        const b = st === S_RIVER || st === S_SEED ? this.brightAt(this.u[i]!) : 1;
-        const fading = st === S_WOUND ? 0.5 : st === S_FADE ? 0.6 : 1;
-        if (pass === SWORD_LEAD) {
-          S.push(bx, by, bz, tx, ty, tz, LEAD_HALF * (len / HERO_M) ** 0.5, SWORD_LEAD, s, LEAD_SPINE, 0, LEAD_FLOOR_PX);
-        } else if (pass === SWORD_MID) {
-          // The streak behind: long while diving, a short flowing one in the river.
-          const streak = st === S_DIVE ? 0.9 : st === S_GATHER || st === S_FOLD ? 0.6 : st === S_STROKE || st === S_AIM ? 0.25 : 0.45;
-          S.push(bx, by, bz, tx, ty, tz, MID_HALF, SWORD_MID, s * fading, MID_SPINE * (0.7 + 0.3 * b), streak, MID_FLOOR_PX);
-        } else {
-          // A far streak's tail stretches behind it while it dives.
-          const k = st === S_DIVE ? 1.6 : 1;
-          S.push(tx - this.dx[i]! * len * k, ty - this.dy[i]! * len * k, tz - this.dz[i]! * len * k, tx, ty, tz, FAR_HALF, SWORD_FAR, s * fading * (0.6 + 0.4 * b), FAR_HEAD * (0.7 + 0.3 * b), 0, FAR_FLOOR_PX);
-        }
+    const B = this.blades;
+    const F = this.far;
+    this.host.camera.getWorldPosition(this.camW);
+    F.begin();
+    for (let i = 0; i < this.cap; i += 1) {
+      const s = this.st[i] === S_OFF ? 0 : this.sc[i]!;
+      const cls = this.cls(i);
+      if (s <= 0.01) {
+        if (cls !== SWORD_FAR) B.hide(i);
+        continue;
+      }
+      const st = this.st[i];
+      const len = this.lenM[i]! * (0.55 + 0.45 * s);
+      const h = len * 0.5;
+      const x = this.px[i]!;
+      const y = this.py[i]!;
+      const z = this.pz[i]!;
+      const dx = this.dx[i]!;
+      const dy = this.dy[i]!;
+      const dz = this.dz[i]!;
+      // Brighter where the stream's wave runs (river swords), full on a dive and on the lead blades.
+      const b = st === S_RIVER || st === S_SEED ? this.brightAt(this.u[i]!) : 1;
+      const fading = st === S_WOUND ? 0.25 : st === S_FADE ? 0.35 : 0;
+      const dissolve = Math.min(1, 1 - s + fading * s);
+      if (cls === SWORD_FAR) {
+        F.push(x - dx * h, y - dy * h, z - dz * h, x + dx * h, y + dy * h, z + dz * h, 1 - dissolve, 0.12 + 0.12 * Math.sin(this.t * 1.3 + i), 0.35 + 0.65 * b, 0);
+      } else {
+        B.setWhole(i, x, y, z, dx, dy, dz, len, this.faces.of(this.camW, x, y, z, dx, dy, dz));
+        const lead = cls === SWORD_LEAD;
+        B.look(i, lead ? 1 : 0.45 + 0.55 * b, st === S_WOUND ? 0.6 : 0, CYAN[0] * 0.8, CYAN[1] * 0.8, CYAN[2] * 0.8, dissolve, i * 0.37);
+      }
+      // The trail: long while diving, a short flowing one in the river (the lead blades have their ribbons).
+      if (cls !== SWORD_LEAD && dissolve < 0.5 && st !== S_WOUND) {
+        const k = (1 - dissolve * 2) * (cls === SWORD_FAR ? 0.55 : 1) * (0.6 + 0.4 * b);
+        const tl = (st === S_DIVE ? 0.9 : st === S_GATHER || st === S_FOLD ? 0.6 : st === S_STROKE || st === S_AIM ? 0.25 : 0.45) * len;
+        const t = this.beams.spec.reset();
+        t.x = x - dx * h;
+        t.y = y - dy * h;
+        t.z = z - dz * h;
+        t.dx = -dx;
+        t.dy = -dy;
+        t.dz = -dz;
+        t.len0 = t.len1 = tl;
+        t.w0 = TRAIL_M * 1.3;
+        t.w1 = TRAIL_M * 0.5;
+        t.life = -1;
+        t.cr = TRAIL_CORE[0] * k;
+        t.cg = TRAIL_CORE[1] * k;
+        t.cb = TRAIL_CORE[2] * k;
+        t.hr = CYAN[0] * 0.4 * k;
+        t.hg = CYAN[1] * 0.4 * k;
+        t.hb = CYAN[2] * 0.4 * k;
+        t.fadeBase = 0.04;
+        t.fadeTip = 0.85;
+        this.beams.emit();
       }
     }
-    S.end();
+    F.end();
+    B.sync();
   }
 
   reset(): void {
@@ -1579,8 +1608,9 @@ export class VanKiemFx {
       this.dz[i] = 0;
       this.lenM[i] = this.baseLen(i);
     }
-    this.swords.begin();
-    this.swords.end();
+    this.blades.hideAll();
+    this.blades.sync();
+    this.far.hide();
   }
 
   /** Swords in the pool (lead blades first). */

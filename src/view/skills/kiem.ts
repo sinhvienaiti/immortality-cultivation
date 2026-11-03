@@ -16,6 +16,15 @@
  * stack core flash, star, shock ring, sparks and a crescent cut, with light
  * pillars on big hits; an aura and motes linger after. Only thin HDR cores
  * bloom; halos, rings and glows stay ≤ 0.9; dark layers sit under the light.
+ * Real swords (owner 03/11/2026: "hình kiếm đang rất xấu… rõ ràng chúng ta đã
+ * có hình ảnh kiếm r"): every sword of these skills is the equipped weapon's
+ * own textured model under the scene's light (blades.ts, sword-material.ts):
+ * the full GLB for hero swords (Phi Kiếm, Ngự Kiếm, Nhất Tuyến, Hộ thân, Lạc
+ * Kiếm Trận, the rain's leads, the heaven sword), its textured LOD for mid
+ * swords (Thiên Hà's halo and rain), impostors of it for the gate's ring
+ * (real-swords.ts). Around a sword only a narrow white-hot edge line, a thin
+ * cyan trail behind it, a soft rim and impact flashes: no glow cards over the
+ * blade, no graphic or flat-tinted stand-in.
  * View only: hits shown here are the lab's stand-ins for sim events.
  * Smooth motion (owner 02/11/2026, MOTION_PLAN step 3): no layer pops on or
  * off outside a flash (long-lived layers ease in and out, sigils reveal with
@@ -31,10 +40,11 @@
  * the flying blades carry an edge glow and a guard-to-tip gradient.
  */
 import * as THREE from "three";
-import { BladeSet, guardBand, loadBladeGeometry, loadWeaponModel } from "./blades";
+import { BladeSet, loadSwordModels, overlayModel } from "./blades";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
-import { GraphicSwords, SWORD_LEAD, SWORD_MID, SWORD_SPINE } from "./sword-grammar";
-import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate } from "./sword-rain";
+import { loadSwordAtlas, SwordImpostors } from "./real-swords";
+import { FaceRoll } from "./sword-material";
+import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate, GATE_SWORDS } from "./sword-rain";
 import type { TargetField } from "./targets";
 import { DEFAULT_WEAPON, glowOf, rimOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
@@ -110,9 +120,12 @@ const SIGIL_LIGHT = 0.62;
 
 /** The flying blade of the basic shot and slot 1 (× 1.1 m): 1.55 is ~75 px at the play camera (round 3a; was 1.3). */
 const FLIGHT_SCALE = 1.55;
-/** Their spine (HDR entering the bloom, × the grammar's cyan-tinted white) and trail (m; ≥ 4 px at the play camera). */
-const FLIGHT_SPINE = 5;
-const FLIGHT_TRAIL_M = 0.32;
+/**
+ * The thin cyan trail behind a flying sword (m wide; it starts at the pommel, never over the sword), and its light:
+ * a cyan-tinted white core (HDR, a thin line) in the skill's rim.
+ */
+const TRAIL_M = 0.14;
+const TRAIL_CORE = [0.62 * 2.2, 0.88 * 2.2, 2.2] as const;
 /** Canon §12.1 hit ticks in seconds (60 Hz). */
 const TICK = 1 / 60;
 const T_AUTO_HIT = 18 * TICK;
@@ -125,22 +138,25 @@ const T_K5_HITS = [30 * TICK, 75 * TICK, 120 * TICK] as const;
 /** Typing progress at which each Ngự Kiếm blade appears behind the shoulders. */
 const K1_SHOW = [0.15, 0.45, 0.75] as const;
 
-// Reserved hero blade slots. Nhất Tuyến takes two in turn, Lạc Kiếm Trận two sets of six and Phi Kiếm six
-// (AUTO_N), so a new cast never steals a blade that is still on screen (folding in a wound, standing in an
-// array, fading out): it would jump or pop.
-const HERO = { k1: 0, k2: 3, guard: 5, k4: 8, auto: 20, halo: 26 } as const;
+// Reserved sword slots. Nhất Tuyến takes two in turn, Lạc Kiếm Trận two sets of six and Phi Kiếm six
+// (AUTO_N), so a new cast never steals a sword that is still on screen (folding in a wound, standing in an
+// array, fading out): it would jump or pop. [0, HERO.halo) draw the full model; from HERO.halo on, the LOD.
+// The rain's hero swords: its six leads, a spare, then up to six planted leads (the heaven sword has its own set).
+const HERO = { k1: 0, k2: 3, guard: 5, k4: 8, auto: 20, rain: 26, halo: 40 } as const;
 const AUTO_N = 6;
 const HALO_N = 24;
-const POOL0 = HERO.halo + HALO_N; // first blade of the K5 pool (the swarm mesh, BladeSet split)
-/** Most swarm blades a tier may ask for (canon §20.2: 150 / 300 / 500); the lab's ?k5n= measures up to it. */
+const RAIN_PLANT_LEAD0 = HERO.rain + 7;
+const RAIN_PLANT_LEADS = HERO.halo - RAIN_PLANT_LEAD0;
+/** First mid sword of the rain (the LOD mesh): one slot per drop, then the planted mid swords. */
+const POOL0 = HERO.halo + HALO_N;
+const RAIN_DROPS = 200;
+/** Kept for the lab's ?k5n= (the round-2 swarm's tier sizes); the rain draws a fixed pool. */
 export const K5_MAX = 500;
 /**
- * Blade scales (× 1.1 m) of Thiên Hà's swarm and Lạc Kiếm Trận's falling swords (power pass: the judge read them
- * as 10–15 px pins at the play camera; 1.3 and 2.1 put them over 20 px at 1080p).
+ * Lạc Kiếm Trận's falling swords (× 1.1 m guard to tip): 1.7 puts the whole sword at ~3 m, 2.9× the hand sword
+ * (owner brief 03/11: skill swords 1.5–3× the hand sword, ≥ 20 px at the play camera).
  */
-const K5_SWORD = 1.3;
-const K4_SWORD = 2.1;
-const BLADE_CAP = POOL0 + K5_MAX;
+const K4_SWORD = 1.7;
 /** Ribbons: sword-light trails, and a weapon's silk trails (WeaponMotif.silk) beside the flying ones. */
 const RIBBONS = 64;
 const EMITTERS = 16;
@@ -250,15 +266,21 @@ const RAIN_PER_WAVE = 48;
 const RAIN_WAVE_SPREAD_S = 0.22;
 const RAIN_CLIMAX_AT = 1.55;
 const RAIN_COLOSSUS_FALL_S = 0.26;
+/** The heaven sword (the climax's one giant from the gate, round 3b's composition) and the rain's swords, pommel to tip (m): leads 3×, rain 2.4× the hand sword. */
 const RAIN_COLOSSUS_M = 20;
+const RAIN_LEAD_M = 3.06;
+const RAIN_MID_M = 2.45;
 const RAIN_RIFT_M = 22;
 const RAIN_END_AT = 3.9;
 const RAIN_PLANT_CAP = 16;
+const BLADE_CAP = POOL0 + RAIN_DROPS + RAIN_PLANT_CAP;
 /** The rain's footprint (m): the whole beast field, flanks and the king included. */
 const RAIN_FIELD = { x0: -18, x1: 18, z0: -18, z1: -1 } as const;
 
 interface RainDrop {
   active: boolean;
+  /** Its sword slot (a lead's hero slot, a rain sword's mid slot). */
+  slot: number;
   kind: number;
   x: number;
   z: number;
@@ -391,99 +413,6 @@ export function skillGlow(def: WeaponDef, slot: KiemSlot): WeaponGlow {
   return glowOf(hex, 1, rim);
 }
 
-/** Blade light uniforms (weapon level; per-skill colour comes from each blade's instance tint). */
-interface BladeLight {
-  readonly uBladeEdge: { value: THREE.Color };
-  readonly uBladeTip: { value: THREE.Color };
-  readonly uBladeBase: { value: THREE.Color };
-  readonly uBladeFuller: { value: THREE.Color };
-  /** The weapon's ring motif on every copy: a soft jade light (≤ 0.9) on the guard's band (heights in the unit blade), 0 without one. */
-  readonly uBladeJade: { value: THREE.Color };
-  readonly uBladeJadeY: { value: THREE.Vector2 };
-}
-
-/**
- * The flying swords' look (round 2: "flat grey"): the steel takes a gradient
- * from a deep accent at the guard to a pale one at the tip (its reflections
- * are tinted, the HDRI stays), the rail's emission rises toward the tip, a
- * fresnel edge glow outlines the blade (≤ 0.9, brighter in a hit flash: the
- * instance tint), and a thin HDR fuller line runs down the flat (it alone
- * blooms). Patches the BladeSet's own material, so the blades stay one
- * instanced draw call and a weapon GLB keeps working (its geometry is mapped
- * to the same guard-at-0, tip-at-1 convention). Clamped before pow (MSAA).
- */
-function lightBlade(material: THREE.MeshStandardMaterial, u: BladeLight): void {
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uBladeEdge = u.uBladeEdge;
-    shader.uniforms.uBladeTip = u.uBladeTip;
-    shader.uniforms.uBladeBase = u.uBladeBase;
-    shader.uniforms.uBladeFuller = u.uBladeFuller;
-    shader.uniforms.uBladeJade = u.uBladeJade;
-    shader.uniforms.uBladeJadeY = u.uBladeJadeY;
-    shader.vertexShader = "varying vec2 vBladeL;\n" + shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n\tvBladeL = position.xy;");
-    shader.fragmentShader =
-      "uniform vec3 uBladeEdge;\nuniform vec3 uBladeTip;\nuniform vec3 uBladeBase;\nuniform vec3 uBladeFuller;\nuniform vec3 uBladeJade;\nuniform vec2 uBladeJadeY;\nvarying vec2 vBladeL;\n" +
-      shader.fragmentShader
-        .replace(
-          "#include <color_fragment>",
-          [
-            "#include <color_fragment>",
-            "\tdiffuseColor.rgb *= mix( uBladeBase, uBladeTip, smoothstep( -0.05, 1.0, vBladeL.y ) );",
-            // A ring guard (uBladeJade set) keeps plain steel through a tint flash: tinted over 1 it went white and
-            // filled the ring's hole, so the O read as a blob at the play camera (review 03/11/2026).
-            "#ifdef USE_COLOR",
-            "\tfloat bGuardK = step( 1e-4, uBladeJade.r + uBladeJade.g + uBladeJade.b ) * smoothstep( uBladeJadeY.x - 0.03, uBladeJadeY.x, vBladeL.y ) * ( 1.0 - smoothstep( uBladeJadeY.y, uBladeJadeY.y + 0.03, vBladeL.y ) );",
-            "\tdiffuseColor.rgb /= mix( 1.0, max( max( max( vColor.r, vColor.g ), vColor.b ), 1.0 ), bGuardK );",
-            "#endif",
-            // A tint over 1 made the metal's F0 over 1, and three's multiscatter term (F_avg / (1 − E_ms·F_avg))
-            // flips sign once E_ms·F_avg > 1: on small, detailed copies (high geometry roughness) the swarm wrote
-            // light of −36 in blue, which bloomed lemon yellow (review 03/11/2026). The lighting takes F0 ≤ 1 and
-            // the tint's brightening comes back as a gain on the specular (outgoingLight, below).
-            "\tvec3 bF0Gain = max( diffuseColor.rgb, vec3( 1.0 ) );",
-            "\tdiffuseColor.rgb = min( diffuseColor.rgb, vec3( 1.0 ) );",
-          ].join("\n"),
-        )
-        .replace(
-          "#include <emissivemap_fragment>",
-          [
-            "#include <emissivemap_fragment>",
-            "\tfloat bTip = smoothstep( 0.0, 1.0, vBladeL.y );",
-            "\tfloat bOn = smoothstep( -0.01, 0.03, vBladeL.y );",
-            "\tvec3 bTk = vec3( 1.0 );",
-            "#ifdef USE_COLOR",
-            "\tbTk = vColor;",
-            "#endif",
-            "\tfloat bTint = max( max( bTk.r, bTk.g ), bTk.b );",
-            // Steady tints (1.2–2: waiting, charged, belt blades) keep the edge ≤ 0.9; only a hit flash (> 2) goes over (review fix).
-            "\tfloat bFlash = min( bTint, 1.0 ) + 1.1 * max( bTint - 2.0, 0.0 );",
-            "\tfloat bFr = pow( clamp( 1.0 - abs( dot( normal, normalize( vViewPosition ) ) ), 0.0, 1.0 ), 2.2 );",
-            "\tfloat bFuller = ( 1.0 - smoothstep( 0.005, 0.012, abs( vBladeL.x ) ) ) * smoothstep( 0.05, 0.14, vBladeL.y ) * ( 1.0 - smoothstep( 0.8, 0.88, vBladeL.y ) );",
-            "\ttotalEmissiveRadiance *= mix( 0.3, 1.0, bTip );",
-            "\ttotalEmissiveRadiance += bOn * ( uBladeEdge * bFr * ( 0.45 + 0.75 * bTip ) * ( 0.55 + 0.45 * bFlash ) + uBladeFuller * bFuller * ( 0.5 + 0.5 * bTint ) );",
-            // The weapon's ring (Clear Wind's hollow jade ring): its band glows soft jade off the blade's own width,
-            // so every copy carries an O of light at 25–60 px (≤ 0.9: no bloom).
-            "\tfloat bRing = smoothstep( uBladeJadeY.x - 0.015, uBladeJadeY.x + 0.01, vBladeL.y ) * ( 1.0 - smoothstep( uBladeJadeY.y - 0.01, uBladeJadeY.y + 0.015, vBladeL.y ) ) * smoothstep( 0.04, 0.06, abs( vBladeL.x ) );",
-            "\tvec3 bJadeE = uBladeJade * bRing * ( 0.4 + 0.2 * min( bTint, 1.0 ) + 0.8 * bFr );",
-            "\ttotalEmissiveRadiance += bJadeE;",
-          ].join("\n"),
-        )
-        // The ring's jade only fills the headroom under the bloom threshold (luminance 0.95 with the lit steel under
-        // it): lit steel plus 0.73 of jade bloomed the whole guard into a white blob (review 03/11/2026).
-        .replace(
-          "#include <opaque_fragment>",
-          [
-            "\toutgoingLight += totalSpecular * ( bF0Gain - 1.0 );",
-            "\tfloat bBase = dot( outgoingLight - bJadeE, vec3( 0.299, 0.587, 0.114 ) );",
-            "\tfloat bJl = dot( bJadeE, vec3( 0.299, 0.587, 0.114 ) );",
-            "\toutgoingLight -= bJadeE * ( 1.0 - min( 1.0, max( 0.0, 0.95 - bBase ) / max( bJl, 1e-4 ) ) );",
-            "#include <opaque_fragment>",
-          ].join("\n"),
-        );
-  };
-  material.customProgramCacheKey = () => "kiem-blade-light";
-  material.needsUpdate = true;
-}
-
 interface Flight {
   active: boolean;
   blade: number;
@@ -558,7 +487,6 @@ export class KiemFx {
   private readonly flare: SpritePool;
   private readonly star: SpritePool;
   private readonly spark: SpritePool;
-  private readonly bladeGlow: SpritePool;
   private readonly slash: SpritePool;
   private readonly motes: SpritePool;
   private readonly smoke: SpritePool;
@@ -612,24 +540,14 @@ export class KiemFx {
   private palSlot: KiemSlot = "auto";
   /** Fade-in (s) the shared emit helpers give their sprites and beams: 0 (flashes, full at once) or SOFT_RISE_S. */
   private riseS = 0;
-  private readonly bladeLight: BladeLight = {
-    uBladeEdge: { value: new THREE.Color() },
-    uBladeTip: { value: new THREE.Color() },
-    uBladeBase: { value: new THREE.Color() },
-    uBladeFuller: { value: new THREE.Color() },
-    uBladeJade: { value: new THREE.Color(0, 0, 0) },
-    uBladeJadeY: { value: new THREE.Vector2(-0.02, 0.02) },
-  };
   /** Blade roll round its axis (rad) on top of the face roll (show's `roll`): Ngự Kiếm's waiting blades rock slowly. */
   private readonly bRoll = new Float32Array(BLADE_CAP);
   /** Ngự Kiếm's waiting blades' extra roll as drawn (rad): it eases to 0 before each launch, as a flight shows only the face roll. */
   private readonly k1Roll = new Float32Array(3);
-  /** faceRoll's scratch (no allocation per blade). */
-  private readonly rq = new THREE.Quaternion();
-  private readonly rUp = new THREE.Vector3(0, 1, 0);
-  private readonly rD = new THREE.Vector3();
-  private readonly rE = new THREE.Vector3();
-  private readonly rN = new THREE.Vector3();
+  /** Turns each sword's flat to the camera (no allocation per sword). */
+  private readonly faces = new FaceRoll();
+  /** Per sword: its dissolve into light (0 whole … 1 gone; the rain's swords appear and melt with it). */
+  private readonly bDis = new Float32Array(BLADE_CAP);
   /** Read by the caster's presence layer (src/lab/presence.ts). */
   readonly presence: KiemPresence = { charge: 0, slot: "auto", releases: 0, tier: 0 };
   /** The weapon in the hand is out (updateHand): Nhất Tuyến's blade or a Phi Kiếm blade is on screen. */
@@ -647,11 +565,10 @@ export class KiemFx {
   private readonly backStar: SpritePool;
   /**
    * Round 3a (P8): the basic shot and slot 1 read at the play camera: a seal ring that flares at the hand on the
-   * release and spins out over the flight, a white spine with a cyan rim laid over the flying blade (the grammar's
-   * SPINE), a white-core trail ≥ 4 px, and a graphic hit (a white star, the slash, a thin ring; no soft glow).
+   * release and spins out over the flight, and a graphic hit (a white star, the slash, a thin ring; no soft glow).
+   * The flying sword itself is the real model with its edge line (03/11: no spine or rim strip over it).
    */
   private readonly handRing: SpritePool;
-  private readonly spines = new GraphicSwords(24, 13);
   /** Ground cracks: K5's zone and Lạc Kiếm Trận's heart. */
   private readonly sigCrack: GroundSigil;
   private readonly sigCrackS: GroundSigil;
@@ -739,13 +656,15 @@ export class KiemFx {
   /** An array cast over while it held: its held light fades out over K4_OLD_S where it stood (t < 0: none). */
   private k4Old = { t: -1, x: 0, z: 0, hold: 0, dark: 0 };
   private k5 = { active: false, t: 0, x: 0, z: 0, wave: 0, done: false, dissolved: false, acc: 0, glow0: 0 };
-  /** The sword rain's drawing (round 3b): the gate, its swords, light strips and ground marks. */
+  /** The sword rain's drawing (round 3b): the gate and its ring of real swords (impostors), light strips and ground marks. */
   private readonly gate = new SkyGate(2);
-  private readonly rainSwords = new GraphicSwords(260, 17);
+  private readonly gateSwords = new SwordImpostors(GATE_SWORDS, 3, false);
+  /** The heaven sword: the full model in the transparent pass after the gate (it falls out of the gate's heart). */
+  private readonly heaven = new BladeSet(1, 1.1, 1, { hero: true, mid: false });
   private readonly rainStrips = new LightStrips(160, 15);
   private readonly rainMarks = new GroundMarks(80, 4);
-  private readonly drops: RainDrop[] = Array.from({ length: 200 }, () => ({ active: false, kind: 0, x: 0, z: 0, t0: 0, dur: 0, y0: 0, target: -1, wave: 0, landed: false, lean: 0 }));
-  private readonly planted = Array.from({ length: RAIN_PLANT_CAP }, () => ({ active: false, kind: 0, x: 0, z: 0, lean: 0, t: 0 }));
+  private readonly drops: RainDrop[] = Array.from({ length: RAIN_DROPS }, (_, i) => ({ active: false, slot: POOL0 + i, kind: 0, x: 0, z: 0, t0: 0, dur: 0, y0: 0, target: -1, wave: 0, landed: false, lean: 0 }));
+  private readonly planted = Array.from({ length: RAIN_PLANT_CAP }, () => ({ active: false, slot: -1, kind: 0, x: 0, z: 0, lean: 0, t: 0 }));
   private readonly marks = Array.from({ length: 72 }, () => ({ active: false, kind: 0, x: 0, z: 0, size: 0, t0: 0, life: 0, angle: 0, seed: 0 }));
   private readonly columns = Array.from({ length: RAIN_COLUMN_X.length }, () => ({ gx: 0, gz: 0, rimA: 0, t0: 0 }));
   private readonly rift = { t: -1, x: 0, z: 0, angle: 0, seed: 0 };
@@ -765,8 +684,8 @@ export class KiemFx {
     this.poolN = Math.max(1, Math.min(K5_MAX, Math.round(opts.k5Blades ?? tierN)));
     this.dens = quality === "low" ? 0.5 : quality === "medium" ? 0.75 : 1;
     this.lite = quality === "low";
-    // The swarm (K5 pool) is its own instanced mesh, so it can draw the weapon's LOD (WeaponDef.swarm).
-    this.blades = new BladeSet(BLADE_CAP, 1.1, POOL0);
+    // Hero swords draw the full model (and cast shadows); from the halo on, the textured LOD (WeaponDef.swarm).
+    this.blades = new BladeSet(BLADE_CAP, 1.1, HERO.halo);
     const L = host.layer;
     // Dark layers first, light on top (VFX_STANDARD §3.4: a dark layer behind bright ones).
     // Big soft discs and rings show only the cropped middle of their sheet (fewer pixels drawn, same look).
@@ -782,17 +701,15 @@ export class KiemFx {
     this.splash = new SpritePool(160, tex.splash, "ink", "camera", 9, { fadeIn: NON_FLASH_IN_S });
     // The caster's halo is placed behind the body (behindCaster): no pull; it fades out at the ground instead.
     this.aura = new SpritePool(48, tex.halo, "add", "camera", 10, { pull: 0, groundFade: 0.15 });
-    // Layers on the same sheet, blend and facing share one pool, so one draw call: the glows and the blades'
-    // one-frame halo cards always; sparks and motes too when they use the glow's sheet (the lab's circle_05).
-    // Additive layers add up in any order, so the shared pool's render order changes nothing.
+    // Layers on the same sheet, blend and facing share one pool, so one draw call: the glows always; sparks and
+    // motes too when they use the glow's sheet (the lab's circle_05). Additive layers add up in any order, so the
+    // shared pool's render order changes nothing.
     const sparkInGlow = tex.spark === tex.glow;
     const moteInGlow = tex.mote === tex.glow;
-    // One halo card per swarm blade beyond the first 300 too (?k5n= up to K5_MAX).
-    this.glow = new SpritePool(620 + (K5_MAX - 300) + (sparkInGlow ? 800 : 0) + (moteInGlow ? 700 : 0), tex.glow, "add", "camera", 11, { crop: CROP_LIGHT });
+    this.glow = new SpritePool(620 + (sparkInGlow ? 800 : 0) + (moteInGlow ? 700 : 0), tex.glow, "add", "camera", 11, { crop: CROP_LIGHT });
     this.slash = new SpritePool(96, tex.slash, "add", "camera", 12);
-    // One-frame core cards, one per visible blade (≤ BLADE_CAP − HALO slots in use; dropOneFrame frees last frame's first).
-    this.bladeGlow = new SpritePool(BLADE_CAP + 60, tex.trace, "add", "camera", 12);
-    this.beams = new BeamPool(640, 13);
+    // Beams: light pillars and rays, and the thin one-frame trails behind falling swords (≤ RAIN_DROPS a frame).
+    this.beams = new BeamPool(640 + RAIN_DROPS, 13);
     this.spark = sparkInGlow ? this.glow : new SpritePool(800, tex.spark, "add", "camera", 13);
     this.motes = moteInGlow ? this.glow : new SpritePool(700, tex.mote, "add", "camera", 13);
     this.shock = new SpritePool(64, tex.shock, "add", "camera", 14);
@@ -820,23 +737,23 @@ export class KiemFx {
     this.pools = [
       ...new Set([
         this.groundDark, this.groundInk, this.groundGlow, this.groundRing, this.groundShock, this.twirl, this.smoke, this.splash,
-        this.aura, this.backGlow, this.backStar, this.glow, this.slash, this.bladeGlow, this.spark, this.motes, this.shock, this.star, this.flare, this.handRing,
+        this.aura, this.backGlow, this.backStar, this.glow, this.slash, this.spark, this.motes, this.shock, this.star, this.flare, this.handRing,
       ]),
     ];
     this.sigils = [this.sigCrack, this.sigCrackS, this.sigHex, this.sigSpiral, this.sigArcs, this.sigLine, this.sigArrow, this.sigSeal];
     for (const s of this.sigils) L.add(s.mesh);
     for (const p of this.pools) L.add(p.mesh);
-    L.add(this.blades.mesh, this.ribbons.mesh, this.beams.mesh, this.spines.mesh);
-    L.add(this.gate.mesh, this.rainSwords.mesh, this.rainStrips.mesh, this.rainMarks.mesh);
+    L.add(this.blades.mesh, this.ribbons.mesh, this.beams.mesh);
+    L.add(this.gate.mesh, this.gateSwords.mesh, this.heaven.mesh, this.rainStrips.mesh, this.rainMarks.mesh);
+    this.heaven.mesh.renderOrder = 4;
     for (let i = 0; i < 24; i += 1) {
       this.flights.push({ active: false, blade: 0, ribbon: 0, silk: -1, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, big: false, hit: -1, sx: 0, sy: 0, sz: 0, acc: 0, d0x: 0, d0y: 0, d0z: 0, turn: FLIGHT_TURN_S, ldx: 0, ldy: 0, ldz: 1, slot: "auto" });
     }
     for (let i = 0; i < EMITTERS; i += 1) this.emitters.push({ active: false, x: 0, y: 0, z: 0, r: 0, t: 0, life: 0, rate: 0, acc: 0, slot: "auto" });
-    // The signature sword's colours until setWeapon; the blade stays the stand-in jian until a GLB loads.
+    // The signature sword's colours until setWeapon; the swords stay the stand-in jian until a GLB loads.
     this.weaponDef = weaponById(DEFAULT_WEAPON)!;
     this.pal = this.weaponDef.glow;
     this.skillPal = KiemFx.skillPals(this.weaponDef);
-    lightBlade(this.blades.mesh.material as THREE.MeshStandardMaterial, this.bladeLight);
     this.applyColours(this.weaponDef);
   }
 
@@ -896,11 +813,12 @@ export class KiemFx {
   }
 
   /**
-   * Equips a sword: the blade geometry (its GLB, or the stand-in jian while
-   * the file is missing), the rail and every light layer's colour swap
-   * together once the geometry is ready. Only family "sword" is accepted: the
-   * sabre and spear skill sets are not built yet. Resolves false when refused
-   * or overtaken by a later call. Not per frame: it may allocate.
+   * Equips a sword: its textured models (the full GLB for hero swords, its
+   * LOD for mid swords, impostors of it for the gate; the stand-in jian while
+   * a file is missing) and every light layer's colour swap together once they
+   * are ready. Only family "sword" is accepted: the sabre and spear skill sets
+   * are not built yet. Resolves false when refused or overtaken by a later
+   * call. Not per frame: it may allocate.
    */
   setWeapon(def: WeaponDef): Promise<boolean> {
     if (def.family !== "sword") {
@@ -908,13 +826,11 @@ export class KiemFx {
       return Promise.resolve(false);
     }
     const seq = (this.weaponSeq += 1);
-    // The swarm's LOD when the weapon has one and its file exists, else the swarm draws the hero blade too.
-    const swarm = def.swarm !== undefined ? loadWeaponModel(def.swarm).then((m) => (m === null ? null : loadBladeGeometry(def.swarm, def.fit))) : Promise.resolve(null);
-    return Promise.all([loadBladeGeometry(def.model, def.fit), swarm]).then(([geometry, lod]) => {
+    return Promise.all([loadSwordModels(def), loadSwordAtlas(def.impostor)]).then(([models, atlas]) => {
       if (seq !== this.weaponSeq) return false;
-      this.blades.setGeometry(geometry, lod ?? geometry);
-      const band = guardBand(geometry);
-      this.bladeLight.uBladeJadeY.value.set(band[0], band[1]);
+      this.blades.setModel(models.full, models.lod);
+      this.heaven.setModel(overlayModel(models.full));
+      this.gateSwords.setAtlas(atlas);
       this.weaponDef = def;
       this.ringGuard = def.motif?.ring === true;
       this.skillPal = KiemFx.skillPals(def);
@@ -925,9 +841,6 @@ export class KiemFx {
   }
 
   private applyColours(def: WeaponDef): void {
-    const g = def.glow;
-    // The rail glows a little more than the realistic set; the light around the blade comes from the glow cards.
-    this.blades.setRail(def.rail, 0.65);
     // Each sigil in its skill's colours (the seal follows the skill being typed, updateAura).
     this.sigilColours(this.sigLine, "k2");
     this.sigilColours(this.sigArcs, "guard");
@@ -946,19 +859,6 @@ export class KiemFx {
     }
     this.sealCol.copy(this.sigSeal.uniforms.uColor.value);
     this.sealCore.copy(this.sigSeal.uniforms.uCore.value);
-    // The blade's light: a deep accent at the guard to a pale tip, an edge glow in the rim colour (≤ 0.9), a thin HDR fuller.
-    const rim = g.rim;
-    const t = g.tint;
-    const bl = this.bladeLight;
-    bl.uBladeEdge.value.setRGB(rim[0] * 0.85, rim[1] * 0.85, rim[2] * 0.85);
-    bl.uBladeBase.value.setRGB(0.55 + 0.25 * t[0], 0.55 + 0.25 * t[1], 0.55 + 0.25 * t[2]);
-    bl.uBladeTip.value.setRGB(0.85 + 0.15 * t[0], 0.85 + 0.15 * t[1], 0.85 + 0.15 * t[2]);
-    bl.uBladeFuller.value.setRGB(g.core[0] * 0.5, g.core[1] * 0.5, g.core[2] * 0.5);
-    // A ring motif lights the guard's band in the motif's jade, mostly at its rims (× 0.6, the shader swings it
-    // ≤ × 1.4: ≤ 0.73), so the O reads at 25–60 px and the carving still shows close up.
-    const jade = def.motif?.ring === true ? def.motif.jade : null;
-    if (jade !== null) bl.uBladeJade.value.setRGB(jade[0] * 0.6, jade[1] * 0.6, jade[2] * 0.6);
-    else bl.uBladeJade.value.setRGB(0, 0, 0);
   }
 
   /**
@@ -979,15 +879,21 @@ export class KiemFx {
     return this.tmpCol.setRGB(g.rim[0] * k, g.rim[1] * k, g.rim[2] * k);
   }
 
-  /** A blade flash toward its skill's tint: k = 1 plain steel, k > 1 brighter (the tint keeps ≤ 30 % white). */
+  /**
+   * A sword's skill light (sword-material.ts) from the old tint level `k`: 1 the plain sword, 1.2–2 a steady charge
+   * (the edge line rises), over 2 a hit flash; the soft rim in its skill's colour; the texture is never tinted.
+   */
   private bladeTint(i: number, k: number): void {
-    const t = this.skillPal[this.bladeSlot(i)].tint;
-    this.blades.tint(i, 1 + (k - 1) * t[0], 1 + (k - 1) * t[1], 1 + (k - 1) * t[2]);
+    const rim = this.skillPal[this.bladeSlot(i)].rim;
+    const glow = clamp01(k - 1);
+    const flash = Math.max(0, (k - 2) / 1.2);
+    this.blades.look(i, glow, flash, rim[0], rim[1], rim[2], this.bDis[i]!);
   }
 
   /** Reset every running effect (lab: before a capture). */
   reset(): void {
     this.blades.hideAll();
+    this.bDis.fill(0);
     this.bPres.fill(0);
     this.bShown.fill(0);
     this.bCard.fill(0);
@@ -1022,6 +928,8 @@ export class KiemFx {
     this.rift.t = -1;
     this.colossus.active = this.colossus.done = false;
     this.gate.hide();
+    this.heaven.hide(0);
+    this.heaven.sync();
     this.haloN = 0;
     this.haloAng = 0;
     this.haloK = 1;
@@ -1463,9 +1371,10 @@ export class KiemFx {
     this.placeLine(this.sigLine, this.c.x, this.c.z, dx, dz, 14);
     this.releaseFlash(0.8, 5, 1.8, 3);
     this.host.impulse(1, dx, dz);
-    // The blade-light runs the whole line in 0.2 s (hit at +12 ticks): a wide sword-light beam sweeps out with it.
+    // The sword runs the whole line in 0.2 s (hit at +12 ticks): a sword-light beam sweeps out with it, and a thin
+    // trail follows its pommel.
     const r = this.nextRibbon();
-    this.ribbons.start(r, k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, 0.42, this.pal.body[0] * 2.8, this.pal.body[1] * 2.8, this.pal.body[2] * 2.8, 1);
+    this.ribbons.start(r, k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, TRAIL_M, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1);
     this.ribbons.setRim(r, this.pal.rim[0], this.pal.rim[1], this.pal.rim[2]);
     k.ribbon = r;
     k.ribbonOn = true;
@@ -1516,11 +1425,11 @@ export class KiemFx {
         }
         this.ribbons.stop(g.ribbon[j]!);
       } else {
-        this.blades.tint(blade, 1, 1, 1);
+        this.bladeTint(blade, 1);
       }
       g.blockT[j] = -1;
       const r = this.nextRibbon();
-      this.ribbons.start(r, x, y, z, 0.32, this.pal.body[0] * 2.4, this.pal.body[1] * 2.4, this.pal.body[2] * 2.4, 1);
+      this.ribbons.start(r, x, y, z, TRAIL_M, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1);
       this.ribbons.setRim(r, this.pal.rim[0], this.pal.rim[1], this.pal.rim[2]);
       g.ribbon[j] = r;
     }
@@ -2039,8 +1948,10 @@ export class KiemFx {
     }
     // The trail grows with the flight: on a short flight (Ngự Kiếm, 0.1 s) it eases in over half of it, or the
     // fade-in and the growing length together put over 30 % of its light into the last frame (fxkit RibbonPool).
-    // A white core (cyan-tinted: its bloom stays cyan) in the skill's rim, at least FLIGHT_TRAIL_M wide.
-    this.ribbons.start(f.ribbon, fx, fy, fz, Math.max(width, FLIGHT_TRAIL_M), 0.62 * 2.4, 0.88 * 2.4, 2.4, 1, Math.min(0.1, dur * 0.5));
+    // A thin cyan trail behind the pommel (03/11: never a wide light band over the sword): a cyan-tinted white core
+    // in the skill's rim. `width` was the old band's; the real sword carries its own width now.
+    void width;
+    this.ribbons.start(f.ribbon, fx, fy, fz, TRAIL_M, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1, Math.min(0.1, dur * 0.5));
     this.ribbons.setRim(f.ribbon, this.pal.rim[0] * 0.8, this.pal.rim[1] * 0.8, this.pal.rim[2] * 0.8);
     f.silk = this.startSilk(fx, fy, fz, Math.min(0.1, dur * 0.5));
     this.bladeTint(blade, 1.8);
@@ -2536,27 +2447,16 @@ export class KiemFx {
   }
 
   /**
-   * The roll (rad, BladeSet.set's) that turns a blade along (dx, dy, dz) at
-   * (x, y, z) round its own axis so its flat faces the camera (camW, set this
-   * frame): the weapon's guard reads face-on, so Clear Wind's hollow ring
-   * stays an O at 25–60 px instead of a sliver. Continuous in the direction
-   * (the roll makes up whatever twist the base rotation has).
+   * The roll (rad, BladeSet.set's) that turns a sword along (dx, dy, dz) at (x, y, z) round its own axis so its
+   * flat faces the camera (camW, set this frame): the hollow ring stays an O at 25–60 px instead of a sliver.
    */
   private faceRoll(x: number, y: number, z: number, dx: number, dy: number, dz: number): number {
-    const d = this.rD.set(dx, dy, dz);
-    if (d.lengthSq() < 1e-10) return 0;
-    d.normalize();
-    this.rq.setFromUnitVectors(this.rUp, d);
-    const e = this.rE.set(1, 0, 0).applyQuaternion(this.rq);
-    const n = this.rN.set(0, 0, 1).applyQuaternion(this.rq);
-    let vx = this.camW.x - x;
-    let vy = this.camW.y - y;
-    let vz = this.camW.z - z;
-    const vd = vx * d.x + vy * d.y + vz * d.z;
-    vx -= d.x * vd;
-    vy -= d.y * vd;
-    vz -= d.z * vd;
-    return Math.atan2(vx * e.x + vy * e.y + vz * e.z, vx * n.x + vy * n.y + vz * n.z);
+    return this.faces.of(this.camW, x, y, z, dx, dy, dz);
+  }
+
+  /** How far (m) behind its guard a hero sword at `scale` ends (its pommel): trails start there, never over the sword. */
+  private pommelBack(scale: number): number {
+    return -this.blades.models().hero.pommelY * scale * 1.1;
   }
 
   /** Whether the weapon in the hand is out this frame (handAway); on its return a glint and motes at the hand. */
@@ -2589,87 +2489,6 @@ export class KiemFx {
       s.fadeIn = SOFT_RISE_S;
       this.shock.emit();
     }
-  }
-
-  /**
-   * Light along every visible blade (one-frame cards, so hit-stop never piles
-   * them up): a soft coloured halo and a thin HDR core line, so steel reads as
-   * sword-light at play-camera size (~1 m = 23 px at 720p). Low: the halo
-   * only (one card a blade; bloom is off there, so the core would not glow).
-   * The cards follow each blade's presence and glow share (bCard), so the
-   * light eases in and out with the blade instead of popping.
-   */
-  private emitBladeGlows(): void {
-    const B = this.blades;
-    for (let i = 0; i < BLADE_CAP; i += 1) {
-      const q = this.bCard[i]!;
-      if (q <= 0.002 || !B.isVisible(i)) continue;
-      const hero = i < POOL0;
-      // Each blade glows in its skill's colours.
-      const P = this.skillPal[this.bladeSlot(i)];
-      const rim = P.rim;
-      const core = P.core;
-      // A ring guard (WeaponMotif.ring) keeps its hole clear: both cards ride the blade from just past the guard
-      // (halo 0.6 L, 1.6 L long; core 0.55 L, 0.8 L long) instead of lighting the ring over (review 03/11/2026).
-      const ring = this.ringGuard;
-      const L = B.len[i]!;
-      const hOff = ring ? L * 0.15 : 0;
-      const h = this.glow.spec.reset();
-      h.x = B.cx[i]! + B.tx[i]! * hOff;
-      h.y = B.cy[i]! + B.ty[i]! * hOff;
-      h.z = B.cz[i]! + B.tz[i]! * hOff;
-      h.vx = B.tx[i]!;
-      h.vy = B.ty[i]!;
-      h.vz = B.tz[i]!;
-      h.stretch = L * (ring ? 1.6 : 2.0);
-      h.life = -1;
-      h.size0 = h.size1 = (hero ? 1.0 : 0.6) * q;
-      h.r = rim[0];
-      h.g = rim[1];
-      h.b = rim[2];
-      h.a = (hero ? 0.9 : 0.5) * q;
-      this.glow.emit();
-      if (this.lite) continue;
-      const cOff = ring ? L * 0.1 : 0;
-      const s = this.bladeGlow.spec.reset();
-      s.x = B.cx[i]! + B.tx[i]! * cOff;
-      s.y = B.cy[i]! + B.ty[i]! * cOff;
-      s.z = B.cz[i]! + B.tz[i]! * cOff;
-      s.vx = B.tx[i]!;
-      s.vy = B.ty[i]!;
-      s.vz = B.tz[i]!;
-      s.stretch = L * (ring ? 0.8 : 0.9);
-      s.life = -1;
-      // trace_06 shows ~12 % of the card's width: a thin core that blooms.
-      s.size0 = s.size1 = (hero ? 0.5 : 0.36) * q;
-      const k = (hero ? 0.75 : 0.5) * q;
-      s.r = core[0] * k;
-      s.g = core[1] * k;
-      s.b = core[2] * k;
-      s.a = 1;
-      this.bladeGlow.emit();
-    }
-  }
-
-  /** The flying blades' spines (round 3a, P8): guard to just short of the tip, eased with the blade's presence. */
-  private emitSpines(): void {
-    const B = this.blades;
-    const S = this.spines;
-    S.begin();
-    for (const f of this.flights) {
-      if (!f.active) continue;
-      const i = f.blade;
-      const q = this.bCard[i]!;
-      if (q <= 0.02 || !B.isVisible(i)) continue;
-      const L = B.len[i]!;
-      // BladeSet's centre sits 0.45 L past the guard.
-      const gx = B.cx[i]! - B.tx[i]! * L * 0.45;
-      const gy = B.cy[i]! - B.ty[i]! * L * 0.45;
-      const gz = B.cz[i]! - B.tz[i]! * L * 0.45;
-      const fade = f.hit >= 0 ? Math.max(0, 1 - f.hit / 0.18) : 1;
-      S.push(gx + B.tx[i]! * L * 0.1, gy + B.ty[i]! * L * 0.1, gz + B.tz[i]! * L * 0.1, gx + B.tx[i]! * L, gy + B.ty[i]! * L, gz + B.tz[i]! * L, 0.035, SWORD_SPINE, q * fade, FLIGHT_SPINE, 0, 3.2);
-    }
-    S.end();
   }
 
   // ── Per frame ────────────────────────────────────────────────────────────
@@ -2712,8 +2531,6 @@ export class KiemFx {
     this.updateEmitters(dt);
     this.settleBlades(dt);
     this.updateHand();
-    this.emitBladeGlows();
-    this.emitSpines();
     for (const p of this.pools) p.update(dt);
     this.beams.update(dt);
     this.ribbons.update(dt, this.host.camera);
@@ -3361,11 +3178,14 @@ export class KiemFx {
       f.ldy = dy;
       f.ldz = dz;
       this.show(f.blade, x, y, z, dx, dy, dz, FLIGHT_SCALE);
-      this.ribbons.push(f.ribbon, x, y, z);
-      if (f.silk >= 0) this.pushSilk(f.silk, x, y, z, dx, dy, dz, 0.55, f.blade * 1.3);
+      const back = this.pommelBack(FLIGHT_SCALE);
+      this.ribbons.push(f.ribbon, x - dx * back, y - dy * back, z - dz * back);
+      if (f.silk >= 0) this.pushSilk(f.silk, x, y, z, dx, dy, dz, back, f.blade * 1.3);
       if (u < 1) {
-        // A glint riding the tip (turning steadily, not a random angle a frame) and sparkle shed along the path.
-        this.twinkle(x + dx * 1.3, y + dy * 1.3, z + dz * 1.3, 0.75, -1, 0.9, this.time * 2.5 + f.blade);
+        // A small glint riding the very tip (turning steadily, not a random angle a frame; small, so the blade
+        // itself reads) and sparkle shed along the path.
+        const tip = FLIGHT_SCALE * 1.1;
+        this.twinkle(x + dx * tip, y + dy * tip, z + dz * tip, 0.42, -1, 0.9, this.time * 2.5 + f.blade);
         // Sparkle shed at a rate (per second, by tier), not one a frame: the same at any frame rate.
         f.acc += SHED_RATE * this.dens * dt;
         while (f.acc >= 1) {
@@ -3450,8 +3270,9 @@ export class KiemFx {
       this.bladeTint(k.blade, 1.2 + 1.4 * (1 - smooth01((k.t - T_K2_HIT) / 0.3)));
     }
     if (k.ribbonOn) {
-      this.ribbons.push(k.ribbon, hx, hy, hz);
-      if (k.silk >= 0) this.pushSilk(k.silk, hx, hy, hz, k.dx, 0, k.dz, 0.75, 2.1);
+      const back = this.pommelBack(1.7);
+      this.ribbons.push(k.ribbon, hx - k.dx * back, hy, hz - k.dz * back);
+      if (k.silk >= 0) this.pushSilk(k.silk, hx, hy, hz, k.dx, 0, k.dz, back, 2.1);
       if (k.t >= travel) {
         this.ribbons.stop(k.ribbon, 0.18);
         k.ribbonOn = false;
@@ -3894,11 +3715,12 @@ export class KiemFx {
       if (out <= 0) continue;
       this.show(B + j, this.w.x, y + (1 - out) * 3, this.w.z, -ix, -1, -iz, K4_SWORD * out, true, out);
       this.bladeTint(B + j, 1.6 + 0.6 * pulse(clamp01((k.t - T_K4_OPEN) / 0.3)));
-      if (fall < 1) this.beamAt(this.w.x, y, this.w.z, 0, 1, 0, 1.0 + 3.2 * (1 - fall), 0.42, -1, 0.7, 0.75, 0.05, 0.8, 0);
+      // A thin trail above the falling sword's pommel (never over the sword itself).
+      if (fall < 1) this.beamAt(this.w.x, y + this.pommelBack(K4_SWORD), this.w.z, 0, 1, 0, 1.0 + 3.2 * (1 - fall), TRAIL_M * 1.8, -1, 0.7, 0.6, 0.05, 0.8, 0);
       else if (hold > 0.002) {
-        // The array's columns of light breathe at the corners while it holds.
+        // The array's columns of light breathe at the corners while it holds: thin, so the planted sword reads.
         const breathe = (0.75 + 0.25 * Math.sin(this.time * 5 + j)) * hold;
-        this.beamAt(this.w.x, 0.02, this.w.z, 0, 1, 0, 3.4, 0.8, -1, 0.45 * breathe, 0.75 * breathe, 0.02, 0.7, 0);
+        this.beamAt(this.w.x, 0.02, this.w.z, 0, 1, 0, 3.4, 0.3, -1, 0.4 * breathe, 0.4 * breathe, 0.02, 0.7, 0);
       }
     }
     if (!k.landed && k.t >= T_K4_OPEN) {
@@ -4066,11 +3888,13 @@ export class KiemFx {
     o.z = this.k5.z + Math.sin(psi) * r;
   }
 
-  /** A falling sword of the rain: lands at (x, z) at `t0 + dur`, from `y0` m above; kind 0 rain, 1 lead. */
-  private spawnDrop(kind: number, x: number, z: number, t0: number, dur: number, target: number, wave: number): void {
-    for (const d of this.drops) {
+  /** A falling sword of the rain: lands at (x, z) at `t0 + dur`, from `y0` m above; kind 0 rain, 1 lead (`leadSlot` its hero slot). */
+  private spawnDrop(kind: number, x: number, z: number, t0: number, dur: number, target: number, wave: number, leadSlot = -1): void {
+    for (let i = 0; i < this.drops.length; i += 1) {
+      const d = this.drops[i]!;
       if (d.active) continue;
       d.active = true;
+      d.slot = kind === 1 ? leadSlot : POOL0 + i;
       d.kind = kind;
       d.x = x;
       d.z = z;
@@ -4085,7 +3909,7 @@ export class KiemFx {
     }
   }
 
-  /** A sword stays planted where it landed (f6): up to RAIN_PLANT_CAP, the oldest small one gives way. */
+  /** A sword stays planted where it landed (f6): up to RAIN_PLANT_CAP (leads up to RAIN_PLANT_LEADS hero slots). */
   private plant(kind: number, x: number, z: number, lean: number, t: number): void {
     let slot = -1;
     for (let i = 0; i < this.planted.length; i += 1) {
@@ -4095,8 +3919,19 @@ export class KiemFx {
       }
     }
     if (slot < 0) return;
+    let blade = POOL0 + RAIN_DROPS + slot;
+    if (kind === 1) {
+      // A lead stays the full model: the first free planted-lead hero slot.
+      blade = -1;
+      for (let k = 0; k < RAIN_PLANT_LEADS && blade < 0; k += 1) {
+        const b = RAIN_PLANT_LEAD0 + k;
+        if (!this.planted.some((q) => q.active && q.slot === b)) blade = b;
+      }
+      if (blade < 0) return;
+    }
     const p = this.planted[slot]!;
     p.active = true;
+    p.slot = blade;
     p.kind = kind;
     p.x = x;
     p.z = z;
@@ -4156,17 +3991,77 @@ export class KiemFx {
     if (lead || this.rand.next() < 0.4) this.plant(lead ? 1 : 0, d.x, d.z, d.lean, t);
   }
 
+  /**
+   * A rain sword by its tip: tip at (tx, ty, tz), pointing along (dx, dy, dz) (unit), `lengthM` pommel to tip, shown
+   * at once (the rain animates its own fall), its edge line at `glow` and its dissolve; a thin trail rises behind its
+   * pommel while it falls (`trail`: share of its length, 0 none).
+   */
+  private showRain(i: number, tx: number, ty: number, tz: number, dx: number, dy: number, dz: number, lengthM: number, glow: number, dissolve: number, trail: number): void {
+    const blade = lengthM / this.blades.span(i);
+    this.show(i, tx - dx * blade, ty - dy * blade, tz - dz * blade, dx, dy, dz, blade / 1.1, false, 1);
+    this.bDis[i] = dissolve;
+    const rim = this.skillPal.k5.rim;
+    this.blades.look(i, glow, 0, rim[0], rim[1], rim[2], dissolve);
+    if (trail > 0 && dissolve < 0.6) {
+      const k = 1 - dissolve;
+      const b = this.beams.spec.reset();
+      b.x = tx - dx * lengthM;
+      b.y = ty - dy * lengthM;
+      b.z = tz - dz * lengthM;
+      b.dx = -dx;
+      b.dy = -dy;
+      b.dz = -dz;
+      b.len0 = b.len1 = lengthM * trail;
+      b.w0 = TRAIL_M;
+      b.w1 = TRAIL_M * 0.4;
+      b.life = -1;
+      b.cr = TRAIL_CORE[0] * 0.6 * k;
+      b.cg = TRAIL_CORE[1] * 0.6 * k;
+      b.cb = TRAIL_CORE[2] * 0.6 * k;
+      b.hr = rim[0] * 0.3 * k;
+      b.hg = rim[1] * 0.3 * k;
+      b.hb = rim[2] * 0.3 * k;
+      b.fadeBase = 0.04;
+      b.fadeTip = 0.85;
+      this.beams.emit();
+    }
+  }
+
+  /** The heaven sword, tip down at (tx, ty, tz), its flat to the camera, a trail above it while it falls. */
+  private showHeaven(tx: number, ty: number, tz: number, dissolve: number, falling: boolean): void {
+    const H = this.heaven;
+    const blade = RAIN_COLOSSUS_M / H.span(0);
+    this.host.camera.getWorldPosition(this.camW);
+    const gy = ty + blade;
+    H.set(0, tx, gy, tz, 0, -1, 0, blade / 1.1, this.faces.of(this.camW, tx, gy, tz, 0, -1, 0));
+    const rim = this.skillPal.k5.rim;
+    H.look(0, 1, falling ? 0 : 0.35, rim[0], rim[1], rim[2], dissolve, 3.1);
+    H.sync();
+  }
+
+  /** The gate's ring of real swords (impostors), pointing out of its rim, fading and flaring with it. */
+  private drawGateSwords(): void {
+    const G = this.gateSwords;
+    G.begin();
+    const look = this.gate.look;
+    if (this.gate.mesh.visible && look.alpha > 0.003 && look.open > 0.003) {
+      for (let k = 0; k < GATE_SWORDS; k += 1) {
+        this.gate.swordAt(this.host.camera, k, this.v, this.w);
+        G.push(this.v.x, this.v.y, this.v.z, this.w.x, this.w.y, this.w.z, look.alpha, 0, 0.55 + 0.6 * look.flare, 0.4 * look.flare);
+      }
+    }
+    G.end();
+  }
+
   private updateK5(dt: number): void {
     const k = this.k5;
-    const S = this.rainSwords;
     const L = this.rainStrips;
     const M = this.rainMarks;
-    S.begin();
     L.begin();
     M.begin();
     if (!k.active) {
       this.gate.hide();
-      S.end();
+      this.gateSwords.hide();
       L.end();
       M.end();
       return;
@@ -4208,7 +4103,7 @@ export class KiemFx {
       const prey = this.gravest(i);
       const px = prey >= 0 ? T.x(prey) : RAIN_FIELD.x0 + (RAIN_FIELD.x1 - RAIN_FIELD.x0) * this.rand.next();
       const pz = prey >= 0 ? T.z(prey) : RAIN_FIELD.z0 + (RAIN_FIELD.z1 - RAIN_FIELD.z0) * this.rand.next();
-      this.spawnDrop(1, px, pz, t, RAIN_LEAD_FALL_S, prey, 0);
+      this.spawnDrop(1, px, pz, t, RAIN_LEAD_FALL_S, prey, 0, HERO.rain + i);
     }
     // The rain: three dense waves over ≥ 70 % of the field; half the blades fall on beasts, half on a jittered grid.
     while (k.wave < RAIN_WAVES.length && t >= RAIN_WAVES[k.wave]!) {
@@ -4263,7 +4158,12 @@ export class KiemFx {
       const tipY = col.sy + (-1.2 - col.sy) * e;
       const tipZ = col.sz + (k.z - col.sz) * e;
       const out = 1 - smooth01((t - RAIN_END_AT + 0.6) / 0.5);
-      if (out > 0) S.push(tipX, tipY + RAIN_COLOSSUS_M, tipZ, tipX, tipY, tipZ, 0.62, SWORD_LEAD, out * smooth01(u / 0.15 + (u >= 1 ? 1 : 0)), 7, u < 1 ? 1.2 : 0, 16);
+      // The heaven sword: the real model at the composition's scale, materialising out of the gate as it falls.
+      if (out > 0) this.showHeaven(tipX, tipY, tipZ, 1 - out * smooth01(u / 0.15 + (u >= 1 ? 1 : 0)), u < 1);
+      else {
+        this.heaven.hide(0);
+        this.heaven.sync();
+      }
       if (u < 1) L.push(tipX, tipY, tipZ, col.sx, col.sy, col.sz, 22, 0.2, 0.8 * smooth01(u / 0.2), 5, -t * 3, 0.02);
       else if (out > 0) L.push(k.x, 0, k.z, k.x, 5, k.z, 34, 0.18, 0.75 * out * (0.6 + 0.4 * Math.exp(-(t - RAIN_CLIMAX_AT) * 2)), 4.5, t, 0.02);
       if (u >= 1 && !col.done) {
@@ -4271,16 +4171,28 @@ export class KiemFx {
         this.climaxK5(t);
       }
     }
-    // Falling and landed blades.
+    // Falling and landed swords: each falls tip first and drives 28 % of its length into the ground, where a
+    // planted one takes over the same pose (f6); one not planted melts into light at its landing.
     for (const d of this.drops) {
       if (!d.active) continue;
       const u = (t - d.t0) / d.dur;
       if (u < 0) continue;
+      const len = d.kind === 1 ? RAIN_LEAD_M : RAIN_MID_M;
+      const lean = d.kind === 1 ? d.lean : 0;
+      const dl = Math.hypot(lean, len);
+      const ddx = -lean / dl;
+      const ddy = -len / dl;
+      const bury = len * 0.28;
       if (u >= 1) {
         if (!d.landed) {
           d.landed = true;
+          const planted = this.plantedN;
           this.landDrop(d, t);
+          // Planted: its own slot shows the same pose from this frame; the falling one goes at once.
+          if (this.plantedN !== planted) this.drop(d.slot);
         }
+        const melt = (t - d.t0 - d.dur) / 0.14;
+        if (melt < 1 && this.bPres[d.slot]! > 0) this.showRain(d.slot, d.x, -bury, d.z, ddx, ddy, 0, len, 1.2 * (1 - melt), smooth01(melt), 0);
         // A landing pillar for 0.25 s, then the drop is free.
         const age = t - d.t0 - d.dur;
         const pl = 1 - smooth01(age / (d.kind === 1 ? 0.4 : 0.25));
@@ -4293,11 +4205,10 @@ export class KiemFx {
         continue;
       }
       const e = easeInCubic(u * 0.6 + 0.4 * u * u);
-      const y = d.y0 * (1 - e);
-      const len = d.kind === 1 ? 5.2 : 3.1;
-      const fade = smooth01(u / 0.12);
-      if (d.kind === 1) S.push(d.x + d.lean, y + len, d.z, d.x, y, d.z, 0.26, SWORD_LEAD, fade, 6.5, 1.4, 6);
-      else S.push(d.x, y + len, d.z, d.x, y, d.z, 0.15, SWORD_MID, fade, 4.6, 1.8, 3.5);
+      const y = d.y0 - (d.y0 + bury) * e;
+      // They come out of the sky above the frame: solid after the first 5 % of the fall.
+      const fade = smooth01(u / 0.05);
+      this.showRain(d.slot, d.x, y, d.z, ddx, ddy, 0, len, d.kind === 1 ? 1 : 0.75, 1 - fade, d.kind === 1 ? 1.0 : 1.2);
     }
     // Planted swords (f6): blades stuck in the ground with a lit base, fading with the aftermath.
     const end = 1 - smooth01((t - (RAIN_END_AT - 0.7)) / 0.6);
@@ -4305,14 +4216,15 @@ export class KiemFx {
       if (!p.active) continue;
       const age = t - p.t;
       const lead = p.kind === 1;
-      const len = lead ? 5.2 : 3.1;
-      const above = len * 0.72;
+      const len = lead ? RAIN_LEAD_M : RAIN_MID_M;
+      const lean = lead ? p.lean : 0;
       const glow = (0.55 + 0.45 * Math.exp(-age * 3)) * end;
       if (end <= 0) {
         p.active = false;
         continue;
       }
-      S.push(p.x + p.lean * above, above, p.z, p.x, above - len, p.z, lead ? 0.26 : 0.15, lead ? SWORD_LEAD : SWORD_MID, end, (lead ? 4 : 3) * (0.6 + 0.4 * glow), 0, lead ? 6 : 3.5);
+      const dl = Math.hypot(lean, len);
+      this.showRain(p.slot, p.x, -len * 0.28, p.z, -lean / dl, -len / dl, 0, len, 0.35 + 0.65 * glow, 1 - end, 0);
       L.push(p.x, 0, p.z, p.x, lead ? 1.8 : 1.0, p.z, lead ? 12 : 7, 0.18, 0.7 * glow, 3.2, age, 0.02);
     }
     // The rift and its embers (f6).
@@ -4342,21 +4254,22 @@ export class KiemFx {
       const heat = 2.6 * Math.exp(-age * 4) + 0.8;
       M.push(MARK_STAR, m.x, m.z, m.angle, m.size, m.size, m.seed, 1, a, heat, 0.75, 0.8);
     }
-    S.end();
     L.end();
     M.end();
+    this.drawGateSwords();
     if (t > RAIN_END_AT) {
       k.active = false;
       this.gate.hide();
+      this.gateSwords.hide();
       for (const d of this.drops) d.active = false;
       for (const p of this.planted) p.active = false;
       this.rift.t = -1;
       this.colossus.active = false;
       this.colossus.done = false;
-      S.begin();
+      this.heaven.hide(0);
+      this.heaven.sync();
       L.begin();
       M.begin();
-      S.end();
       L.end();
       M.end();
     }

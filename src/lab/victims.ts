@@ -4,8 +4,9 @@
  * - HERO victims (key 7: at most 7, up to 4 before its finisher at least 0.3 s apart, the rest on the finisher;
  *   K5: at most 6, up to 3 in its first two waves): small and medium beasts on screen and apart from each other. On the blow's frame
  *   a white-cyan silhouette and an 0.4 m shove (herd.heroVictim), a launch with 1.25 turns, and on landing a lead
- *   sword planted through the body (a graphic sword slammed in over 80 ms, held ~1 s), a white contact star, a cyan
- *   ground ring and an ink scorch; a kill dissolves after the pin with its death burst then.
+ *   sword planted through the body (the real sword, its full textured model, 03/11/2026: never a drawn stand-in;
+ *   slammed in over 80 ms, held ~1 s, melting into light), a white contact star, a cyan ground ring and an ink
+ *   scorch; a kill dissolves after the pin with its death burst then.
  * - SECONDARY victims (every other blow of power ≥ 0.85, a primary or the finisher): a hop shared by every beast
  *   struck on that frame, with the rim flash.
  * - BACKGROUND victims (the river's many light blows): the rim flash, then the dissolve.
@@ -13,8 +14,9 @@
  * report for captures (`report`) allocates.
  */
 import * as THREE from "three";
+import { BladeSet, type SwordModel } from "../view/skills/blades";
 import { SpritePool } from "../view/skills/fxkit";
-import { GraphicSwords, SWORD_LEAD } from "../view/skills/sword-grammar";
+import { FaceRoll } from "../view/skills/sword-material";
 import type { ImpactEvent } from "./events";
 import type { LabHerd } from "./herd";
 
@@ -24,8 +26,8 @@ const BEFORE_CLIMAX = { k7: 4, k5: 3 } as const;
 const GAP_S = 0.3;
 /** A hero keeps this far (m) from the others shown (each must read on its own). */
 const APART_M = 2.4;
-/** The planted sword: length (m), lean back along the blow (rad), the slam (s), the hold after landing (s), the fade (s). */
-const PIN_LEN = 3.6;
+/** The planted sword: length pommel to tip (m; 3× the hand sword), lean back along the blow (rad), the slam (s), the hold after landing (s), the fade (s). */
+const PIN_LEN = 3.06;
 const PIN_LEAN = 0.38;
 const SLAM_S = 0.08;
 const PIN_HOLD_S = 1.05;
@@ -52,8 +54,14 @@ interface Pin {
   dz: number;
 }
 
+/** The pinned swords' rim (the river's cyan, linear) and how deep their tips go into the ground (m). */
+const PIN_RIM = [0.03, 0.44, 0.76] as const;
+const PIN_DEPTH = 0.35;
+
 export class VictimDirector {
-  private readonly swords = new GraphicSwords(PINS, 13);
+  private readonly swords = new BladeSet(PINS, 1.1, PINS);
+  private readonly faces = new FaceRoll();
+  private readonly camW = new THREE.Vector3();
   private readonly rings: SpritePool;
   private readonly stars: SpritePool;
   private readonly scorch: SpritePool;
@@ -85,11 +93,18 @@ export class VictimDirector {
     this.stars = new SpritePool(PINS * 2, tex.star, "add", "camera", 15);
     this.scorch = new SpritePool(PINS, tex.scorch, "ink", "ground", 4, { fadeIn: 0.04, twoSided: true });
     parent.add(this.scorch.mesh, this.rings.mesh, this.swords.mesh, this.stars.mesh);
+    // The real swords cast their shadow on the beast and the stones.
+    this.swords.mesh.castShadow = true;
     for (let k = 0; k < PINS; k += 1) this.pins.push({ active: false, t: 0, x: 0, z: 0, dx: 0, dz: -1 });
     herd.onPin = (i, x, z, dx, dz) => this.plant(i, x, z, dx, dz);
     herd.onDie = (i) => {
       this.onDeath(herd.x(i), herd.midY(i), herd.z(i), 0, -1, this.deathRgb[i] ?? 0xffffff, herd.tier(i));
     };
+  }
+
+  /** The equipped weapon's full model (blades.ts loadSwordModels). */
+  setSword(model: SwordModel): void {
+    this.swords.setModel(model);
   }
 
   /** A release: key 7 and K5 open a cast's budget (other skills keep their own reactions). */
@@ -207,26 +222,38 @@ export class VictimDirector {
   /** World time: the planted swords slam, hold and fade; the heroes' screen motion is measured (real view size). */
   update(dt: number): void {
     this.time += dt;
-    this.swords.begin();
-    for (const p of this.pins) {
-      if (!p.active) continue;
+    this.camera.getWorldPosition(this.camW);
+    for (let k = 0; k < this.pins.length; k += 1) {
+      const p = this.pins[k]!;
+      if (!p.active) {
+        this.swords.hide(k);
+        continue;
+      }
       p.t += dt;
       if (p.t >= SLAM_S + PIN_HOLD_S + PIN_FADE_S) {
         p.active = false;
+        this.swords.hide(k);
         continue;
       }
       const slam = Math.min(1, p.t / SLAM_S);
       const drop = (1 - slam * slam) * 1.6;
-      const a = 1 - Math.max(0, (p.t - SLAM_S - PIN_HOLD_S) / PIN_FADE_S);
-      // The tip in the ground at the body, the hilt leaning back along the blow.
-      const tx = p.x;
-      const ty = -0.35 + drop;
-      const tz = p.z;
+      const melt = Math.max(0, (p.t - SLAM_S - PIN_HOLD_S) / PIN_FADE_S);
+      // The tip in the ground at the body, the hilt leaning back along the blow; the sword points tip down.
       const s = Math.sin(PIN_LEAN);
       const c = Math.cos(PIN_LEAN);
-      this.swords.push(tx - p.dx * s * PIN_LEN, ty + c * PIN_LEN, tz - p.dz * s * PIN_LEN, tx, ty, tz, 0.11, SWORD_LEAD, a, 7, 0, 6.5);
+      const dx = p.dx * s;
+      const dy = -c;
+      const dz = p.dz * s;
+      const h = PIN_LEN * 0.5;
+      const mx = p.x - dx * h;
+      const my = -PIN_DEPTH + drop - dy * h;
+      const mz = p.z - dz * h;
+      this.swords.setWhole(k, mx, my, mz, dx, dy, dz, PIN_LEN, this.faces.of(this.camW, mx, my, mz, dx, dy, dz));
+      // The slam's flash on its edge line, settling to a steady glow; it melts into light at the end.
+      const flash = slam < 1 ? 0.4 * slam : Math.max(0, 1 - (p.t - SLAM_S) / 0.15);
+      this.swords.look(k, 0.7, flash, PIN_RIM[0], PIN_RIM[1], PIN_RIM[2], melt, k * 0.71);
     }
-    this.swords.end();
+    this.swords.sync();
     this.rings.update(dt);
     this.stars.update(dt);
     this.scorch.update(dt);
@@ -255,8 +282,8 @@ export class VictimDirector {
 
   reset(): void {
     for (const p of this.pins) p.active = false;
-    this.swords.begin();
-    this.swords.end();
+    this.swords.hideAll();
+    this.swords.sync();
     this.rings.clear();
     this.stars.clear();
     this.scorch.clear();
