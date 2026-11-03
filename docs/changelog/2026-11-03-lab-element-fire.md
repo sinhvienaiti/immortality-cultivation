@@ -231,3 +231,79 @@ Tấm xem (`tmp/shots/element-fire/`): `sheet-metal-vs-fire.jpg` (cùng khung, M
 - Pass méo hơi nóng dùng chung: chưa có (dựng cùng Water).
 - Các chiêu khác (Phi Kiếm, K2, Hộ thân, Lưu Quang Bộ, K4, K5) dùng lớp Metal theo bảng màu lửa; vệt của chúng cũng thành lửa vì pool vệt dùng chung. Dựng Fire cho chúng là việc sau.
 - Ấn dưới chân người thi triển vẫn là ấn Metal tô màu lửa.
+
+## Phần 3: kiểm tra đối kháng Sword × Fire và video cho anh
+
+Một lượt kiểm độc lập, không tin số của hai phần trên: tự chụp, tự đo, tự đọc mã. Hai lỗi rõ đã sửa, mỗi lỗi một commit; các điểm còn lại là chuyện nhìn, ghi để anh và giám khảo quyết.
+
+### Đã sửa
+
+- `c84a990` `fix(view)`: hoa sen lửa `fire-burst` thắp giữa không trung bị cắt thẳng ở gốc.
+  - Chỗ xảy ra: lúc gõ, khi mỗi kiếm của phím 1 hiện sau vai (`chargeKey`), và lúc kiếm thứ hai, thứ ba rời vai (`launch`).
+  - Nguyên nhân: không có đất che gốc, nên mép dưới của ô atlas cắt ngang lõi trắng nóng thành một đường ngang thẳng, thấy rõ trên cả nền sáng lẫn nền tối (`tmp/shots/element-fire/adv/evidence/lotus-root-cut-before.jpg`).
+  - Sửa: hai chỗ này truyền độ cao của chính nó làm mặt đất mềm (`ground`), nên gốc tan dần thay vì bị cắt (`lotus-root-after-fix.jpg`).
+  - Còn lại: gốc tan để lại một quầng trắng mờ ngắn. Hết đường cắt, nhưng chưa phải hình đẹp nhất.
+  - Bài test mới trong `tests/view/element-layer.test.ts`: mọi hoa sen trên không phải có `ground` bằng độ cao của nó; bài này hỏng trên mã cũ.
+- `a6b238d` `fix(visual)`: "khung kẹt 330–650 ms" mà phần 1 và phần 2 ghi là chưa rõ nguyên nhân thực ra là lỗi đo, không phải giật thật.
+  - `step()` vẽ mà không chờ GPU. Vì vậy khung đầu tiên được bấm giờ sau nó phải gánh cả hàng đợi.
+  - Đã kiểm: khung kẹt luôn nằm ở chỉ số 0 của cửa sổ đo (nghỉ 637 ms, phím 7 săn 142 ms). Sau một lần đồng bộ thì cửa sổ nghỉ cao nhất chỉ 10 ms.
+  - `lab-element-perf.mjs` giờ bấm giờ khung cuối trước mỗi cửa sổ (`perf(1)`, độ dài dòng thời gian không đổi). Khung lớn nhất còn 10–18 ms, có một lần 36 ms ở K5 của Metal.
+  - `lab-k5-perf.mjs` và `lab-power-perf.mjs` có thể dính cùng lỗi, chưa sửa.
+
+### Các cổng, tự đo lại
+
+- **Thay, không chồng.** Đếm số instance của từng lớp vẽ trong suốt phím 1 và phím 7, Metal so với Fire, qua móc `__THREE_DEVTOOLS__` của three; không sửa lab (`evidence/layers-metal-vs-fire.json`).
+  - Phím 1, Fire: mọi pool sprite của Metal bằng 0. Còn lại là phần hình: ấn và vòng ấn, kiếm, ribbon (đã thành dải lửa).
+  - Phím 7, Fire: các pool của `myriad-swords.ts` (`hits`, `stars`, `glitter`, `marks`, `scar`) bằng 0.
+  - Còn vẽ bằng lớp Metal, đổi sang màu lửa: 88 tia vệt mảnh sau kiếm sông (`beams`, `trailCore` lửa), nhát chém kết `QiSlash`, đường cắt trên thú lớn (không có móc `cutSeam`), và cụm cắm kiếm của nạn nhân chính trong `victims.ts` (sao, vòng, vết mực).
+  - Đây là đổi màu chứ không phải chồng lớp. Nhưng các phần đó chưa thành vật chất lửa.
+- **Metal không đổi.** So `f5ef5bc` (trước lớp hệ, xuất bằng `git archive`, server riêng) với HEAD Metal: 19/21 khung giống hệt từng bit. Hai khung phím 7 (40 và 150) lệch đúng một điểm ảnh, 1/255. Ở fuzz 1 % thì 0. Khớp với phần 2.
+  - Lần so đầu tiên lệch ở số sát thương. Nguyên nhân: server của bản xuất không phục vụ được phông `@fontsource` qua `node_modules` dạng symlink. Đây là lỗi dựng của riêng tôi, không phải hồi quy. Thêm `server.fs.allow` thì hết.
+- **Thời gian khung**: High 1920×1080, DPR 1, M4, máy tải 3,5–6,3; 15 lượt mỗi hệ từ hai đợt A/B xen kẽ. Số ghi theo dạng trung vị / trung bình của p95, đơn vị ms.
+
+| Đoạn | Metal | Fire | Fire − Metal |
+|---|---|---|---|
+| Nghỉ | 8,6 / 8,29 | 8,4 / 8,07 | −0,2 / −0,22 |
+| Phím 1 | 9,2 / 9,13 | 9,0 / 8,73 | −0,2 / −0,39 |
+| Phím 7 săn | 10,2 / 10,02 | 10,5 / 10,27 | +0,3 / +0,25 |
+| Phím 7 nhát kết | 10,3 / 10,22 | 10,7 / 10,44 | +0,4 / +0,22 |
+| K5 | 10,7 / 10,35 | 10,6 / 10,55 | −0,1 / +0,21 |
+
+  - Cổng ≤ 0,85 ms: đạt theo số gộp.
+  - Riêng đợt hai, nhát kết lệch đúng +0,85 theo trung vị và +0,43 theo trung bình. Nhát kết là chỗ sát cổng nhất: Fire vẽ thêm 5 lệnh (51 thành 56).
+  - Trần 11,5 ms: 1/15 lượt Fire ở nhát kết lên 11,9 ms; Metal cao nhất đúng 11,5 ms.
+- **Phím tới lúc phát chiêu**: máy dò cho VFX 0 ms, thân 33 ms ở cả năm lần phát của Fire, trên nền sáng và nền tối. Ngay khung sau phím, hiệu ứng đã có 5 847 điểm ảnh (nền sáng) và 7 086 (nền tối) ở camera chơi.
+- **Bloom**: 0 điểm ảnh NaN hay Inf ở 76 khung (sáng `#d6d0c2`, tối `#2a2c30`).
+- **Thân lửa sau tone mapping.** Điểm ảnh hiệu ứng là chỗ khác hơn 0,10 so với cùng khung khi ẩn VFX; "thân" là sắc 8–62° và độ bão hòa ≥ 0,45.
+  - Sắc trung vị 20,8–34,5°, độ bão hòa trung vị 0,58–0,99, trên cả hai nền.
+  - Thân đặc: không thấy màn cam trên thân.
+  - Gần đỏ cảnh báo ≤ 0,6 % điểm ảnh hiệu ứng.
+- **Màn cam trên nền sáng: tôi đo nặng hơn phần 2.**
+  - Phần nhạt (sắc cam, độ bão hòa 0,10–0,45, sáng) chiếm tới 39 % điểm ảnh hiệu ứng khi phát chiêu, và 44–50 % suốt lúc gõ của phím 1 (67 % trên đá sáng).
+  - Bản đồ điểm ảnh (`evidence/peach-map-*.jpg`) cho thấy gần hết phần đó là ấn và vòng ấn của phím 1: lớp hình của Metal, tô bằng bảng màu lửa, vẽ cộng sáng, nên trên đá sáng thành nét hồng cam nhạt. Phần còn lại là vòng áp suất cộng sáng lúc phát chiêu.
+  - Thân lửa vẫn đặc. Phần 2 không thấy điều này vì chỉ tính "thân" từ độ bão hòa 0,35.
+  - Nền tối: ≤ 13 % (trừ khung giấy đảo màu). Không khung đen, không mép tách nền.
+- **Tiếng.** Bản ghi `takes` của video: nửa Metal phát `release-k1`, `impact-*`, `death`, `flyby`, `release-k7`, `world-*`; nửa Fire phát đúng bản `-fire` của từng sự kiện đó. `cast`, `callout` và `callout-k7` về bản gốc. 0 tệp thiếu.
+- **Kiểm thử và build**: `pnpm test` 721 bài xanh (thêm 1 bài), `tsc` và `pnpm build` xanh. Mã băm gói game không đổi (`main-XrAzOVU-.js`); lab không vào `dist`.
+
+### Điểm nhìn, chưa sửa (cho anh và giám khảo)
+
+- Tàn lửa `dragonhold-embers` ở chế độ `heat`, cỡ 1,3–2,6 m, đọc thành một cục gai cam đặc (như con nhím biển). Khi nguội về `#6A1606` trên vết cháy hình sao đen, nó trông như vệt máu, rõ nhất ở dư âm trên đá sáng (`evidence/embers-urchin-light.jpg`, cột 2 của tấm ảnh tĩnh).
+  - Brief ghi tàn lửa cộng sáng; phần 2 chọn `heat` để tránh sao trắng.
+  - Đề xuất: cỡ nhỏ hơn nhiều, hoặc hạt tàn rời.
+- Vết cháy `scorch_01` là hình sao gai đen, trên đá sáng đọc như vết mực.
+- Ấn và vòng ấn của phím 1 là ấn Metal tô màu lửa: nét hồng cam nhạt (xem phần đo ở trên). Nên cho bộ hệ quyết màu ấn, hoặc vẽ ấn bằng vết cháy hay nét lửa có viền bồ hóng.
+- Khung đồ hoạ đảo màu của Fire dùng giấy `paper [1.0, 0.84, 0.58]`. Cả màn hình thành màu da cam nhạt trong 2 khung; các tia ở khung tối là tia màu be.
+- Dải lửa trên kiếm đầu của phím 7 trông như ống neon trắng kem. Vỏ lửa đọc như kim loại nung (phần 2 cũng ghi).
+- Lúc mới gõ, vòng xoắn `fire-charge` mờ dần theo `alpha = vis` (độ trong suốt). Ở hai phím đầu, thân lửa vì thế bị nhìn xuyên.
+
+### Video và ảnh cho anh
+
+- `tmp/shots/element-fire/owner-metal-vs-fire-play.mp4`: 16,33 s (980 khung).
+  - Camera chơi; phím 1 gõ ở 45 WPM rồi phím 7, Metal trước, Fire sau.
+  - H.264 1920×1080 60 fps, tốc độ thật, có tiếng (AAC; mức trung bình −11,5 dB, đỉnh −0,2 dB).
+  - Phụ đề tiếng Anh: "Sword × Metal / Sword × Fire", "Threefold Sword Command (key 1)", "Myriad Swords (key 7)".
+- `tmp/shots/element-fire/owner-fire-close.mp4`: 11,67 s (700 khung), cùng định dạng và có tiếng.
+  - Fire: phím 1 ở góc nhìn gần của người chơi, phím 1 với camera gần đặt trên chỗ trúng, rồi phím 7 với camera gần đặt trên sân.
+- `tmp/shots/element-fire/stills-fire-light-dark.jpg`: va chạm và dư âm của phím 1 và phím 7, hàng trên trên đá sáng, hàng dưới trên đá tối.
+- Bằng chứng và số liệu: `tmp/shots/element-fire/adv/` (`evidence/`, `perf*.json`, `fire-*.json`, `shots-par-*.json`). Khung thô của tôi đã xóa.
