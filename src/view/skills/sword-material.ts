@@ -182,9 +182,10 @@ export function patchSwordMaterial(material: THREE.MeshStandardMaterial, opts: S
 /**
  * The blade's edge field as a vertex attribute `aEdge` on a unit blade (jian convention: tip +Y at 1, spine on
  * x = 0, flat facing ±Z): |x| over the blade's half width at that height, for y from `bladeFrom` to the tip; 0
- * elsewhere. Load time only.
+ * elsewhere. Returns the half widths it measured (96 slices from `bladeFrom` to the tip, unit): the sword aura's
+ * blade profile (blades.ts AuraAnchors). Load time only.
  */
-export function edgeField(geometry: THREE.BufferGeometry, bladeFrom: number): void {
+export function edgeField(geometry: THREE.BufferGeometry, bladeFrom: number): Float32Array {
   const pos = geometry.getAttribute("position");
   const S = 96;
   const half = new Float32Array(S);
@@ -206,6 +207,7 @@ export function edgeField(geometry: THREE.BufferGeometry, bladeFrom: number): vo
     e[i] = Math.min(1, Math.abs(pos.getX(i)) / Math.max(half[slice(y)]!, 1e-4));
   }
   geometry.setAttribute("aEdge", new THREE.BufferAttribute(e, 1));
+  return half;
 }
 
 /**

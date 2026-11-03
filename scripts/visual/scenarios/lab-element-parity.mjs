@@ -6,6 +6,7 @@
 //   node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-parity.mjs --width=1920 --height=1080
 // ONLY=k1,k7 limits the plan to those ids; ELEMENT adds ?element= (absent: the lab's default). Compare only runs of the
 // same plan: the lab's clocks (caster, herd) carry over from one plan item to the next, so ONLY changes later frames.
+// QS appends raw query flags (the sword aura, SWORD_AURA §6: QS="&aura=off", "&aura=a", "&aura=off&bladeHeat=furnace").
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -24,11 +25,12 @@ export default async function (page) {
   const base = process.env.BASE ?? "http://127.0.0.1:3061/skills-lab.html";
   const phase = process.env.PHASE ?? "after";
   const element = process.env.ELEMENT ? `&element=${process.env.ELEMENT}` : "";
+  const qs = process.env.QS ?? "";
   const root = resolve(process.env.OUT_DIR ?? "tmp/shots/element-fire");
   const out = join(root, `raw-${phase}`);
   const only = process.env.ONLY ? process.env.ONLY.split(",") : null;
   mkdirSync(out, { recursive: true });
-  await page.goto(`${base}?fixed=1&ui=0&dpr=1&probe=0&weapon=clear-wind&cutin=0.9${element}`, { settle: 1500 });
+  await page.goto(`${base}?fixed=1&ui=0&dpr=1&probe=0&weapon=clear-wind&cutin=0.9${element}${qs}`, { settle: 1500 });
   for (let i = 0; i < 240; i += 1) {
     if (await page.eval("!!(window.__lab && window.__lab.ready)")) break;
     await sleep(250);

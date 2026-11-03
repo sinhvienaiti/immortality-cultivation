@@ -5,6 +5,7 @@
 // waits for the GPU: __lab.perf, an upper bound since a real frame overlaps them); every number is the median of RUNS.
 //   BASE=http://127.0.0.1:3061/skills-lab.html Q=high ELEMENT=metal OUT=tmp/shots/element-fire/perf-metal.json \
 //   ../../.local/bin/heavy.sh --perf node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-perf.mjs --width=1920 --height=1080 --dpr=1
+// QS appends raw query flags (QS="&aura=a"); the sword aura's A/B alternation is lab-sword-aura.mjs PLAN=perf.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -25,7 +26,8 @@ export default async function (page) {
   const q = process.env.Q ?? "high";
   const runs = Number(process.env.RUNS ?? "3");
   const element = process.env.ELEMENT ? `&element=${process.env.ELEMENT}` : "";
-  await page.goto(`${base}?fixed=1&ui=0&probe=0&q=${q}&dpr=1&weapon=clear-wind&cutin=0.9${element}`, { settle: 1500 });
+  const qs = process.env.QS ?? "";
+  await page.goto(`${base}?fixed=1&ui=0&probe=0&q=${q}&dpr=1&weapon=clear-wind&cutin=0.9${element}${qs}`, { settle: 1500 });
   for (let i = 0; i < 240; i += 1) {
     if (await page.eval("!!(window.__lab && window.__lab.ready)")) break;
     await sleep(250);
@@ -73,7 +75,7 @@ export default async function (page) {
   const pick = (k, f) => median(rows[k].map((s) => s[f]));
   const sum = (k) => ({ mean: pick(k, "mean"), p50: pick(k, "p50"), p95: pick(k, "p95"), max: pick(k, "max"), cpuP95: pick(k, "cpuP95"), drawCalls: rows[k][0].drawCalls, triangles: rows[k][0].triangles });
   const info = { element: await page.eval("typeof window.__lab.element === 'function' ? window.__lab.element() : 'none'") };
-  const report = { q, width: page.width, height: page.height, dpr: 1, runs, gpu, element: info.element, ceilingP95Ms: 11.5, idle: sum("idle"), key1: sum("key1"), key7Hunt: sum("key7Hunt"), key7Finish: sum("key7Finish"), k5Waves: sum("k5"), runsRaw: rows };
+  const report = { q, width: page.width, height: page.height, dpr: 1, runs, gpu, element: info.element, qs, ceilingP95Ms: 11.5, idle: sum("idle"), key1: sum("key1"), key7Hunt: sum("key7Hunt"), key7Finish: sum("key7Finish"), k5Waves: sum("k5"), runsRaw: rows };
   if (process.env.OUT) {
     const out = resolve(process.env.OUT);
     mkdirSync(dirname(out), { recursive: true });

@@ -290,7 +290,7 @@ export class MyriadSwordsFx {
   private readonly aSeam: StreamSeamArgs = { target: -1, ux: 1, uz: 0, x: 0, y: 0, z: 0, dx: 1, dy: 0, dz: 0, len: 1 };
   private readonly aSlash: StreamSlashArgs = { ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, halfPx: 0, head: 0, fade: 0, erode: 0, t: 0, dt: 0, mask: null };
   private readonly slashMask: THREE.Texture | null;
-  private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0 };
+  private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0, aura: false };
   /** The lead blades' trail width over Metal's (the element's trail width ÷ Metal's 0.14 m). */
   private trailK = 1;
   private readonly aLead = { x: 0, z: 0 };

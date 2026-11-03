@@ -624,7 +624,7 @@ export class SwordSkillFx {
   private readonly aFrame: ChargeFrameArgs = { slot: "auto", level: 0, vis: 0, big: 0, scale: 1, typing: false, dt: 0, hand: new THREE.Vector3(), caster: casterPose(), pal: START_GLOW };
   private readonly aRelease: ReleaseArgs = { slot: "auto", skill: "auto", tier: 1, size: 0, intensity: 0, ringM: 0, at: new THREE.Vector3(), hand: new THREE.Vector3(), caster: casterPose(), pal: START_GLOW };
   private readonly aLaunch: LaunchArgs = { slot: "k1", at: new THREE.Vector3(), index: 0, pal: START_GLOW };
-  private readonly aTravel: TravelArgs = { slot: "auto", blade: 0, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 1, tipM: 0, u: 0, dt: 0, pal: START_GLOW };
+  private readonly aTravel: TravelArgs = { slot: "auto", blade: 0, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 1, tipM: 0, u: 0, dt: 0, pal: START_GLOW, aura: false };
   private readonly aImpact: ImpactArgs = { slot: "auto", at: new THREE.Vector3(), scale: 1, dx: 0, dz: -1, power: 0, big: false, pal: START_GLOW };
   private readonly aCut: CutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, pal: START_GLOW };
   private readonly aArea: AreaHitArgs = { slot: "auto", at: new THREE.Vector3(), dx: 0, dz: -1, power: 0, marked: false, pal: START_GLOW };

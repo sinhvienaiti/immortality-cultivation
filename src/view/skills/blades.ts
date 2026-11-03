@@ -325,6 +325,57 @@ export function loadBladeGeometry(url: string | undefined, fit?: BladeFit): Prom
 
 // ── Textured sword models ───────────────────────────────────────────────────
 
+/**
+ * Where a weapon's aura sits on its unit blade (SWORD_AURA §4.8), measured from its GLB at load. The jian
+ * convention: the guard at y = 0, the tip at y = 1, the hilt at y < 0 (the pommel's end at `pommelY`).
+ */
+export interface AuraAnchors {
+  /** 96 blade half widths (unit) from `bladeFrom` to the tip (edgeField's slices). */
+  readonly profile: Float32Array;
+  /** Unit y where the blade starts. */
+  readonly bladeFrom: number;
+  /** Unit y where the guard's band starts: no aura body from here to bladeFrom + 0.03 of the sword's length. */
+  readonly guardFrom: number;
+  /** The jade ring's centre and outer radius (unit; Clear Wind's guard band is its ring), null without a ring. */
+  readonly ring: { readonly y: number; readonly r: number } | null;
+  /** Half width of the guard (unit). */
+  readonly guardHalf: number;
+  /** Where a tassel or silk would hang (unit y, ≤ pommelY: past the pommel's end). */
+  readonly tasselFrom: number;
+}
+
+/** The blade's widest half width in an anchors' profile (unit). */
+export function profileMax(a: AuraAnchors): number {
+  let m = 0;
+  for (let i = 0; i < a.profile.length; i += 1) m = Math.max(m, a.profile[i]!);
+  return m;
+}
+
+/** Measures a unit blade's aura anchors (load time; `half` from edgeField). */
+export function auraAnchorsOf(geometry: THREE.BufferGeometry, guard: readonly [number, number], bladeFrom: number, half: Float32Array, ring: boolean): AuraAnchors {
+  const pos = geometry.getAttribute("position");
+  let guardHalf = 0;
+  let minY = Infinity;
+  for (let i = 0; i < pos.count; i += 1) {
+    const y = pos.getY(i);
+    if (y < minY) minY = y;
+    if (y >= guard[0] && y <= guard[1]) guardHalf = Math.max(guardHalf, Math.abs(pos.getX(i)));
+  }
+  // A sparse mesh (the stand-in jian) leaves the slices before its first vertex empty: they take the first measured one.
+  const profile = Float32Array.from(half);
+  let first = 0;
+  while (first < profile.length && !(profile[first]! > 0)) first += 1;
+  for (let i = 0; i < first && first < profile.length; i += 1) profile[i] = profile[first]!;
+  return {
+    profile,
+    bladeFrom,
+    guardFrom: guard[0],
+    ring: ring && guardHalf > 0 ? { y: (guard[0] + guard[1]) / 2, r: guardHalf } : null,
+    guardHalf,
+    tasselFrom: Number.isFinite(minY) ? minY : -0.25,
+  };
+}
+
 /** A sword ready for instancing: a unit blade in the jian convention with its UVs and edge field, and its material. */
 export interface SwordModel {
   readonly geometry: THREE.BufferGeometry;
@@ -340,15 +391,17 @@ export interface SwordModel {
   readonly source: string;
   /** How its material was patched (overlayModel re-patches a copy). */
   readonly look: SwordMaterialOptions;
+  /** Where its aura sits (SWORD_AURA §4.8). */
+  readonly aura: AuraAnchors;
 }
 
 const NO_JADE = [0, 0, 0] as const;
 
-function modelOf(geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial, jade: readonly [number, number, number], real: boolean, source: string): SwordModel {
+function modelOf(geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial, jade: readonly [number, number, number], real: boolean, source: string, ring = false): SwordModel {
   geometry.computeBoundingBox();
   const guard = guardBand(geometry);
   const bladeFrom = Math.max(0.01, guard[1] + 0.01);
-  edgeField(geometry, bladeFrom);
+  const half = edgeField(geometry, bladeFrom);
   const look = { bladeFrom, jade };
   patchSwordMaterial(material, look);
   const index = geometry.getIndex();
@@ -361,6 +414,7 @@ function modelOf(geometry: THREE.BufferGeometry, material: THREE.MeshStandardMat
     triangles: (index !== null ? index.count : geometry.getAttribute("position").count) / 3,
     source,
     look,
+    aura: auraAnchorsOf(geometry, guard, bladeFrom, half, ring),
   };
 }
 
@@ -415,7 +469,7 @@ export interface SwordSource {
   readonly model: string;
   readonly swarm?: string;
   readonly fit?: BladeFit;
-  readonly motif?: { readonly jade: readonly [number, number, number] };
+  readonly motif?: { readonly jade: readonly [number, number, number]; readonly ring?: boolean };
 }
 
 const swordModels = new Map<string, Promise<{ full: SwordModel; lod: SwordModel }>>();
@@ -438,12 +492,13 @@ export function loadSwordModels(def: SwordSource): Promise<{ full: SwordModel; l
         const s = standInModel();
         return { full: s, lod: s };
       }
-      const full = modelOf(fullGeo, fullMat, jade, true, def.model);
+      const ring = def.motif?.ring === true;
+      const full = modelOf(fullGeo, fullMat, jade, true, def.model, ring);
       const lodGltf = def.swarm !== undefined ? await loadWeaponModel(def.swarm) : null;
       const map = fullGeo.userData.bladeMap as THREE.Matrix4 | undefined;
       const lodGeo = lodGltf === null ? null : bladeFromObject(lodGltf.scene, def.fit, { keepUv: true, ...(map !== undefined ? { map } : {}) });
       const lodMat = lodGltf === null ? null : ownMaterial(lodGltf.scene);
-      const lod = lodGeo !== null && lodMat !== null ? modelOf(lodGeo, lodMat, jade, true, def.swarm!) : full;
+      const lod = lodGeo !== null && lodMat !== null ? modelOf(lodGeo, lodMat, jade, true, def.swarm!, ring) : full;
       return { full, lod };
     })();
     swordModels.set(key, p);

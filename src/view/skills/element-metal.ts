@@ -6,7 +6,7 @@
  * exactly as before the element layer: change nothing here without new before/after captures.
  */
 import * as THREE from "three";
-import type { ElementKit, StreamTone, TrailLook } from "./element-kit";
+import type { ElementKit, StreamTone, SwordAuraLook, TrailLook } from "./element-kit";
 import { GRAMMAR } from "./sword-grammar";
 import { EDGE_HOT } from "./sword-material";
 import type { SwordSlot } from "./sword-skills";
@@ -111,6 +111,26 @@ export const METAL_STREAM: StreamTone = {
   slash: { white: GRAMMAR.white, body: GRAMMAR.cyan, bodyLit: GRAMMAR.cyanLit, deep: GRAMMAR.navy },
 };
 
+/**
+ * Metal's aura matter (SWORD_AURA §3.A, "Metal"): forged and restrained, the order of armour plates, never a glowing
+ * plastic wand. A silver-blue body (hue ~200°, far from the typing colour #7FF5E0 at 169°), hard plate edges, a
+ * straight flow along the blade, an indigo ink, Metal's cyan-white core. No gold, no jade, no mint.
+ */
+export const METAL_AURA: SwordAuraLook = {
+  mode: "qi",
+  ramp: { core: [0.62, 0.88, 1.0], edge: [0.6, 0.76, 0.85], body: [0.3, 0.62, 0.85], soot: [0.02, 0.028, 0.06] },
+  coreHdr: 3.0,
+  ink: { rgb: [0.02, 0.028, 0.06], alpha: 0.35 },
+  edge: 0.7,
+  flow: { speed: 0.6, perMps: 0.04, scale: 1, buoyancy: 0, curl: 0, twoPhase: false },
+  breakup: 0.15,
+  reachW: 0,
+  flickerHz: 0,
+  shed: "glints",
+  distortion: 0,
+  reduced: { flow: 0.3, flickerHz: 0 },
+};
+
 export const METAL: ElementKit = {
   id: "metal",
   name: "Metal",
@@ -120,6 +140,7 @@ export const METAL: ElementKit = {
   stream: METAL_STREAM,
   trail: METAL_TRAIL,
   blade: { mode: "steel", edge: EDGE_HOT },
+  swordAura: METAL_AURA,
   textures: {},
   flipbooks: {},
   ground: null,

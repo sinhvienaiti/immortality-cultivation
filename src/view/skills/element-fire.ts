@@ -32,7 +32,7 @@
  * DRAGON_FIRE_DIAGNOSIS); only thin cores are HDR. No allocation per frame.
  */
 import * as THREE from "three";
-import type { AftermathArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, TravelArgs } from "./element-kit";
+import type { AftermathArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
 import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
@@ -1151,6 +1151,28 @@ class FireLayers {
   }
 }
 
+/**
+ * Fire's aura matter (SWORD_AURA §3.A, "Fire"): the mantle's plates become the roots of flame tongues licking past the
+ * blade's outline (sharp tips, blown back by the flight and rising), a soot rim outside, a vermilion-to-orange body
+ * (hue 15–27°), amber only as a thin band by the core (≤ 15 % of the aura's pixels, it sits by the reserved gold), a
+ * white-gold core only at the root by the edge. The tiers (lead swords, mid swords, far swords) are the direction's.
+ */
+export const FIRE_AURA: SwordAuraLook = {
+  mode: "flame",
+  ramp: { core: WHITE_GOLD, edge: AMBER, body: ORANGE, soot: SOOT },
+  deep: VERMILION,
+  coreHdr: 2.4,
+  ink: { rgb: SOOT, alpha: 0.85 },
+  edge: 0.85,
+  flow: { speed: 0.9, perMps: 0.03, scale: 1, buoyancy: 0.3, curl: 0.2, twoPhase: false },
+  breakup: 0.8,
+  reachW: 1.6,
+  flickerHz: 10,
+  shed: "embers",
+  distortion: 0,
+  reduced: { flow: 0.3, flickerHz: 2 },
+};
+
 export const FIRE: ElementKit = {
   id: "fire",
   name: "Fire",
@@ -1160,6 +1182,7 @@ export const FIRE: ElementKit = {
   stream: FIRE_STREAM,
   trail: { widthM: 0.16, core: k3(CORE, 2), rimK: 0.8, silk: false, flame: { clip: "dragonhold-flame-trail", soot: SOOT, deep: VERMILION, amber: AMBER, core: WHITE_GOLD } },
   blade: { mode: "furnace", edge: [3.4, 2.3, 0.95], heat: [0.9, 0.3, 0.03], char: 0.12 },
+  swordAura: FIRE_AURA,
   textures: {},
   flipbooks: {
     charge: ["fire-charge"],

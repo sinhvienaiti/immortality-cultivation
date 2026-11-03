@@ -43,6 +43,53 @@ export interface BladeLook {
   /** Furnace: the heat band's light from the spine to the edges (linear, ≤ 0.9) and the body's albedo share (hot iron). */
   readonly heat?: Rgb;
   readonly char?: number;
+  /**
+   * Furnace: where the heat band starts on the blade's edge field (0 the spine … 1 the cutting edge; absent: 0.05,
+   * the whole face). Fire 0.55 (SWORD_AURA Q3, owner 03/11: dark hot-edged steel, the fire around the blade).
+   */
+  readonly heatFrom?: number;
+}
+
+/**
+ * The sword aura's matter (canon D59; docs/games/tu-tien/skills/SWORD_AURA.md §4.8): the weapon's aura SHAPE (the
+ * direction's layers in sword-aura.ts: the mantle, its plates, seams, needle and tip star) drawn in the element's
+ * MATERIAL. Matter only: widths, floors, plate counts and star sizes belong to the direction, never to the element, so
+ * a new element fills only this. applySwordAuraLook (sword-aura.ts) clamps the body to ≤ 0.85 a channel.
+ */
+export interface SwordAuraLook {
+  readonly mode: "qi" | "flame" | "water";
+  /** Roles: core (unit, × coreHdr), edge (the seams, ≤ 0.85), body (clamped ≤ 0.85), soot (the dark residue). */
+  readonly ramp: ElementRamp;
+  /** The body's deep end, where the matter thins (Fire: vermilion under the orange); absent: the body. */
+  readonly deep?: Rgb;
+  /** The thin core's gain (2.4–3.6): seams at a release or a hit, the tip star's heart, the travelling glints. */
+  readonly coreHdr: number;
+  /** The premultiplied dark under-layer in the same shader as the light. */
+  readonly ink: { readonly rgb: Rgb; readonly alpha: number };
+  /** 0 soft … 1 hard: plate edges (qi), tongue tips (flame), foam lines (water). */
+  readonly edge: number;
+  readonly flow: {
+    /** Blade lengths a second at rest, and added per m/s of flight. */
+    readonly speed: number;
+    readonly perMps: number;
+    readonly scale: number;
+    /** 0 along the blade … 1 world up (Fire's flames rise). */
+    readonly buoyancy: number;
+    /** 0 straight (Metal) … 1 S-flow (Water). */
+    readonly curl: number;
+    readonly twoPhase: boolean;
+  };
+  /** Erosion into tongues, foam or shards (0 none … 1 full). */
+  readonly breakup: number;
+  /** How far broken pieces pass the shape, in blade widths (Fire's tongues 1.6). */
+  readonly reachW: number;
+  /** Flicker (Hz; 0 steady). */
+  readonly flickerHz: number;
+  readonly shed: "none" | "glints" | "embers" | "droplets";
+  /** Share of the shared distortion pass (0 for now). */
+  readonly distortion: number;
+  /** Reduced-motion multipliers (flow) and the flicker kept (Hz). */
+  readonly reduced: { readonly flow: number; readonly flickerHz: number };
 }
 
 /**
@@ -253,6 +300,11 @@ export interface TravelArgs {
   u: number;
   dt: number;
   pal: WeaponGlow;
+  /**
+   * The sword wears its aura this frame (the lab's ?aura, SWORD_AURA §5.1): the aura's mantle takes the element's
+   * matter (SwordAuraLook), so a kit drops the sheath it would draw round the blade and keeps what it sheds.
+   */
+  aura: boolean;
 }
 
 export interface ImpactArgs {
@@ -405,6 +457,8 @@ export interface StreamTravelArgs {
   diving: boolean;
   /** The trail length Metal would draw behind its pommel (m; 0 for a lead blade, which has its ribbon). */
   trailM: number;
+  /** The sword wears its aura this frame (TravelArgs.aura): the kit drops its sheath round the blade. */
+  aura: boolean;
 }
 
 export interface StreamSeamArgs {
@@ -496,6 +550,8 @@ export interface ElementKit {
   readonly stream: StreamTone;
   readonly trail: TrailLook;
   readonly blade: BladeLook;
+  /** The sword aura's matter (SWORD_AURA §4.8): every aura layer of the weapon's direction is drawn in it. */
+  readonly swordAura: SwordAuraLook;
   /**
    * Sprite sheets it swaps in for base layers (names the host resolves; the whole pool of that layer takes it).
    * When the host gives sparks or motes the glow's sheet (the lab does), they share the glow's pool and only `glow`
