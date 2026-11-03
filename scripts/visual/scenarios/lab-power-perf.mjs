@@ -42,17 +42,23 @@ export default async function (page) {
     await page.eval("window.__lab.type('k5')");
     await page.eval("window.__lab.step(300)");
     await page.eval("window.__lab.reset()");
-    await page.eval("window.__lab.step(30)");
+    // step() renders without waiting for the GPU, so the first timed frame after it would absorb the whole backlog
+    // (lab-element-perf.mjs, 03/11 check): the last frame before each window is a timed one (perf(1)), which drains
+    // the queue, and the timeline keeps its length.
+    await page.eval("window.__lab.step(29)");
+    await page.eval("window.__lab.perf(1)");
     const idle = await page.eval("window.__lab.perf(60)");
     await page.eval("window.__lab.type('k7')");
-    await page.eval("window.__lab.step(30)");
+    await page.eval("window.__lab.step(29)");
+    await page.eval("window.__lab.perf(1)");
     const hunt = await page.eval("window.__lab.perf(138)");
     shown = Math.max(shown, (await page.eval("window.__lab.van()")).shown);
     const finish = await page.eval("window.__lab.perf(47)");
     await page.eval("window.__lab.step(60)");
     // Thiên Hà after its cut-in (61 frames), its three waves.
     await page.eval("window.__lab.type('k5')");
-    await page.eval("window.__lab.step(80)");
+    await page.eval("window.__lab.step(79)");
+    await page.eval("window.__lab.perf(1)");
     // K5_FRAMES: a longer window for round 3b's sword rain (its waves and climax run past 120 frames).
     const k5 = await page.eval(`window.__lab.perf(${Number(process.env.K5_FRAMES ?? "120")})`);
     for (const r of [idle, hunt, finish, k5]) if (r?.evalError) throw new Error(r.evalError);

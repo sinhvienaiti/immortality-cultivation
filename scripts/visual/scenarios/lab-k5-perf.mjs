@@ -62,10 +62,15 @@ export default async function (page) {
         await page.eval("window.__lab.cast('k5', 0, -8)");
         await page.eval("window.__lab.step(200)");
         await page.eval("window.__lab.reset()");
-        await page.eval("window.__lab.step(20)");
+        // step() renders without waiting for the GPU, so the first timed frame after it would absorb the whole backlog
+        // (lab-element-perf.mjs, 03/11 check): the last frame before each window is a timed one (perf(1)), which drains
+        // the queue, and the timeline keeps its length.
+        await page.eval("window.__lab.step(19)");
+        await page.eval("window.__lab.perf(1)");
         const idle = await page.eval(`window.__lab.perf(${idleFrames})`);
         await page.eval("window.__lab.cast('k5', 0, -8)");
-        await page.eval("window.__lab.step(30)");
+        await page.eval("window.__lab.step(29)");
+        await page.eval("window.__lab.perf(1)");
         const peak = await page.eval(`window.__lab.perf(${frames})`);
         if (idle?.evalError || peak?.evalError) throw new Error(idle.evalError ?? peak.evalError);
         report.gpu = peak.gpu;
