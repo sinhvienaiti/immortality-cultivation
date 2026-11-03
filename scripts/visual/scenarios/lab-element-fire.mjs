@@ -5,7 +5,7 @@
 // round the caster between the frame before the key and the key's frame (the release is visible on that frame).
 // PNGs go to OUT_DIR/raw-<PHASE>/<id>-<frame>.png (WORLD=1 adds <id>-<frame>-world.png, the same frame without the VFX
 // layer), numbers to OUT_DIR/fire-<PHASE>.json; make sheets, then delete raw.
-//   BASE=http://127.0.0.1:3071/skills-lab.html PHASE=fire-mid ELEMENT=fire [GROUND=#d6d0c2] [ONLY=k1,k7] \
+//   BASE=http://127.0.0.1:3071/skills-lab.html PHASE=fire-mid ELEMENT=fire [GROUND=#d6d0c2] [ONLY=k1,k7] [PLAN=fixes] \
 //   OUT_DIR=tmp/shots/element-fire node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-fire.mjs --width=1920 --height=1080
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -22,6 +22,19 @@ const PLAN = [
   ["k7c", "k7", "close:-4,-7,13", false, [40, 90, 150, 194, 215]],
 ];
 
+/**
+ * PLAN=fixes (03/11 look fixes, part 4): the same items with the aftermath to its end (embers, scorch), key 1 close on
+ * its hits, the first keys of the typed charge, and key 7's graphic frames (local F15, dark F197, inverted F201), its
+ * slash, cut seams and the hero victims' plants.
+ */
+const FIXES = [
+  ["k1", "k1", "play", false, [1, 3, 6, 8, 10, 16, 24, 40, 60, 90, 120, 150, 180, 240]],
+  ["k1c", "k1", "close:-0.3,-5.6,10", false, [8, 16, 40, 60, 90, 120, 150, 180, 240]],
+  ["k1t", "k1", "zoom", true, [10, 18, 26, 42, 58, 66, 68, 74]],
+  ["k7", "k7", "play", false, [1, 10, 15, 40, 90, 150, 186, 194, 197, 201, 205, 215, 240, 260, 300, 360]],
+  ["k7c", "k7", "close:-4,-7,13", false, [40, 60, 90, 150, 194, 197, 201, 205, 215, 240, 260, 300]],
+];
+
 export default async function (page) {
   const base = process.env.BASE ?? "http://127.0.0.1:3071/skills-lab.html";
   const phase = process.env.PHASE ?? "fire";
@@ -35,7 +48,7 @@ export default async function (page) {
   const shots = [];
   const releases = [];
   let loaded = "";
-  for (const [id, slot, cam, typed, frames] of PLAN) {
+  for (const [id, slot, cam, typed, frames] of process.env.PLAN === "fixes" ? FIXES : PLAN) {
     if (only && !only.includes(id)) continue;
     const url = `${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind&cutin=0.9&element=${element}${ground}${typed ? "&typed=1" : ""}`;
     if (url !== loaded) {
