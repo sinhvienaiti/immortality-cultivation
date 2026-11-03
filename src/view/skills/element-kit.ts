@@ -130,6 +130,25 @@ export interface ScreenAccent {
   readonly frames?: { readonly navy: Rgb; readonly paper: Rgb; readonly accent: Rgb };
 }
 
+/**
+ * How the caster's seal and its rings are drawn (03/11 fixes; sword-skills.ts' seal, fxkit GroundSigil). Absent:
+ * Metal's added light in the slot's colours. "solid": matter, not light: every stroke on a soot underlay (normal
+ * blend), its body covering the stone in `body` (lit toward `lit` as the seal blazes), and only a thin hot line down its
+ * middle added (`core`, HDR with the blaze), so it stays saturated on pale stone instead of bleaching to peach; it
+ * comes and goes by erosion.
+ */
+export interface SigilLook {
+  readonly mode: "solid";
+  /** The underlay (linear; keep it near neutral, its fringe over pale stone must not tint it) and its opacity. */
+  readonly soot: Rgb;
+  readonly sootAlpha: number;
+  /** The stroke's body, cool and lit (linear, ≤ 0.9 a channel: they never bloom). */
+  readonly body: Rgb;
+  readonly lit: Rgb;
+  /** The thin hot line (linear, unit max; × the seal's glow, HDR while it blazes). */
+  readonly core: Rgb;
+}
+
 /** The base sprite sheets a kit may swap, by layer (SwordSkillTextures' keys). */
 export type SwordTextureLayer = keyof SwordSkillTextures;
 
@@ -424,6 +443,8 @@ export interface ElementKit {
   readonly ground: GroundAftermath | null;
   readonly foe: FoeStatus | null;
   readonly screen: ScreenAccent;
+  /** The caster's seal and its rings (absent: Metal's added light). */
+  readonly sigil?: SigilLook;
   /** Sound suffix: the lab's bus plays "<event>-<sound>" when it has files, else "<event>" ("" for Metal). */
   readonly sound: string;
   /** Builds the kit's own layers once per stage (load time: pools, flipbooks, decals) and returns its hooks. */

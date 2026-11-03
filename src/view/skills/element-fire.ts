@@ -31,6 +31,7 @@ import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
 import type { EmberPool } from "./embers";
 import type { BeamPool, SpritePool } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
+import type { HeatRingPool } from "./heat-rings";
 import { SWORD_LOOK } from "./sword-material";
 import type { SwordSlot } from "./sword-skills";
 import { glowOfRamp, type Rgb, type WeaponDef, type WeaponGlow } from "./weapons";
@@ -57,6 +58,16 @@ const EMBER_ORANGE = lin("#FA8A26");
 const EMBER_DIM = lin("#AC5A1C");
 /** The white spark mask's tint (the fire-sparks atlas is white on black). */
 const SPARK_TINT = new THREE.Color().setRGB(1, 0.5, 0.12);
+
+/**
+ * The seal, its rings and the pressure ring as matter (03/11 fixes: drawn as added light in the fire palette they read
+ * pale pink-orange on light stone): vermilion strokes lit toward gold as they blaze, on a near-neutral charcoal
+ * underlay (its fringe over pale stone must not tint it peach), a thin white-gold line down their middle.
+ */
+const SEAL_SOOT = lin("#141211");
+const SEAL_BODY = lin("#E0561A");
+const SEAL_LIT = lin("#FFAE34");
+const SEAL_CORE: Rgb = [1, 0.72, 0.3];
 
 /** Folder of the kit's clips (art-src/lab/vfx/fire/manifest.json). */
 const FOLDER = "fire";
@@ -131,8 +142,8 @@ class FireLayers {
   private readonly line: FlipbookPool;
   /** Ember dots, pinpoints and shed sparks (additive thin light). */
   private readonly motes: SpritePool;
-  /** The release's pressure ring. */
-  private readonly rings: SpritePool;
+  /** The release's pressure ring (matter on soot, a thin hot line). */
+  private readonly rings: HeatRingPool;
   /** A cut's thin hot crescent. */
   private readonly slash: SpritePool;
   /** Dark smoke wisps and ash flakes (normal blend). */
@@ -170,7 +181,8 @@ class FireLayers {
     this.scorch = stage.decals(SCORCH.texture, 64, 4);
     this.smoke = stage.pool(96, stage.texture("smoke_07"), "ink", "camera", 9, { fadeIn: 0.15 });
     this.ash = stage.pool(160, T.splash, "ink", "camera", 9);
-    this.rings = stage.pool(24, T.shock, "add", "camera", 14);
+    this.rings = stage.heatRings(24, "camera", 14);
+    this.rings.setLook(SEAL_SOOT, 0.8, SEAL_BODY, SEAL_LIT, SEAL_CORE);
     this.slash = stage.pool(32, T.slash, "add", "camera", 12);
     this.motes = stage.pool(900, T.glow, "add", "camera", 13, { crop: 0.6 });
     this.seams = stage.beams(24, 13);
@@ -490,17 +502,15 @@ class FireLayers {
     const p = a.at;
     // Burst at once: a white-gold pinpoint and the pressure ring at the hand on the key's frame.
     this.dot(p.x, p.y, p.z, 0.95 * s, 0.5 * s, 0.1, WHITE_GOLD, 4.2);
-    const r = this.rings.spec.reset();
+    const r = this.rings.reset();
     r.x = p.x;
     r.y = p.y;
     r.z = p.z;
-    r.life = 0.2;
-    r.size0 = 0.5 * s;
-    r.size1 = 2.6 * s;
-    r.r = AMBER[0] * 1.3;
-    r.g = AMBER[1] * 1.3;
-    r.b = AMBER[2] * 1.3;
-    r.a = 0.85;
+    r.life = 0.24;
+    r.r0 = 0.25 * s;
+    r.r1 = 1.3 * s;
+    r.width = 0.14;
+    r.heat = 1;
     this.rings.emit();
     // The flame lotus erupts behind the caster (the body stays in front of its own burst).
     this.stage.camera.getWorldDirection(camF);
@@ -847,6 +857,7 @@ export const FIRE: ElementKit = {
   },
   ground: SCORCH,
   foe: { kind: "burn", seconds: 1.4, rgb: 0xd04a0c },
+  sigil: { mode: "solid", soot: SEAL_SOOT, sootAlpha: 0.8, body: SEAL_BODY, lit: SEAL_LIT, core: SEAL_CORE },
   screen: { flash: { tint: [0.55, 0.26, 0.06], strength: 1 }, distortion: 0, frames: { navy: [0.09, 0.03, 0.02], paper: [1.0, 0.84, 0.58], accent: [1.0, 0.5, 0.1] } },
   sound: "fire",
   attach: (stage) => new FireLayers(stage).hooks(),

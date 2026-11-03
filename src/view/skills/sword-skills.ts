@@ -762,6 +762,8 @@ export class SwordSkillFx {
     }
     applyBladeLook(kit.blade);
     this.ribbons.setFlame(flameOf(kit, stage));
+    // The caster's seal and its rings in the element's material (Metal: its added light, unchanged).
+    this.sigSeal.setSolid(kit.sigil ?? null);
     this.skillPal = this.skillPals(this.weaponDef);
     this.use(this.palSlot);
     this.applyColours(this.weaponDef);

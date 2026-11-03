@@ -1330,6 +1330,13 @@ uniform float uHeat;     // 0..n afterglow along a cut (embers and a glowing sea
 uniform float uAsh;      // 0..1 pale ash left where the light burned (normal blend, not dark ink)
 uniform float uMotif;    // the equipped weapon's motif (WeaponMotif): 0 none, 1 Clear Wind's hollow jade ring and ruyi curls
 uniform vec3 uJade;      // the motif's light (≤ 0.86 a channel: it never blooms; the skill's own lines keep the HDR)
+#ifdef SOLID
+uniform vec3 uSolidSoot; // an element's solid look (element-kit.ts SigilLook): the underlay, the body cool and lit, the thin line
+uniform float uSolidSootA;
+uniform vec3 uSolidBody;
+uniform vec3 uSolidLit;
+uniform vec3 uSolidCore;
+#endif
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -1686,8 +1693,29 @@ void main() {
   float ashA = clamp(ashL * uAsh, 0.0, 0.8) * edge;
   // Premultiplied over: light adds, ink darkens, ash (pale grey) lies over the ink.
   vec3 ashC = vec3(0.3, 0.31, 0.33) * ashA;
+#ifdef SOLID
+  // Matter, not added light: each stroke on a soot underlay, its body covering the stone (cool → lit as it blazes),
+  // only a thin hot line down its middle added; it comes and goes by erosion (uFade), not by turning see-through.
+  float lv = clamp(light, 0.0, 1.5) * edge;
+  float sootA = smoothstep(0.03, 0.12, lv) * uSolidSootA;
+  float bodyA = smoothstep(0.2, 0.42, lv);
+  float blaze = clamp(uGlow * 0.5, 0.0, 1.0);
+  vec3 bodyC = mix(uSolidBody, uSolidLit, smoothstep(0.35, 1.0, blaze) * smoothstep(0.45, 0.85, lv));
+  vec3 hotC = uSolidCore * clamp(core * uGlow * 1.2, 0.0, 2.5) * smoothstep(0.8, 0.97, lv);
+  // The weapon's motif keeps its jade, as matter too (on the same underlay).
+  float motA = smoothstep(0.25, 0.6, mot * min(uGlow, 1.0)) * edge * uMotif;
+  sootA = max(sootA, smoothstep(0.04, 0.2, mot) * uSolidSootA * edge * uMotif);
+  float under = clamp(inkA + sootA * (1.0 - inkA), 0.0, 1.0);
+  vec3 bodyM = mix(bodyC * bodyA, uJade, motA);
+  float bodyT = bodyA + motA * (1.0 - bodyA);
+  vec3 rgbS = uSolidSoot * under * (1.0 - bodyT) + bodyM + hotC;
+  float aS = bodyT + under * (1.0 - bodyT);
+  float er = smoothstep((1.0 - uFade) * 1.1 - 0.1, (1.0 - uFade) * 1.1, n);
+  gl_FragColor = vec4((rgbS * (1.0 - ashA) + ashC) * er, clamp(aS + ashA * (1.0 - aS), 0.0, 1.0) * er);
+#else
   float a = clamp(inkA + ashA * (1.0 - inkA), 0.0, 1.0) * uFade;
   gl_FragColor = vec4((rgb + ashC) * uFade, a);
+#endif
 }`;
 
 /** A flat plane on the ground with a sigil shader. */
@@ -1709,6 +1737,11 @@ export class GroundSigil {
     uAsh: { value: number };
     uMotif: { value: number };
     uJade: { value: THREE.Color };
+    uSolidSoot: { value: THREE.Vector3 };
+    uSolidSootA: { value: number };
+    uSolidBody: { value: THREE.Vector3 };
+    uSolidLit: { value: THREE.Vector3 };
+    uSolidCore: { value: THREE.Vector3 };
   };
   /**
    * Spiral rotation speed (rad/s), integrated into uPhase by `tick`: a speed
@@ -1737,6 +1770,11 @@ export class GroundSigil {
       uAsh: { value: 0 },
       uMotif: { value: 0 },
       uJade: { value: new THREE.Color(0, 0, 0) },
+      uSolidSoot: { value: new THREE.Vector3() },
+      uSolidSootA: { value: 0 },
+      uSolidBody: { value: new THREE.Vector3() },
+      uSolidLit: { value: new THREE.Vector3() },
+      uSolidCore: { value: new THREE.Vector3() },
     };
     const defines: Record<string, string> = {};
     defines[kind.toUpperCase()] = "";
@@ -1800,6 +1838,27 @@ export class GroundSigil {
     const s = 1 + grow * e;
     this.mesh.scale.set(s, s, 1);
     return true;
+  }
+
+  /**
+   * An element's solid look (element-kit.ts SigilLook: matter on a soot underlay, a thin hot line) or null for the
+   * added light (Metal; the program is then the one it always was). Load time: switching recompiles.
+   */
+  setSolid(look: { readonly soot: readonly number[]; readonly sootAlpha: number; readonly body: readonly number[]; readonly lit: readonly number[]; readonly core: readonly number[] } | null): void {
+    const m = this.mesh.material as THREE.ShaderMaterial;
+    const on = look !== null;
+    if (on !== "SOLID" in m.defines) {
+      if (on) m.defines.SOLID = "";
+      else delete m.defines.SOLID;
+      m.needsUpdate = true;
+    }
+    if (look === null) return;
+    const u = this.uniforms;
+    u.uSolidSoot.value.set(look.soot[0]!, look.soot[1]!, look.soot[2]!);
+    u.uSolidSootA.value = look.sootAlpha;
+    u.uSolidBody.value.set(look.body[0]!, look.body[1]!, look.body[2]!);
+    u.uSolidLit.value.set(look.lit[0]!, look.lit[1]!, look.lit[2]!);
+    u.uSolidCore.value.set(look.core[0]!, look.core[1]!, look.core[2]!);
   }
 
   /** True while fadeOutEased runs. */

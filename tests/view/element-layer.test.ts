@@ -518,6 +518,39 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(embers).toBeGreaterThan(20);
   });
 
+  it("draws the seal and its rings as matter in Fire (soot underlay, a thin hot line) and as light in Metal", () => {
+    const cam = camera();
+    const tex = sheets();
+    const kitLayer = new THREE.Group();
+    const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
+    const stage = stageFor(kitLayer, cam, tex, []);
+    const seal = (fx as unknown as { sigSeal: { mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> } }).sigSeal.mesh.material;
+    expect(seal.defines).not.toHaveProperty("SOLID");
+    const fire = elementById("fire")!;
+    fx.setElement(fire, stage);
+    expect(fire.sigil?.mode).toBe("solid");
+    expect(seal.defines).toHaveProperty("SOLID");
+    // The bodies stay under the bloom threshold; the underlay is near neutral (its fringe never tints pale stone).
+    expect(Math.max(...fire.sigil!.body, ...fire.sigil!.lit)).toBeLessThanOrEqual(1);
+    const soot = fire.sigil!.soot;
+    expect(Math.max(...soot) - Math.min(...soot)).toBeLessThan(0.01);
+    fx.setElement(METAL, stage);
+    expect(seal.defines).not.toHaveProperty("SOLID");
+    // The release's pressure ring is a heat ring (matter), not the additive shock sheet.
+    fx.setElement(fire, stage);
+    fx.cast("k1", 0, -6);
+    let rings = 0;
+    for (let i = 0; i < 4; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+      kitLayer.traverse((o) => {
+        if (o.name === "fx-heat-rings" && o.visible) rings += 1;
+      });
+    }
+    expect(rings).toBeGreaterThan(0);
+  });
+
   it("a ribbon pool swaps to the flame look and back without touching its ribbons", () => {
     const pool = new RibbonPool(4, 8, new THREE.Texture());
     const light = pool.mesh.material;

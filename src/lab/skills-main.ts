@@ -742,6 +742,9 @@ async function setElement(id: string): Promise<boolean> {
   const metal = kit.attach === undefined;
   const t = myriad.tone;
   herd.setElementLook(metal ? null : [t.core[0] * 2.2, t.core[1] * 2.2, t.core[2] * 2.2], metal ? null : [t.halo[0], t.halo[1], t.halo[2]]);
+  // The caster's ground ring is one of the seal's rings: the element's sigil look (Metal: its added light), on a
+  // lighter underlay (its broad falloff would lie under the feet as a dark donut).
+  presence.presenceRing.setSolid(kit.sigil === undefined ? null : { ...kit.sigil, sootAlpha: kit.sigil.sootAlpha * 0.35 });
   victims.setTone(metal ? null : { star: [t.core[0] * 3.2, t.core[1] * 3.2, t.core[2] * 3.2], ring: [t.halo[0], t.halo[1], t.halo[2]], rim: [t.halo[0] * 0.85, t.halo[1] * 0.85, t.halo[2] * 0.85] });
   for (const f of elementListeners) f(kit.id);
   return true;
