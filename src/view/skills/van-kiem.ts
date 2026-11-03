@@ -683,8 +683,10 @@ export class VanKiemFx {
   update(dt: number): void {
     if (this.active) this.step(dt);
     // The body opens with the river (F1–30), holds through the hunt and drains into the gather.
-    const on = this.active ? smooth01((this.t - T_SEAM) / 0.35) * (1 - smooth01((this.t - T_GATHER) / 0.3)) : 0;
-    this.body.update(this.pathFn, 3.3, on, this.t);
+    // Round 3b: it drains in 0.12 s and narrows as it goes (a slow fade left a thin grey line across the field).
+    const drain = 1 - smooth01((this.t - T_GATHER) / 0.12);
+    const on = this.active ? smooth01((this.t - T_SEAM) / 0.35) * drain : 0;
+    this.body.update(this.pathFn, 3.3 * (0.4 + 0.6 * drain), on * on, this.t);
     this.drawSlash(dt);
     this.drawSwords();
     this.ribbons.update(dt, this.host.camera);
@@ -803,8 +805,8 @@ export class VanKiemFx {
       this.bz[i] = this.s0.z + (this.s1.z - this.s0.z) * s + this.sweepNz * row * 0.45;
       if (lead) {
         this.lenFrom[i] = this.lenM[i]!;
-        // The trail eases out: the gather's spiral and the stroke read cleaner without it.
-        this.ribbons.stop(i, 0.25);
+        // The trail eases out fast: retracting over 0.25 s it hung across the field as a grey spline (round 3b).
+        this.ribbons.stop(i, 0.08);
       } else k += 1;
     }
   }
@@ -990,6 +992,11 @@ export class VanKiemFx {
       }
       case S_FADE: {
         this.sc[i] = 1 - smooth01(a / FADE_S);
+        // A lead blade struck into the finisher's cut drives on down into the ground as it goes.
+        if (i < HERO_N && this.t >= T_FIN) {
+          this.py[i] = this.py[i]! - 22 * dt;
+          this.turn(i, this.dx[i]! * 0.3, -1, this.dz[i]! * 0.3, this.kPlunge);
+        }
         if (a >= FADE_S) {
           if (i < HERO_N || this.t >= T_GATHER) {
             this.st[i] = S_OFF;
@@ -1308,7 +1315,8 @@ export class VanKiemFx {
     for (let i = HERO_N; i < this.cap; i += 1) {
       if (this.st[i] !== S_STROKE && this.st[i] !== S_GATHER) continue;
       this.st[i] = S_FADE;
-      this.age[i] = 0;
+      // Most of the fade is skipped: under the climax's slow motion a full one held them as a comb over the slash.
+      this.age[i] = FADE_S * 0.65;
     }
     // A few sparks off the slash's origin; the rest fly off its head as it runs (sweep).
     for (let k = 0; k < 14; k += 1) this.slashSpark(this.rand.next() * 0.15);
@@ -1479,9 +1487,12 @@ export class VanKiemFx {
         if ((i & 3) === 0) this.glint(this.px[i]!, this.py[i]!, this.pz[i]!, 1.4);
         continue;
       }
-      // A lead blade drives deep into the cut (its 6.4 m stands about 4.5 m out of the ground).
-      this.py[i] = this.py[i]! + (1.3 - this.py[i]!) * this.kPlunge;
-      this.turn(i, this.sweepNx * 0.25 + ux * 0.4, -0.88, this.sweepNz * 0.25 + uz * 0.4, this.kPlunge);
+      // A lead blade strikes down into the cut as the head passes it: a pillar of light and a shock ring where it
+      // lands, and it is gone (round 3b: six blades left standing on the slash read as a comb).
+      this.leadImpact(this.px[i]!, this.pz[i]!);
+      this.glint(this.px[i]!, 1.2, this.pz[i]!, 2.2);
+      this.st[i] = S_FADE;
+      this.age[i] = FADE_S * 0.5;
     }
     if (k1 >= 1) {
       this.sweepT = -1;
