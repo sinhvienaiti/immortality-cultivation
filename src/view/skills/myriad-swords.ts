@@ -45,16 +45,22 @@
  * Lengths, pommel to tip: lead 2.8 m leaving the hand, 3.06 m in the river,
  * mid 2.55 m, far 2.3 m (2.3–3× the 1.02 m hand sword; ≥ 20 px at the play
  * camera).
+ * Element layer (canon D59, element-kit.ts): these are the Sword's shapes; the light comes from the element kit
+ * (`setElement`): its StreamTone (Metal: the cyan and white below, unchanged) and its stream hooks, each replacing
+ * one Metal layer (strike, lead strike, glints, the finisher's ground cut, slash sparks, slice seams).
  * Halos stay ≤ 0.9 a channel, only thin cores are HDR. View only:
  * the sim owns damage; the host turns `struck` into its hit events. No
  * allocation per frame.
  */
 import * as THREE from "three";
 import { BladeSet, loadSwordModels } from "./blades";
+import type { ElementKit, StreamGlintArgs, StreamHooks, StreamSeamArgs, StreamSegmentArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone } from "./element-kit";
+import { METAL } from "./element-metal";
+import type { ElementStage } from "./element-stage";
 import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
 import { QiSlash } from "./qi-slash";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
-import { FaceRoll } from "./sword-material";
+import { applyBladeLook, FaceRoll } from "./sword-material";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
 
@@ -118,9 +124,8 @@ const SWORD_M = 2.55;
 const FAR_M = 2.3;
 const HERO_M = 2.8;
 const LEAD_M = 3.06;
-/** The thin trail behind a sword's pommel: width (m) and its cyan-tinted white core (HDR, a thin line). */
+/** The thin trail behind a sword's pommel: width (m); its core is the element's (StreamTone.trailCore). */
 const TRAIL_M = 0.14;
-const TRAIL_CORE = [0.62 * 1.8, 0.88 * 1.8, 1.8] as const;
 
 /** Timeline (s) at 60 Hz. */
 const TICK = 1 / 60;
@@ -183,15 +188,8 @@ const S_FOLD = 9;
 const S_RISE = 10;
 const S_LEAD = 11;
 
-/** The Sword school's light (linear): cyan halos (≤ 0.9) and a white core (HDR in the layers). No jade, no mint, no gold here. */
-const CYAN = [0.04, 0.55, 0.95] as const;
-const CORE = [1, 1, 1] as const;
-/** The number tint and flash colour hosts read (linear cyan, sRGB hex). */
-export const MYRIAD_SWORDS_COLOUR = [0.2, 0.72, 1.0] as const;
-export const MYRIAD_SWORDS_FLASH = "#d6f3ff";
-/** The beast hit tint of a river sword and of the cut (0xRRGGBB). */
-const HIT_RGB = 0x8fdcff;
-const CUT_RGB = 0xc4ecff;
+/** Metal draws its own layers: no hooks. */
+const NO_HOOKS: StreamHooks = {};
 
 export class MyriadSwordsFx {
   /** The lead blades (the full model) and the mid swords (its LOD), one instanced draw each (blades.ts). */
@@ -278,6 +276,18 @@ export class MyriadSwordsFx {
   private kPlunge = 0.35;
   /** Glitter owed (a rate, the same at any frame rate). */
   private glintAcc = 0;
+  /** The element (canon D59): its key-7 light and its stream hooks (none for Metal). */
+  private kit: ElementKit = METAL;
+  private hooks: StreamHooks = NO_HOOKS;
+  /** The element's light for key 7 (Metal: cyan halos and a white core; the hosts read `flash` and `number`). */
+  tone: StreamTone = METAL.stream;
+  private readonly baseTex: MyriadSwordsTextures;
+  private readonly aStrike: StreamStrikeArgs = { x: 0, y: 0, z: 0, dx: 0, dz: -1, k: 1 };
+  private readonly aGlint: StreamGlintArgs = { x: 0, y: 0, z: 0, k: 1, river: false };
+  private readonly aSeg: StreamSegmentArgs = { ax: 0, az: 0, bx: 0, bz: 0 };
+  private readonly aSpark: StreamSparkArgs = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  private readonly aSeam: StreamSeamArgs = { target: -1, ux: 1, uz: 0 };
+  private readonly aLead = { x: 0, z: 0 };
   /** Strikes and dives so far in this cast (the perceived-strikes check) and the lead blades' dives. */
   strikes = 0;
   dives = 0;
@@ -288,6 +298,7 @@ export class MyriadSwordsFx {
     tex: MyriadSwordsTextures,
     counts: { readonly mid: number; readonly far: number },
   ) {
+    this.baseTex = tex;
     this.mid = Math.max(8, Math.min(64, Math.floor(counts.mid)));
     this.n = this.mid + Math.max(8, Math.min(200, Math.floor(counts.far)));
     this.cap = HERO_N + this.n;
@@ -356,6 +367,33 @@ export class MyriadSwordsFx {
     const [models, atlas] = await Promise.all([loadSwordModels(def), loadSwordAtlas(def.impostor)]);
     this.blades.setModel(models.full, models.lod);
     this.far.setAtlas(atlas);
+  }
+
+  /** The element kit key 7 is drawn in. */
+  get element(): ElementKit {
+    return this.kit;
+  }
+
+  /**
+   * Draws key 7 in `kit`'s material from now on (load time): its tone, sheets, slash colours, blade light and its
+   * stream hooks on `stage` (null: none). The river's paths, counts and timeline stay the weapon's.
+   */
+  setElement(kit: ElementKit, stage: ElementStage | null): void {
+    this.kit = kit;
+    this.tone = kit.stream;
+    this.hooks = stage !== null ? (stage.hooksOf(kit).stream ?? NO_HOOKS) : NO_HOOKS;
+    const sheet = (layer: "slash" | "star" | "ring" | "scorch"): THREE.Texture => {
+      const name = kit.textures[layer];
+      return name !== undefined && stage !== null ? stage.texture(name) : this.baseTex[layer];
+    };
+    this.hits.texture = sheet("slash");
+    this.stars.texture = sheet("star");
+    this.glitter.texture = sheet("star");
+    this.marks.texture = sheet("ring");
+    this.scar.texture = sheet("scorch");
+    const sl = kit.stream.slash;
+    this.qi.setColours(sl.white, sl.body, sl.bodyLit, sl.deep);
+    applyBladeLook(kit.blade);
   }
 
   /** Sword i's class: 0 lead, 1 mid, 2 far streak. */
@@ -688,6 +726,7 @@ export class MyriadSwordsFx {
     // Last frame's one-frame trails go first (they would hold capacity through a hit-stop).
     this.beams.dropOneFrame();
     if (this.active) this.step(dt);
+    this.hooks.frame?.(dt);
     this.drawSlash(dt);
     this.drawSwords();
     this.ribbons.update(dt, this.host.camera);
@@ -826,6 +865,16 @@ export class MyriadSwordsFx {
       this.glintAcc -= 1;
       const u = this.rand.next();
       this.riverAt(u, this.rand.range(-1, 1) * 3.2, this.rand.range(-0.6, 0.8), this.v);
+      const hook = this.hooks.glint;
+      if (hook !== undefined) {
+        const a = this.aGlint;
+        a.x = this.v.x;
+        a.y = this.v.y;
+        a.z = this.v.z;
+        a.k = this.brightAt(u) * 3;
+        a.river = true;
+        if (hook(a)) continue;
+      }
       const g = this.glitter.spec.reset();
       g.x = this.v.x;
       g.y = this.v.y;
@@ -839,17 +888,19 @@ export class MyriadSwordsFx {
       g.rot = this.rand.range(0, Math.PI);
       const white = this.rand.next() < 0.5;
       const k = this.brightAt(u) * 3;
-      g.r = (white ? CORE[0] : CYAN[0]) * k;
-      g.g = (white ? CORE[1] : CYAN[1]) * k;
-      g.b = (white ? CORE[2] : CYAN[2]) * k;
+      const c = white ? this.tone.core : this.tone.halo;
+      g.r = c[0] * k;
+      g.g = c[1] * k;
+      g.b = c[2] * k;
       this.glitter.emit();
     }
   }
 
   /** A lead blade's trail: a thin white core in a deep cyan rim, ≥ 4 px wide at the play camera (0.3 m ≈ 13 px). */
   private startRibbon(i: number, widthM: number): void {
-    this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, widthM, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1, 0.08);
-    this.ribbons.setRim(i, CYAN[0] * 0.55, CYAN[1] * 0.55, CYAN[2] * 0.55);
+    const t = this.tone;
+    this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, widthM, t.trailCore[0], t.trailCore[1], t.trailCore[2], 1, 0.08);
+    this.ribbons.setRim(i, t.halo[0] * 0.55, t.halo[1] * 0.55, t.halo[2] * 0.55);
   }
 
   /** A lead blade's place on the crest: ahead of and above the stream, alternating sides. */
@@ -1119,7 +1170,9 @@ export class MyriadSwordsFx {
     this.impactAt(T.x(t), T.midY(t), T.z(t), dx, dz, big ? 2.0 : lead ? 1.3 : this.cls(i) === SWORD_MID ? 0.9 : 0.6);
     // A river sword takes one stand-in HP (TargetField.hit below power 0.5); a lead blade lands a heavy blow.
     const power = big ? 1.05 : lead ? 0.85 : 0.3;
-    const killed = T.hit(t, dx, dz, power, HIT_RGB);
+    const killed = T.hit(t, dx, dz, power, this.tone.hitRgb);
+    const foe = this.kit.foe;
+    if (!killed && foe !== null) T.status?.(t, foe.kind, foe.seconds, foe.rgb);
     this.strikes += 1;
     this.host.struck(t, dx, dz, power, role, killed);
     this.st[i] = S_WOUND;
@@ -1127,12 +1180,25 @@ export class MyriadSwordsFx {
     this.tgt[i] = -1;
     if (lead) {
       this.v.set(T.x(t), T.midY(t), T.z(t));
-      this.host.flash(this.v, MYRIAD_SWORDS_FLASH, big ? 5 : 3);
+      this.host.flash(this.v, this.tone.flash, big ? 5 : 3);
       if (big) this.leadImpact(T.x(t), T.z(t));
     }
   }
 
   private impactAt(x: number, y: number, z: number, dx: number, dz: number, k: number): void {
+    const hook = this.hooks.strike;
+    if (hook !== undefined) {
+      const a = this.aStrike;
+      a.x = x;
+      a.y = y;
+      a.z = z;
+      a.dx = dx;
+      a.dz = dz;
+      a.k = k;
+      if (hook(a)) return;
+    }
+    const core = this.tone.core;
+    const halo = this.tone.halo;
     // A narrow slash across the blow (white core, read as a glint), a white star at its heart, sparks along the
     // blow, a thin cyan ring opening on the ground. No lit pool.
     const s = this.hits.spec.reset();
@@ -1144,9 +1210,9 @@ export class MyriadSwordsFx {
     s.size1 = 1.5 * k;
     s.aspect = 0.45;
     s.rot = Math.atan2(-dz, dx) + Math.PI / 2 + this.rand.range(-0.35, 0.35);
-    s.r = CORE[0] * 2.4;
-    s.g = CORE[1] * 2.4;
-    s.b = CORE[2] * 2.4;
+    s.r = core[0] * 2.4;
+    s.g = core[1] * 2.4;
+    s.b = core[2] * 2.4;
     this.hits.emit();
     const r = this.stars.spec.reset();
     r.x = x;
@@ -1156,9 +1222,9 @@ export class MyriadSwordsFx {
     r.size0 = 0.8 * k;
     r.size1 = 0.45 * k;
     r.rot = this.rand.range(0, Math.PI);
-    r.r = CORE[0] * 3.2;
-    r.g = CORE[1] * 3.2;
-    r.b = CORE[2] * 3.2;
+    r.r = core[0] * 3.2;
+    r.g = core[1] * 3.2;
+    r.b = core[2] * 3.2;
     this.stars.emit();
     for (let n = 0; n < 2; n += 1) {
       const p = this.stars.spec.reset();
@@ -1177,9 +1243,9 @@ export class MyriadSwordsFx {
       p.size0 = 0.2 * k;
       p.size1 = 0.05;
       const white = n === 0;
-      p.r = (white ? CORE[0] : CYAN[0]) * 2.6;
-      p.g = (white ? CORE[1] : CYAN[1]) * 2.6;
-      p.b = (white ? CORE[2] : CYAN[2]) * 2.6;
+      p.r = (white ? core[0] : halo[0]) * 2.6;
+      p.g = (white ? core[1] : halo[1]) * 2.6;
+      p.b = (white ? core[2] : halo[2]) * 2.6;
       this.stars.emit();
     }
     // Round 3b: the thin ground ring only under a lead blade's blow (a ring under every hit read as a stamp).
@@ -1191,15 +1257,23 @@ export class MyriadSwordsFx {
     g.life = 0.34;
     g.size0 = 0.5 * k;
     g.size1 = 1.8 * k;
-    g.r = CYAN[0] * 0.8;
-    g.g = CYAN[1] * 0.8;
-    g.b = CYAN[2] * 0.8;
+    g.r = halo[0] * 0.8;
+    g.g = halo[1] * 0.8;
+    g.b = halo[2] * 0.8;
     g.a = 0.7;
     this.marks.emit();
   }
 
   /** A lead blade's blow: a shock ring, an ink scorch and a short narrow pillar of light. */
   private leadImpact(x: number, z: number): void {
+    const hook = this.hooks.leadStrike;
+    if (hook !== undefined) {
+      this.aLead.x = x;
+      this.aLead.z = z;
+      if (hook(this.aLead)) return;
+    }
+    const core = this.tone.core;
+    const halo = this.tone.halo;
     const g = this.marks.spec.reset();
     g.x = x;
     g.y = 0.05;
@@ -1207,9 +1281,9 @@ export class MyriadSwordsFx {
     g.life = 0.5;
     g.size0 = 1.2;
     g.size1 = 6.5;
-    g.r = CYAN[0] * 0.9;
-    g.g = CYAN[1] * 0.9;
-    g.b = CYAN[2] * 0.9;
+    g.r = halo[0] * 0.9;
+    g.g = halo[1] * 0.9;
+    g.b = halo[2] * 0.9;
     this.marks.emit();
     const sc = this.scar.spec.reset();
     sc.x = x;
@@ -1236,18 +1310,29 @@ export class MyriadSwordsFx {
     b.w0 = 0.5;
     b.w1 = 0.2;
     b.life = 0.3;
-    b.cr = CORE[0] * 5;
-    b.cg = CORE[1] * 5;
-    b.cb = CORE[2] * 5;
-    b.hr = CYAN[0] * 0.8;
-    b.hg = CYAN[1] * 0.8;
-    b.hb = CYAN[2] * 0.8;
+    b.cr = core[0] * 5;
+    b.cg = core[1] * 5;
+    b.cb = core[2] * 5;
+    b.hr = halo[0] * 0.8;
+    b.hg = halo[1] * 0.8;
+    b.hb = halo[2] * 0.8;
     b.fadeBase = 0.05;
     b.fadeTip = 0.6;
     this.beams.emit();
   }
 
   private glint(x: number, y: number, z: number, k: number): void {
+    const hook = this.hooks.glint;
+    if (hook !== undefined) {
+      const a = this.aGlint;
+      a.x = x;
+      a.y = y;
+      a.z = z;
+      a.k = k;
+      a.river = false;
+      if (hook(a)) return;
+    }
+    const core = this.tone.core;
     const g = this.glitter.spec.reset();
     g.x = x;
     g.y = y;
@@ -1257,9 +1342,9 @@ export class MyriadSwordsFx {
     g.size0 = 0.3 * k;
     g.size1 = 0.05;
     g.rot = this.rand.range(0, Math.PI);
-    g.r = CORE[0] * 3;
-    g.g = CORE[1] * 3;
-    g.b = CORE[2] * 3;
+    g.r = core[0] * 3;
+    g.g = core[1] * 3;
+    g.b = core[2] * 3;
     this.glitter.emit();
   }
 
@@ -1269,6 +1354,35 @@ export class MyriadSwordsFx {
     const dx = this.s1.x - this.s0.x;
     const dz = this.s1.z - this.s0.z;
     const l = Math.hypot(dx, dz);
+    const hook = this.hooks.finisher;
+    if (hook !== undefined) {
+      const a = this.aSeg;
+      a.ax = this.s0.x;
+      a.az = this.s0.z;
+      a.bx = this.s1.x;
+      a.bz = this.s1.z;
+    }
+    if (hook === undefined || !hook(this.aSeg)) this.finisherGround(dx, dz, l);
+    // Round 3b (item 4): no parallel light fronts (both judges read them as thin laser lines running into the void);
+    // one wide slash carries the cut, whole on this frame, its head running origin to tip with the deaths.
+    this.slashT = 0;
+    this.drawSlash(0);
+    // The river swords become the slash: they melt into it now (a row of them standing on it read as a fence); the
+    // lead blades stay and drive into the cut as the head passes them.
+    for (let i = HERO_N; i < this.cap; i += 1) {
+      if (this.st[i] !== S_STROKE && this.st[i] !== S_GATHER) continue;
+      this.st[i] = S_FADE;
+      // Most of the fade is skipped: under the climax's slow motion a full one held them as a comb over the slash.
+      this.age[i] = FADE_S * 0.65;
+    }
+    // A few sparks off the slash's origin; the rest fly off its head as it runs (sweep).
+    for (let k = 0; k < 14; k += 1) this.slashSpark(this.rand.next() * 0.15);
+  }
+
+  /** Metal's ground cut of the finisher: ink stains along the line and a thin white-hot seam. */
+  private finisherGround(dx: number, dz: number, l: number): void {
+    const core = this.tone.core;
+    const halo = this.tone.halo;
     // The scar it leaves: ink stains along the line (dark under the light).
     for (let k = 0; k <= 16; k += 1) {
       const u = k / 16;
@@ -1298,29 +1412,15 @@ export class MyriadSwordsFx {
     seam.w0 = 0.45;
     seam.w1 = 0.22;
     seam.life = 2.2;
-    seam.cr = CORE[0] * 6;
-    seam.cg = CORE[1] * 6;
-    seam.cb = CORE[2] * 6;
-    seam.hr = CYAN[0] * 0.8;
-    seam.hg = CYAN[1] * 0.8;
-    seam.hb = CYAN[2] * 0.8;
+    seam.cr = core[0] * 6;
+    seam.cg = core[1] * 6;
+    seam.cb = core[2] * 6;
+    seam.hr = halo[0] * 0.8;
+    seam.hg = halo[1] * 0.8;
+    seam.hb = halo[2] * 0.8;
     seam.fadeBase = 0.05;
     seam.fadeTip = 0.05;
     this.beams.emit();
-    // Round 3b (item 4): no parallel light fronts (both judges read them as thin laser lines running into the void);
-    // one wide slash carries the cut, whole on this frame, its head running origin to tip with the deaths.
-    this.slashT = 0;
-    this.drawSlash(0);
-    // The river swords become the slash: they melt into it now (a row of them standing on it read as a fence); the
-    // lead blades stay and drive into the cut as the head passes them.
-    for (let i = HERO_N; i < this.cap; i += 1) {
-      if (this.st[i] !== S_STROKE && this.st[i] !== S_GATHER) continue;
-      this.st[i] = S_FADE;
-      // Most of the fade is skipped: under the climax's slow motion a full one held them as a comb over the slash.
-      this.age[i] = FADE_S * 0.65;
-    }
-    // A few sparks off the slash's origin; the rest fly off its head as it runs (sweep).
-    for (let k = 0; k < 14; k += 1) this.slashSpark(this.rand.next() * 0.15);
   }
 
   /** The slash's two ends in the world: from high over the far left down to the near right, past the field's beasts. */
@@ -1345,16 +1445,33 @@ export class MyriadSwordsFx {
   /** A spark thrown off the slash at `u` (0 origin, 1 tip) along it and out to either side. */
   private slashSpark(u: number): void {
     const e = this.slashEnds();
-    const p = this.stars.spec.reset();
-    p.x = e.ax + (e.bx - e.ax) * u;
-    p.y = e.ay + (e.by - e.ay) * u;
-    p.z = e.az + (e.bz - e.az) * u;
+    const x = e.ax + (e.bx - e.ax) * u;
+    const y = e.ay + (e.by - e.ay) * u;
+    const z = e.az + (e.bz - e.az) * u;
     const sd = this.rand.next() < 0.5 ? -1 : 1;
     const sp = this.rand.range(6, 13);
     const l = Math.hypot(e.bx - e.ax, e.bz - e.az) || 1;
-    p.vx = this.sweepNx * sd * sp * 0.7 + ((e.bx - e.ax) / l) * sp * 0.6;
-    p.vz = this.sweepNz * sd * sp * 0.7 + ((e.bz - e.az) / l) * sp * 0.6;
-    p.vy = this.rand.range(1, 5);
+    const vx = this.sweepNx * sd * sp * 0.7 + ((e.bx - e.ax) / l) * sp * 0.6;
+    const vz = this.sweepNz * sd * sp * 0.7 + ((e.bz - e.az) / l) * sp * 0.6;
+    const vy = this.rand.range(1, 5);
+    const hook = this.hooks.slashSpark;
+    if (hook !== undefined) {
+      const a = this.aSpark;
+      a.x = x;
+      a.y = y;
+      a.z = z;
+      a.vx = vx;
+      a.vy = vy;
+      a.vz = vz;
+      if (hook(a)) return;
+    }
+    const p = this.stars.spec.reset();
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    p.vx = vx;
+    p.vz = vz;
+    p.vy = vy;
     p.gravity = -9;
     p.drag = 2.5;
     p.stretch = 0.045;
@@ -1362,9 +1479,10 @@ export class MyriadSwordsFx {
     p.size0 = this.rand.range(0.22, 0.4);
     p.size1 = 0.05;
     const white = this.rand.next() < 0.65;
-    p.r = (white ? CORE[0] : CYAN[0]) * 3;
-    p.g = (white ? CORE[1] : CYAN[1]) * 3;
-    p.b = (white ? CORE[2] : CYAN[2]) * 3;
+    const c = white ? this.tone.core : this.tone.halo;
+    p.r = c[0] * 3;
+    p.g = c[1] * 3;
+    p.b = c[2] * 3;
     this.stars.emit();
   }
 
@@ -1403,6 +1521,16 @@ export class MyriadSwordsFx {
    */
   private cutReact(i: number, ux: number, uz: number, tier: number): void {
     if (tier < 2) return;
+    const hook = this.hooks.cutSeam;
+    if (hook !== undefined) {
+      const a = this.aSeam;
+      a.target = i;
+      a.ux = ux;
+      a.uz = uz;
+      if (hook(a)) return;
+    }
+    const core = this.tone.core;
+    const halo = this.tone.halo;
     const T = this.host.targets;
     const R = T.radius(i) * 1.35 + 0.4;
     const b = this.beams.spec.reset();
@@ -1419,12 +1547,12 @@ export class MyriadSwordsFx {
     b.w0 = 0.26;
     b.w1 = 0.26;
     b.life = 0.65;
-    b.cr = CORE[0] * 5.5;
-    b.cg = CORE[1] * 5.5;
-    b.cb = CORE[2] * 5.5;
-    b.hr = CYAN[0] * 0.85;
-    b.hg = CYAN[1] * 0.85;
-    b.hb = CYAN[2] * 0.85;
+    b.cr = core[0] * 5.5;
+    b.cg = core[1] * 5.5;
+    b.cb = core[2] * 5.5;
+    b.hr = halo[0] * 0.85;
+    b.hg = halo[1] * 0.85;
+    b.hb = halo[2] * 0.85;
     b.fadeBase = 0.2;
     b.fadeTip = 0.2;
     this.beams.emit();
@@ -1467,7 +1595,7 @@ export class MyriadSwordsFx {
       this.cutReact(i, ux, uz, tier);
       for (let b = 0; b < blows && T.alive(i); b += 1) {
         // The cut: power 1.2, past every other blow (the field flings small beasts on it).
-        const killed = T.hit(i, kx, kz, 1.2, CUT_RGB);
+        const killed = T.hit(i, kx, kz, 1.2, this.tone.cutRgb);
         this.strikes += 1;
         this.host.struck(i, kx, kz, 1.2, first ? "finisher" : "secondary", killed);
         first = false;
@@ -1554,7 +1682,8 @@ export class MyriadSwordsFx {
       } else {
         B.setWhole(i, x, y, z, dx, dy, dz, len, this.faces.of(this.camW, x, y, z, dx, dy, dz));
         const lead = cls === SWORD_LEAD;
-        B.look(i, lead ? 1 : 0.45 + 0.55 * b, st === S_WOUND ? 0.6 : 0, CYAN[0] * 0.8, CYAN[1] * 0.8, CYAN[2] * 0.8, dissolve, i * 0.37);
+        const halo = this.tone.halo;
+        B.look(i, lead ? 1 : 0.45 + 0.55 * b, st === S_WOUND ? 0.6 : 0, halo[0] * 0.8, halo[1] * 0.8, halo[2] * 0.8, dissolve, i * 0.37);
       }
       // The trail: long while diving, a short flowing one in the river (the lead blades have their ribbons).
       if (cls !== SWORD_LEAD && dissolve < 0.5 && st !== S_WOUND) {
@@ -1571,12 +1700,14 @@ export class MyriadSwordsFx {
         t.w0 = TRAIL_M * 1.3;
         t.w1 = TRAIL_M * 0.5;
         t.life = -1;
-        t.cr = TRAIL_CORE[0] * k;
-        t.cg = TRAIL_CORE[1] * k;
-        t.cb = TRAIL_CORE[2] * k;
-        t.hr = CYAN[0] * 0.4 * k;
-        t.hg = CYAN[1] * 0.4 * k;
-        t.hb = CYAN[2] * 0.4 * k;
+        const tc = this.tone.trailCore;
+        const th = this.tone.halo;
+        t.cr = tc[0] * k;
+        t.cg = tc[1] * k;
+        t.cb = tc[2] * k;
+        t.hr = th[0] * 0.4 * k;
+        t.hg = th[1] * 0.4 * k;
+        t.hb = th[2] * 0.4 * k;
         t.fadeBase = 0.04;
         t.fadeTip = 0.85;
         this.beams.emit();
@@ -1587,6 +1718,7 @@ export class MyriadSwordsFx {
   }
 
   reset(): void {
+    this.hooks.reset?.();
     this.active = false;
     this.sweepT = -1;
     this.slashT = -1;

@@ -1,0 +1,159 @@
+/**
+ * What an element kit draws with (canon D59, ELEMENT_LAYER §3): one stage per scene, shared by sword-skills.ts and
+ * myriad-swords.ts. A kit's `attach(stage)` runs once here (load time) and makes its own layers through the stage:
+ * sprite, ribbon and beam pools on the effect layer, flipbook clips (FlipbookPlayer, from
+ * art-src/lab/vfx/<kit id>/), ground decals (GroundDecalPool), and reads the base sprite sheets or a named texture.
+ * The stage updates and clears everything it made; layers stay hidden while empty, so an element that is not
+ * picked costs no draw call. Frame order (the host): begin() before the skills update, update(dt) after them.
+ */
+import type * as THREE from "three";
+import type { ElementHooks, ElementId, ElementKit } from "./element-kit";
+import { FlipbookPlayer } from "./flipbook";
+import { BeamPool, Rand, RibbonPool, SpritePool, type SpriteBlend, type SpriteFacing, type SpritePoolOptions } from "./fxkit";
+import { GroundDecalPool } from "./ground-decals";
+import type { SwordSkillTextures } from "./sword-skills";
+
+export type StageQuality = "low" | "medium" | "high" | "ultra";
+
+export interface ElementStageOptions {
+  readonly layer: THREE.Object3D;
+  readonly camera: THREE.Camera;
+  readonly quality: StageQuality;
+  /** The base sprite sheets (the host's SwordSkillTextures). */
+  readonly textures: SwordSkillTextures;
+  /** Resolves a kit's texture name (the lab: art-src/lab/tex/<name>.png, or a path under art-src/lab/vfx/). */
+  readonly texture: (name: string) => THREE.Texture;
+  /** Folder holding one flipbook folder per element (the lab: /art-src/lab/vfx/). */
+  readonly vfxBase: string;
+}
+
+const NO_HOOKS: ElementHooks = {};
+const RAND_SEED = 4409;
+
+export class ElementStage {
+  readonly layer: THREE.Object3D;
+  readonly camera: THREE.Camera;
+  readonly quality: StageQuality;
+  /** Low: secondary layers fold or go (the sword modules' `lite`). */
+  readonly lite: boolean;
+  /** Burst counts and shed rates by tier (low halves them). */
+  readonly dens: number;
+  readonly textures: SwordSkillTextures;
+  readonly flipbooks: FlipbookPlayer;
+  /** The kits' own random stream (reseeded on reset: captures repeat). */
+  readonly rand = new Rand(RAND_SEED);
+  /** World seconds since the stage was made (frame by frame). */
+  time = 0;
+  private readonly resolve: (name: string) => THREE.Texture;
+  private readonly sprites: SpritePool[] = [];
+  private readonly ribbonPools: RibbonPool[] = [];
+  private readonly beamPools: BeamPool[] = [];
+  private readonly decalPools = new Map<string, GroundDecalPool>();
+  private readonly hooks = new Map<ElementId, ElementHooks>();
+
+  constructor(opts: ElementStageOptions) {
+    this.layer = opts.layer;
+    this.camera = opts.camera;
+    this.quality = opts.quality;
+    this.lite = opts.quality === "low";
+    this.dens = opts.quality === "low" ? 0.5 : opts.quality === "medium" ? 0.75 : 1;
+    this.textures = opts.textures;
+    this.resolve = opts.texture;
+    this.flipbooks = new FlipbookPlayer(opts.vfxBase);
+    this.layer.add(this.flipbooks.group);
+  }
+
+  /** The hooks of `kit` on this stage: its attach runs on the first call (load time), then they are kept. */
+  hooksOf(kit: ElementKit): ElementHooks {
+    let h = this.hooks.get(kit.id);
+    if (h === undefined) {
+      h = kit.attach !== undefined ? kit.attach(this) : NO_HOOKS;
+      this.hooks.set(kit.id, h);
+    }
+    return h;
+  }
+
+  /** Loads the kit's flipbook folder (when it names clips) and attaches it; resolves when its atlases are in. */
+  async prepare(kit: ElementKit): Promise<ElementHooks> {
+    const h = this.hooksOf(kit);
+    const clips = Object.values(kit.flipbooks).flat();
+    if (clips.length > 0) {
+      await this.flipbooks.ready(kit.id);
+      const loaded = new Set(this.flipbooks.loaded(kit.id));
+      const missing = clips.filter((c) => c !== undefined && !loaded.has(c));
+      if (missing.length > 0) console.warn(`[element-stage] ${kit.id}: clips not found in its manifest: ${missing.join(", ")}`);
+    }
+    return h;
+  }
+
+  /** A named texture (a kit's sheet or decal). */
+  texture(name: string): THREE.Texture {
+    return this.resolve(name);
+  }
+
+  /** Burst count scaled by the quality tier (low halves). */
+  n(count: number): number {
+    return Math.max(1, Math.round(count * this.dens));
+  }
+
+  /** A sprite pool of the kit's own (load time): on the layer, updated and cleared by the stage, hidden while empty. */
+  pool(capacity: number, texture: THREE.Texture, blend: SpriteBlend, facing: SpriteFacing, renderOrder: number, opts: SpritePoolOptions = {}): SpritePool {
+    const p = new SpritePool(capacity, texture, blend, facing, renderOrder, opts);
+    this.sprites.push(p);
+    this.layer.add(p.mesh);
+    return p;
+  }
+
+  /** A ribbon pool of the kit's own (load time). */
+  ribbons(capacity: number, points: number, texture: THREE.Texture, renderOrder = 12): RibbonPool {
+    const r = new RibbonPool(capacity, points, texture, renderOrder);
+    this.ribbonPools.push(r);
+    this.layer.add(r.mesh);
+    return r;
+  }
+
+  /** A beam pool of the kit's own (load time). */
+  beams(capacity: number, renderOrder = 13): BeamPool {
+    const b = new BeamPool(capacity, renderOrder);
+    this.beamPools.push(b);
+    this.layer.add(b.mesh);
+    return b;
+  }
+
+  /** The ground decals drawn with texture `name` (one pool per texture, made on first use; load time). */
+  decals(name: string, capacity = 64, renderOrder = 4): GroundDecalPool {
+    let d = this.decalPools.get(name);
+    if (d === undefined) {
+      d = new GroundDecalPool(capacity, this.resolve(name), renderOrder);
+      this.decalPools.set(name, d);
+      this.layer.add(d.mesh);
+    }
+    return d;
+  }
+
+  /** Start of a frame, before the skills emit: last frame's one-frame cards go. */
+  begin(): void {
+    for (const p of this.sprites) p.dropOneFrame();
+    for (const b of this.beamPools) b.dropOneFrame();
+  }
+
+  /** After the skills: every layer the kits made moves and uploads. */
+  update(dt: number): void {
+    this.time += dt;
+    for (const p of this.sprites) p.update(dt);
+    for (const b of this.beamPools) b.update(dt);
+    for (const r of this.ribbonPools) r.update(dt, this.camera);
+    for (const d of this.decalPools.values()) d.update(dt);
+    this.flipbooks.update(dt);
+  }
+
+  /** Clears every layer (lab: before a capture) and reseeds the kits' random stream. */
+  reset(): void {
+    for (const p of this.sprites) p.clear();
+    for (const b of this.beamPools) b.clear();
+    for (const r of this.ribbonPools) for (let i = 0; i < r.capacity; i += 1) r.kill(i);
+    for (const d of this.decalPools.values()) d.clear();
+    this.flipbooks.clear();
+    this.rand.reseed(RAND_SEED);
+  }
+}

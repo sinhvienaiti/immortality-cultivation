@@ -41,6 +41,7 @@
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { FoeStatusKind } from "../view/skills/element-kit";
 import type { TargetField } from "../view/skills/targets";
 import { LAB_ASSETS } from "./look";
 
@@ -82,6 +83,11 @@ const GONE_CLEAR_S = 3.2;
 const RIM_S = 0.034;
 const RIM_ELITE_S = 0.05;
 const RIM_LEVEL = 2.6;
+/** An element's status on a beast (canon D59, TargetField.status): its rim level (× its colour) and the share of its time it fades over at the end. */
+const STATUS_LEVEL = 1.6;
+const STATUS_FADE = 0.3;
+/** Status kinds that flicker on the rim (fire). */
+const FLICKER: ReadonlySet<FoeStatusKind> = new Set<FoeStatusKind>(["burn", "shocked"]);
 /** Recoil along the blow (m): 5–30 cm by power; elites take 60 %; the king none. */
 const RECOIL_MIN = 0.05;
 const RECOIL_MAX = 0.3;
@@ -170,6 +176,11 @@ export class LabHerd implements TargetField {
   private readonly hold = new Float32Array(MAX);
   private readonly stag = new Float32Array(MAX);
   private readonly immune = new Float32Array(MAX);
+  /** The element's status: time left (s), its length, its kind's flicker and its colour (0xRRGGBB). */
+  private readonly statusT = new Float32Array(MAX);
+  private readonly statusLen = new Float32Array(MAX);
+  private readonly statusFlicker = new Uint8Array(MAX);
+  private readonly statusRgb = new Int32Array(MAX);
   /** Knockback offset and its velocity (critically damped spring to 0). */
   private readonly rx = new Float32Array(MAX);
   private readonly rz = new Float32Array(MAX);
@@ -409,6 +420,7 @@ export class LabHerd implements TargetField {
       this.leave[i] = -1;
       this.flash[i] = 0;
       this.rimT[i] = this.hold[i] = this.stag[i] = this.immune[i] = 0;
+      this.statusT[i] = 0;
       this.rx[i] = this.rz[i] = this.rvx[i] = this.rvz[i] = 0;
       this.svx[i] = this.svz[i] = this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
       this.tilt[i] = this.tiltV[i] = 0;
@@ -576,6 +588,14 @@ export class LabHerd implements TargetField {
     return n;
   }
 
+  /** The element's status on beast `i` (TargetField.status): its rim glows in `rgb` once the hit's flash is over, flickering for fire, fading at the end. */
+  status(i: number, kind: FoeStatusKind, seconds: number, rgb: number): void {
+    if (!this.alive(i) || seconds <= 0) return;
+    this.statusT[i] = this.statusLen[i] = seconds;
+    this.statusFlicker[i] = FLICKER.has(kind) ? 1 : 0;
+    this.statusRgb[i] = rgb;
+  }
+
   /** A local hit-stop: beast `i` holds still for `seconds` (the basic blow's stop is its target's alone). */
   holdBeast(i: number, seconds: number): void {
     if (i >= 0 && i < this.count) this.hold[i] = Math.max(this.hold[i]!, seconds);
@@ -722,7 +742,14 @@ export class LabHerd implements TargetField {
         // A hero victim keeps a cyan rim while it flies and lies pinned (it reads at a quarter of the frame's size).
         const lv = 1.4 * Math.min(1, this.hero[i] === 1 ? 1 : this.pin[i]! / 0.3);
         rimA.setXYZ(idx, 0.06 * lv, 0.55 * lv, 0.95 * lv);
+      } else if (this.statusT[i]! > 0 && this.dying[i] === 0) {
+        const left = this.statusT[i]! / Math.max(1e-3, this.statusLen[i]!);
+        const flick = this.statusFlicker[i] === 1 ? 0.62 + 0.38 * Math.sin(this.time * 29 + i * 7.3) * Math.sin(this.time * 13 + i * 2.1) : 1;
+        const lv = STATUS_LEVEL * Math.min(1, left / STATUS_FADE) * flick;
+        const rgb = this.statusRgb[i]!;
+        rimA.setXYZ(idx, (((rgb >> 16) & 255) / 255) * lv, (((rgb >> 8) & 255) / 255) * lv, ((rgb & 255) / 255) * lv);
       } else rimA.setXYZ(idx, 0, 0, 0);
+      if (this.statusT[i]! > 0) this.statusT[i] = Math.max(0, this.statusT[i]! - dt);
       if (this.gone[i]! > 0) {
         this.gone[i] = this.gone[i]! - dt;
         mesh.setMatrixAt(idx, this.zero);

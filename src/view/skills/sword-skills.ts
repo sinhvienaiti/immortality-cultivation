@@ -25,6 +25,11 @@
  * (real-swords.ts). Around a sword only a narrow white-hot edge line, a thin
  * cyan trail behind it, a soft rim and impact flashes: no glow cards over the
  * blade, no graphic or flat-tinted stand-in.
+ * Element layer (canon D59, ELEMENT_LAYER.md): these are the Sword's SHAPES; the material comes from the element
+ * kit (`setElement`, element-kit.ts): each slot's palette, the trail, the blade's edge light, the sprite sheets,
+ * and phase hooks that replace a layer (charge, release, travel, impact, aftermath, death; replace, never stack).
+ * The layers drawn here are Metal's (element-metal.ts holds their colours); a kit hook that draws its own
+ * skips the Metal layer it stands for.
  * View only: hits shown here are the lab's stand-ins for sim events.
  * Smooth motion (owner 02/11/2026, MOTION_PLAN step 3): no layer pops on or
  * off outside a flash (long-lived layers ease in and out, sigils reveal with
@@ -41,12 +46,15 @@
  */
 import * as THREE from "three";
 import { BladeSet, loadSwordModels, overlayModel } from "./blades";
+import type { AftermathArgs, AreaBurstArgs, AreaHitArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementKit, ImpactArgs, LaunchArgs, ReleaseArgs, SwordHooks, SwordTextureLayer, TravelArgs } from "./element-kit";
+import { METAL } from "./element-metal";
+import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
-import { FaceRoll } from "./sword-material";
+import { applyBladeLook, FaceRoll } from "./sword-material";
 import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate, GATE_SWORDS } from "./sword-rain";
 import type { TargetField } from "./targets";
-import { DEFAULT_WEAPON, glowOf, rimOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
+import { DEFAULT_WEAPON, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
 export type SwordSlot = "auto" | "k1" | "k2" | "guard" | "dash" | "k4" | "k5";
 
@@ -120,12 +128,6 @@ const SIGIL_LIGHT = 0.62;
 
 /** The flying blade of the basic shot and slot 1 (× 1.1 m): 1.55 is ~75 px at the play camera (round 3a; was 1.3). */
 const FLIGHT_SCALE = 1.55;
-/**
- * The thin cyan trail behind a flying sword (m wide; it starts at the pommel, never over the sword), and its light:
- * a cyan-tinted white core (HDR, a thin line) in the skill's rim.
- */
-const TRAIL_M = 0.14;
-const TRAIL_CORE = [0.62 * 2.2, 0.88 * 2.2, 2.2] as const;
 /** Canon §12.1 hit ticks in seconds (60 Hz). */
 const TICK = 1 / 60;
 const T_AUTO_HIT = 18 * TICK;
@@ -320,31 +322,6 @@ const CRACK_LIFE_K5 = 6.5;
 const CRACK_LIFE_K4 = 4;
 const CRACK_OUT_S = 1;
 
-/**
- * Each skill's accent inside the equipped weapon's palette (round 2: every
- * skill drew the same white seal): the weapon's rim mixed toward the weapon's
- * accent (`acc`), deepened (`deep`, a power on the unit colour: more
- * saturated), a hue turn in the blue range only (`hue`, degrees: never toward
- * jade, the typing colour, or red, the enemy's) and lifted toward white
- * (`light`). Clear Wind: Phi Kiếm pale steel, K1 sky steel, K2 ice cyan,
- * Hộ thân ivory champagne, Lưu Quang airy silver, K4 royal steel, K5
- * sapphire violet.
- */
-interface SlotTone {
-  readonly acc: number;
-  readonly light: number;
-  readonly deep: number;
-  readonly hue: number;
-}
-const SLOT_TONE: Readonly<Record<SwordSlot, SlotTone>> = {
-  auto: { acc: 0.15, light: 0, deep: 1.1, hue: 0 },
-  k1: { acc: 0, light: 0, deep: 1.45, hue: -4 },
-  k2: { acc: 0, light: 0, deep: 1.8, hue: -16 },
-  guard: { acc: 0.85, light: 0, deep: 2.2, hue: 0 },
-  dash: { acc: 0.3, light: 0.15, deep: 1, hue: 0 },
-  k4: { acc: 0, light: 0, deep: 2.0, hue: 6 },
-  k5: { acc: 0, light: 0, deep: 2.6, hue: 18 },
-};
 /** The seal glyph each slot draws under the caster (fxkit SEAL_SHAPE). */
 const SLOT_SHAPE: Readonly<Record<SwordSlot, number>> = {
   // Round 3a (P8): the basic shot takes the Sword glyph too, so its seal flares under the caster on the release.
@@ -357,61 +334,11 @@ const SLOT_SHAPE: Readonly<Record<SwordSlot, number>> = {
   k5: SEAL_SHAPE.k5,
 };
 const SLOTS: readonly SwordSlot[] = ["auto", "k1", "k2", "guard", "dash", "k4", "k5"];
-
-const HSL = { h: 0, s: 0, l: 0 };
-/** Unit-max linear colour of an sRGB hex. Load time only (allocates). */
-function unitOf(hex: string): [number, number, number] {
-  const c = new THREE.Color(hex);
-  const m = Math.max(c.r, c.g, c.b, 1e-6);
-  return [c.r / m, c.g / m, c.b / m];
-}
-function renorm(u: [number, number, number]): [number, number, number] {
-  const m = Math.max(u[0], u[1], u[2], 1e-6);
-  return [u[0] / m, u[1] / m, u[2] / m];
-}
-/**
- * Clear Wind's skills in its own colours (power pass, judge CJ1 03/11: "the palette is nearly all white and
- * violet"; the sword is jade, cyan and silver with a little gold): each slot's accent and rim (sRGB). Jade stays
- * near hue 150 and cyan near 195, both apart from the typing colour (#7FF5E0, hue 170); no violet.
- */
-const CLEAR_WIND_TONE: Readonly<Record<SwordSlot, readonly [accent: string, rim: string]>> = {
-  // Round 3a (P8): the basic shot and slot 1 in the school's white and cyan (slot 1 was jade: "a green smudge").
-  auto: ["#bfeeff", "#2aaeea"],
-  k1: ["#a6e4ff", "#1f9ee8"],
-  k2: ["#74d0f2", "#3ba9e0"],
-  guard: ["#f0e2b4", "#cfa65a"],
-  dash: ["#d6e9f0", "#97c3d8"],
-  k4: ["#7fdcaa", "#35b483"],
-  k5: ["#86e2b6", "#41b8e0"],
-};
-
-/** The slot's VFX colours from the weapon (SLOT_TONE), through glowOf, so the bloom and white-core rules hold. Load time only. */
-export function skillGlow(def: WeaponDef, slot: SwordSlot): WeaponGlow {
-  if (def.id === "clear-wind") {
-    const [accent, rim] = CLEAR_WIND_TONE[slot];
-    return glowOf(accent, 1, rimOf(rim, 1.2));
-  }
-  const t = SLOT_TONE[slot];
-  let u = renorm([def.glow.rim[0], def.glow.rim[1], def.glow.rim[2]]);
-  const acc = unitOf(def.accent);
-  u = renorm([u[0] + (acc[0] - u[0]) * t.acc, u[1] + (acc[1] - u[1]) * t.acc, u[2] + (acc[2] - u[2]) * t.acc]);
-  if (t.deep !== 1) u = renorm([u[0] ** t.deep, u[1] ** t.deep, u[2] ** t.deep]);
-  if (t.hue !== 0) {
-    const c = new THREE.Color().setRGB(u[0], u[1], u[2]);
-    c.getHSL(HSL, THREE.SRGBColorSpace);
-    const deg = HSL.h * 360;
-    if (deg >= 185 && deg <= 255 && HSL.s > 0.05) {
-      c.setHSL(HSL.h + t.hue / 360, Math.min(1, HSL.s * 1.1), HSL.l, THREE.SRGBColorSpace);
-      u = renorm([c.r, c.g, c.b]);
-    }
-  }
-  if (t.light > 0) u = renorm([u[0] + (1 - u[0]) * t.light, u[1] + (1 - u[1]) * t.light, u[2] + (1 - u[2]) * t.light]);
-  const rim: Rgb = [u[0] * 0.86, u[1] * 0.86, u[2] * 0.86];
-  // The slot's own accent (cores, trails, motes, flashes): half the weapon's accent, half the slot's rim.
-  const a = renorm([(acc[0] + u[0]) / 2, (acc[1] + u[1]) / 2, (acc[2] + u[2]) / 2]);
-  const hex = "#" + new THREE.Color().setRGB(a[0], a[1], a[2]).getHexString(THREE.SRGBColorSpace);
-  return glowOf(hex, 1, rim);
-}
+/** Metal draws its own layers: no hooks. */
+const NO_HOOKS: SwordHooks = {};
+/** A colour set the hook arguments hold until their first call (each call sets the slot's). */
+const START_GLOW: WeaponGlow = weaponById(DEFAULT_WEAPON)!.glow;
+const casterPose = (): { x: number; z: number; fx: number; fz: number } => ({ x: 0, z: 0, fx: 0, fz: -1 });
 
 interface Flight {
   active: boolean;
@@ -674,6 +601,27 @@ export class SwordSkillFx {
   private plantedN = 0;
   private rainEmberAcc = 0;
 
+  // ── Element layer (canon D59, element-kit.ts) ─────────────────────────────
+  /** The element kit these shapes are drawn in (Metal: the layers of this file, no hooks). */
+  private kit: ElementKit = METAL;
+  /** Its phase hooks on the stage (none for Metal): a hook that returns true replaces the Metal layer it stands for. */
+  private hooks: SwordHooks = NO_HOOKS;
+  /** The host's base sheets, and the pools and ribbons drawn with each (a kit's `textures` swap them). */
+  private readonly baseTex: SwordSkillTextures;
+  private readonly texTargets: Record<SwordTextureLayer, { texture: THREE.Texture }[]>;
+  // Hook arguments: one object per kind, reused for every call.
+  private readonly aKey: ChargeKeyArgs = { slot: "auto", p: 0, hand: new THREE.Vector3(), caster: casterPose(), appeared: Array.from({ length: 6 }, () => new THREE.Vector3()), count: 0, pal: START_GLOW };
+  private readonly aFrame: ChargeFrameArgs = { slot: "auto", level: 0, vis: 0, big: 0, scale: 1, typing: false, dt: 0, hand: new THREE.Vector3(), caster: casterPose(), pal: START_GLOW };
+  private readonly aRelease: ReleaseArgs = { slot: "auto", skill: "auto", tier: 1, size: 0, intensity: 0, ringM: 0, at: new THREE.Vector3(), hand: new THREE.Vector3(), caster: casterPose(), pal: START_GLOW };
+  private readonly aLaunch: LaunchArgs = { slot: "k1", at: new THREE.Vector3(), index: 0, pal: START_GLOW };
+  private readonly aTravel: TravelArgs = { slot: "auto", blade: 0, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 1, tipM: 0, u: 0, dt: 0, pal: START_GLOW };
+  private readonly aImpact: ImpactArgs = { slot: "auto", at: new THREE.Vector3(), scale: 1, dx: 0, dz: -1, power: 0, big: false, pal: START_GLOW };
+  private readonly aCut: CutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, pal: START_GLOW };
+  private readonly aArea: AreaHitArgs = { slot: "auto", at: new THREE.Vector3(), dx: 0, dz: -1, power: 0, marked: false, pal: START_GLOW };
+  private readonly aBurst: AreaBurstArgs = { slot: "auto", x: 0, y: 0, z: 0, beasts: 0, scale: 1, pal: START_GLOW };
+  private readonly aAfter: AftermathArgs = { slot: "auto", x: 0, z: 0, r: 0, life: 0, rate: 0, pal: START_GLOW };
+  private readonly aDeath: DeathArgs = { slot: "auto", at: new THREE.Vector3(), dx: 0, dz: -1, radius: 0, pal: START_GLOW };
+
   constructor(
     private readonly host: SwordSkillHost,
     tex: SwordSkillTextures,
@@ -684,6 +632,7 @@ export class SwordSkillFx {
     this.poolN = Math.max(1, Math.min(K5_MAX, Math.round(opts.k5Blades ?? tierN)));
     this.dens = quality === "low" ? 0.5 : quality === "medium" ? 0.75 : 1;
     this.lite = quality === "low";
+    this.baseTex = tex;
     // Hero swords draw the full model (and cast shadows); from the halo on, the textured LOD (WeaponDef.swarm).
     this.blades = new BladeSet(BLADE_CAP, 1.1, HERO.halo);
     const L = host.layer;
@@ -750,18 +699,61 @@ export class SwordSkillFx {
       this.flights.push({ active: false, blade: 0, ribbon: 0, silk: -1, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, big: false, hit: -1, sx: 0, sy: 0, sz: 0, acc: 0, d0x: 0, d0y: 0, d0z: 0, turn: FLIGHT_TURN_S, ldx: 0, ldy: 0, ldz: 1, slot: "auto" });
     }
     for (let i = 0; i < EMITTERS; i += 1) this.emitters.push({ active: false, x: 0, y: 0, z: 0, r: 0, t: 0, life: 0, rate: 0, acc: 0, slot: "auto" });
+    // Which pools draw each base sheet (sparks and motes in the glow's pool swap with `glow`; Low's back star is the back glow).
+    this.texTargets = {
+      glow: [this.groundDark, this.groundGlow, this.glow, this.backGlow],
+      flare: [this.flare],
+      star: this.lite ? [this.star] : [this.star, this.backStar],
+      spark: sparkInGlow ? [] : [this.spark],
+      trace: [this.ribbons],
+      slash: [this.slash],
+      mote: moteInGlow ? [] : [this.motes],
+      smoke: [this.smoke],
+      splash: [this.splash],
+      scorch: [this.groundInk],
+      ring: [this.groundRing, this.handRing],
+      shock: [this.groundShock, this.shock],
+      halo: [this.aura],
+      twirl: [this.twirl],
+    };
     // The signature sword's colours until setWeapon; the swords stay the stand-in jian until a GLB loads.
     this.weaponDef = weaponById(DEFAULT_WEAPON)!;
     this.pal = this.weaponDef.glow;
-    this.skillPal = SwordSkillFx.skillPals(this.weaponDef);
+    this.skillPal = this.skillPals(this.weaponDef);
     this.applyColours(this.weaponDef);
   }
 
-  /** Every slot's colours for a weapon (load time). */
-  private static skillPals(def: WeaponDef): Record<SwordSlot, WeaponGlow> {
+  /** Every slot's colours for a weapon in the element's palette (load time). */
+  private skillPals(def: WeaponDef): Record<SwordSlot, WeaponGlow> {
     const out = {} as Record<SwordSlot, WeaponGlow>;
-    for (const s of SLOTS) out[s] = skillGlow(def, s);
+    for (const s of SLOTS) out[s] = this.kit.palette(def, s);
     return out;
+  }
+
+  // ── Element (canon D59) ───────────────────────────────────────────────────
+
+  /** The element kit the skills are drawn in. */
+  get element(): ElementKit {
+    return this.kit;
+  }
+
+  /**
+   * Draws every skill in `kit`'s material from now on (load time, not per frame: it may allocate): its palette per
+   * slot, its trail and blade light, its sprite sheets, and its phase hooks on `stage` (null: none, the base layers
+   * in its palette). The shapes, counts and timing stay the weapon's.
+   */
+  setElement(kit: ElementKit, stage: ElementStage | null): void {
+    this.kit = kit;
+    this.hooks = stage !== null ? (stage.hooksOf(kit).sword ?? NO_HOOKS) : NO_HOOKS;
+    for (const layer of Object.keys(this.texTargets) as SwordTextureLayer[]) {
+      const name = kit.textures[layer];
+      const t = name !== undefined && stage !== null ? stage.texture(name) : this.baseTex[layer];
+      for (const target of this.texTargets[layer]) target.texture = t;
+    }
+    applyBladeLook(kit.blade);
+    this.skillPal = this.skillPals(this.weaponDef);
+    this.use(this.palSlot);
+    this.applyColours(this.weaponDef);
   }
 
   /** The colours of `slot` with the equipped weapon (the presence layer and the lab read them). */
@@ -833,7 +825,7 @@ export class SwordSkillFx {
       this.gateSwords.setAtlas(atlas);
       this.weaponDef = def;
       this.ringGuard = def.motif?.ring === true;
-      this.skillPal = SwordSkillFx.skillPals(def);
+      this.skillPal = this.skillPals(def);
       this.use("auto");
       this.applyColours(def);
       return true;
@@ -955,6 +947,7 @@ export class SwordSkillFx {
     this.use("auto");
     this.k1Roll.fill(0);
     this.rand.reseed(1301);
+    this.hooks.reset?.();
   }
 
   // ── Blades: scale in, fade out, never pop ────────────────────────────────
@@ -1044,6 +1037,35 @@ export class SwordSkillFx {
     this.host.hand(this.v);
     this.host.caster(this.c);
     this.use(slot);
+    // The element's charge layer (its hook), with what appeared on this key; the seal's blaze stays the shape's.
+    const hook = this.hooks.chargeKey;
+    if (hook !== undefined) {
+      const a = this.aKey;
+      a.slot = slot;
+      a.p = p;
+      a.hand.copy(this.v);
+      this.poseOf(a.caster);
+      a.pal = this.pal;
+      a.count = 0;
+      if (slot === "k1") {
+        for (let j = 0; j < 3; j += 1) {
+          const th = K1_SHOW[j]!;
+          if (p >= th && this.chargeShown.k1 < th) this.k1Socket(j, a.appeared[a.count++]!);
+        }
+      } else if (slot === "k4") {
+        const corners = Math.floor(p * 6 + 1e-6);
+        for (let k = Math.floor(this.chargeShown.k4 * 6 + 1e-6); k < corners && a.count < a.appeared.length; k += 1) {
+          const th = (k * Math.PI) / 3 + Math.PI / 6;
+          a.appeared[a.count++]!.set(this.chargeTarget.x + Math.cos(th) * 3.55, 0.15, this.chargeTarget.z - Math.sin(th) * 3.55);
+        }
+      }
+      if (hook(a)) {
+        this.blazeGoal = Math.max(this.blazeGoal, 0.35 + 0.35 * p);
+        if (slot === "k1") this.chargeShown.k1 = p;
+        if (slot === "k4") this.chargeShown.k4 = p;
+        return;
+      }
+    }
     // Key glints and K1's arriving swords ease in over ≥ 3 frames (round 2), still starting on the key's frame.
     this.riseS = SOFT_RISE_S;
     const s = this.glow.spec.reset();
@@ -1178,7 +1200,7 @@ export class SwordSkillFx {
    * and shock; from tier 3 a light pillar behind the caster; the seal blazes.
    * `tier`: 1 basic, 2 light skill, 3 skill, 5 ultimate.
    */
-  private releaseFlash(size: number, intensity: number, ringM: number, tier: number): void {
+  private releaseFlash(size: number, intensity: number, ringM: number, tier: number, skill: string = this.palSlot): void {
     this.host.hand(this.v);
     const v = this.v;
     const hx = v.x + this.c.fx * 0.22;
@@ -1186,6 +1208,28 @@ export class SwordSkillFx {
     const hz = v.z + this.c.fz * 0.22;
     this.host.camera.getWorldPosition(this.camW);
     this.host.camera.getWorldDirection(this.camF);
+    // The element's release (its hook); the seal's blaze, the presence count and the impact light stay the shape's.
+    const hook = this.hooks.release;
+    if (hook !== undefined) {
+      const a = this.aRelease;
+      a.slot = this.palSlot;
+      a.skill = skill;
+      a.tier = tier;
+      a.size = size;
+      a.intensity = intensity;
+      a.ringM = ringM;
+      a.at.set(hx, hy, hz);
+      a.hand.copy(v);
+      this.poseOf(a.caster);
+      a.pal = this.pal;
+      if (hook(a)) {
+        if (!this.lite) this.blazeGoal = Math.max(this.blazeGoal, 0.9 + 0.35 * Math.max(2, tier));
+        this.presence.releases += 1;
+        this.presence.tier = tier;
+        this.host.flash(v, this.pal.flash, intensity);
+        return;
+      }
+    }
     const rot = this.rand.range(-0.3, 0.3);
     this.riseS = RELEASE_RISE_S;
     this.flareAt(hx, hy, hz, RELEASE_LIFE_S, size * 0.85, size * 1.25);
@@ -1374,11 +1418,12 @@ export class SwordSkillFx {
     // The sword runs the whole line in 0.2 s (hit at +12 ticks): a sword-light beam sweeps out with it, and a thin
     // trail follows its pommel.
     const r = this.nextRibbon();
-    this.ribbons.start(r, k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, TRAIL_M, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1);
+    const tr = this.kit.trail;
+    this.ribbons.start(r, k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, tr.widthM, tr.core[0], tr.core[1], tr.core[2], 1);
     this.ribbons.setRim(r, this.pal.rim[0], this.pal.rim[1], this.pal.rim[2]);
     k.ribbon = r;
     k.ribbonOn = true;
-    k.silk = this.startSilk(k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, 0.1);
+    k.silk = tr.silk ? this.startSilk(k.ax + k.jx, 0.9 + k.jy, k.az + k.jz, 0.1) : -1;
     // Narrow, and fading at its head where the sword runs (03/11: a 1.5 m beam hid the real sword inside it).
     this.beamAt(k.ax, 0.9, k.az, dx, 0, dz, 14, 0.5, 0.55, 0.8, 0.55, 0.02, 0.3, T_K2_HIT);
     this.beamAt(k.ax, 0.9, k.az, dx, 0, dz, 14, 0.16, 0.5, 1.2, 0.4, 0.02, 0.3, T_K2_HIT);
@@ -1430,7 +1475,8 @@ export class SwordSkillFx {
       }
       g.blockT[j] = -1;
       const r = this.nextRibbon();
-      this.ribbons.start(r, x, y, z, TRAIL_M, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1);
+      const tr = this.kit.trail;
+      this.ribbons.start(r, x, y, z, tr.widthM, tr.core[0], tr.core[1], tr.core[2], 1);
       this.ribbons.setRim(r, this.pal.rim[0], this.pal.rim[1], this.pal.rim[2]);
       g.ribbon[j] = r;
     }
@@ -1576,6 +1622,14 @@ export class SwordSkillFx {
   }
 
   // ── Shared pieces ────────────────────────────────────────────────────────
+
+  /** The caster's pose as last read (this.c) into a hook's argument. */
+  private poseOf(out: { x: number; z: number; fx: number; fz: number }): void {
+    out.x = this.c.x;
+    out.z = this.c.z;
+    out.fx = this.c.fx;
+    out.fz = this.c.fz;
+  }
 
   /** Burst count scaled by the quality tier (low halves). */
   private n(count: number): number {
@@ -1952,9 +2006,10 @@ export class SwordSkillFx {
     // A thin cyan trail behind the pommel (03/11: never a wide light band over the sword): a cyan-tinted white core
     // in the skill's rim. `width` was the old band's; the real sword carries its own width now.
     void width;
-    this.ribbons.start(f.ribbon, fx, fy, fz, TRAIL_M, TRAIL_CORE[0], TRAIL_CORE[1], TRAIL_CORE[2], 1, Math.min(0.1, dur * 0.5));
-    this.ribbons.setRim(f.ribbon, this.pal.rim[0] * 0.8, this.pal.rim[1] * 0.8, this.pal.rim[2] * 0.8);
-    f.silk = this.startSilk(fx, fy, fz, Math.min(0.1, dur * 0.5));
+    const tr = this.kit.trail;
+    this.ribbons.start(f.ribbon, fx, fy, fz, tr.widthM, tr.core[0], tr.core[1], tr.core[2], 1, Math.min(0.1, dur * 0.5));
+    this.ribbons.setRim(f.ribbon, this.pal.rim[0] * tr.rimK, this.pal.rim[1] * tr.rimK, this.pal.rim[2] * tr.rimK);
+    f.silk = tr.silk ? this.startSilk(fx, fy, fz, Math.min(0.1, dur * 0.5)) : -1;
     this.bladeTint(blade, 1.8);
   }
 
@@ -1965,6 +2020,19 @@ export class SwordSkillFx {
    * off at different rates (the star in 6 frames, the ring in 12, the ink last).
    */
   private impact(at: THREE.Vector3, scale: number, dx: number, dz: number, power: number, big: boolean): void {
+    const hook = this.hooks.impact;
+    if (hook !== undefined) {
+      const a = this.aImpact;
+      a.slot = this.palSlot;
+      a.at.copy(at);
+      a.scale = scale;
+      a.dx = dx;
+      a.dz = dz;
+      a.power = power;
+      a.big = big;
+      a.pal = this.pal;
+      if (hook(a)) return;
+    }
     if (this.palSlot === "auto" || this.palSlot === "k1") {
       this.basicImpact(at, scale, dx, dz, power);
       return;
@@ -2197,6 +2265,16 @@ export class SwordSkillFx {
 
   /** A crescent cut across the blow (camera-facing; `rot` in screen radians). */
   private slashAt(at: THREE.Vector3, rot: number, size: number): void {
+    const hook = this.hooks.cut;
+    if (hook !== undefined) {
+      const a = this.aCut;
+      a.slot = this.palSlot;
+      a.at.copy(at);
+      a.rot = rot;
+      a.size = size;
+      a.pal = this.pal;
+      if (hook(a)) return;
+    }
     const s = this.slash.spec.reset();
     s.x = at.x;
     s.y = at.y;
@@ -2238,6 +2316,7 @@ export class SwordSkillFx {
     this.v.set(T.x(target), T.midY(target), T.z(target));
     this.impact(this.v, scale, dx, dz, power, big);
     const killed = T.hit(target, dx, dz, power, this.pal.flashHex);
+    if (!killed) this.foeStatus(target);
     this.host.struck?.(target, dx, dz, power, false, killed);
     if (killed) this.death(this.v, dx, dz, T.radius(target));
   }
@@ -2258,10 +2337,28 @@ export class SwordSkillFx {
     // The glint and the ink go to a share of the beasts (all at High, half at Low).
     this.lightAcc += this.dens;
     const marked = this.lightAcc >= 1;
-    if (marked) {
-      this.lightAcc -= 1;
-      this.twinkle(this.u.x, this.u.y, this.u.z, 1.2, 0.1, 1);
+    if (marked) this.lightAcc -= 1;
+    const hook = this.hooks.areaHit;
+    if (hook !== undefined) {
+      const a = this.aArea;
+      a.slot = this.palSlot;
+      a.at.copy(this.u);
+      a.dx = dx;
+      a.dz = dz;
+      a.power = power;
+      a.marked = marked;
+      a.pal = this.pal;
     }
+    if (hook === undefined || !hook(this.aArea)) this.areaHitMetal(dx, dz, power, marked);
+    const killed = T.hit(target, dx, dz, power, this.pal.flashHex);
+    if (!killed) this.foeStatus(target);
+    this.host.struck?.(target, dx, dz, power, true, killed);
+    if (killed) this.death(this.u, dx, dz, T.radius(target));
+  }
+
+  /** Metal's light hit at `this.u`: a glint on the marked share, sparks at every beast, ink on the marked share. */
+  private areaHitMetal(dx: number, dz: number, power: number, marked: boolean): void {
+    if (marked) this.twinkle(this.u.x, this.u.y, this.u.z, 1.2, 0.1, 1);
     // Impact sparks at every beast the area strikes (the marked share has its glint above).
     this.hitSparks(this.u.x, this.u.y, this.u.z, dx, dz, this.n(4), power, false);
     if (marked) {
@@ -2284,13 +2381,28 @@ export class SwordSkillFx {
       k.a = 0.85;
       inkPool.emit();
     }
-    const killed = T.hit(target, dx, dz, power, this.pal.flashHex);
-    this.host.struck?.(target, dx, dz, power, true, killed);
-    if (killed) this.death(this.u, dx, dz, T.radius(target));
+  }
+
+  /** The element's status on a beast it struck and did not kill (TargetField.status; Metal leaves none). */
+  private foeStatus(target: number): void {
+    const foe = this.kit.foe;
+    if (foe !== null) this.host.targets.status?.(target, foe.kind, foe.seconds, foe.rgb);
   }
 
   /** The area's one burst, sized by √N of the beasts it hit. */
   private burstAt(x: number, y: number, z: number, beasts: number, scale: number): void {
+    const hook = this.hooks.areaBurst;
+    if (hook !== undefined) {
+      const a = this.aBurst;
+      a.slot = this.palSlot;
+      a.x = x;
+      a.y = y;
+      a.z = z;
+      a.beasts = beasts;
+      a.scale = scale;
+      a.pal = this.pal;
+      if (hook(a)) return;
+    }
     const k = Math.min(2.6, 0.6 + Math.sqrt(Math.max(1, beasts)) * 0.4) * scale;
     this.starPair(x, y, z, 3.4 * k, 0.15, this.rand.range(0, Math.PI));
     this.darkDisc(x, z, 1.8 * k, 0.35, 0.6);
@@ -2311,6 +2423,17 @@ export class SwordSkillFx {
   }
 
   private death(at: THREE.Vector3, dx: number, dz: number, radius: number): void {
+    const hook = this.hooks.death;
+    if (hook !== undefined) {
+      const a = this.aDeath;
+      a.slot = this.palSlot;
+      a.at.copy(at);
+      a.dx = dx;
+      a.dz = dz;
+      a.radius = radius;
+      a.pal = this.pal;
+      if (hook(a)) return;
+    }
     for (let i = 0; i < 3; i += 1) {
       const s = this.smoke.spec.reset();
       s.x = at.x + this.rand.range(-0.2, 0.2) + dx * 0.2 * i;
@@ -2389,6 +2512,18 @@ export class SwordSkillFx {
 
   /** The aftermath of a blow: a ground glow that fades and spirit motes rising for `life` s. */
   private aftermath(x: number, z: number, r: number, life: number, rate: number): void {
+    const hook = this.hooks.aftermath;
+    if (hook !== undefined) {
+      const a = this.aAfter;
+      a.slot = this.palSlot;
+      a.x = x;
+      a.z = z;
+      a.r = r;
+      a.life = life;
+      a.rate = rate;
+      a.pal = this.pal;
+      if (hook(a)) return;
+    }
     this.glowDisc(x, z, r, 0.75, life);
     for (const e of this.emitters) {
       if (e.active) continue;
@@ -2532,6 +2667,7 @@ export class SwordSkillFx {
     this.updateEmitters(dt);
     this.settleBlades(dt);
     this.updateHand();
+    this.hooks.frame?.(dt);
     for (const p of this.pools) p.update(dt);
     this.beams.update(dt);
     this.ribbons.update(dt, this.host.camera);
@@ -2704,6 +2840,22 @@ export class SwordSkillFx {
       seal.uniforms.uCore.value.copy(this.sealCore);
     }
     if (a <= 0.01) return;
+    // The element's gathering layers (its hook) in place of the halo, glows and motes below; the seal stays.
+    const hook = this.hooks.chargeFrame;
+    if (hook !== undefined) {
+      const f = this.aFrame;
+      f.slot = this.sealSlot;
+      f.level = a;
+      f.vis = vis;
+      f.big = this.auraBig;
+      f.scale = scale;
+      f.typing = p >= 0;
+      f.dt = dt;
+      this.host.hand(f.hand);
+      this.poseOf(f.caster);
+      f.pal = this.pal;
+      if (hook(f)) return;
+    }
     const x = this.c.x;
     const z = this.c.z;
     // Radiant halo behind the body: placed round the head, then pushed along its view ray to behind the
@@ -2809,10 +2961,10 @@ export class SwordSkillFx {
    * A release burst at the caster for a skill cast outside this class (key 7, round 3b item 5): the release column
    * behind the body, the ground ring and shock, and the seal's blaze, in `slot`'s palette at `tier`.
    */
-  burst(slot: SwordSlot, tier: number): void {
+  burst(slot: SwordSlot, tier: number, skill: string = slot): void {
     this.host.caster(this.c);
     this.use(slot);
-    this.releaseFlash(1.1, 3, 3.4, tier);
+    this.releaseFlash(1.1, 3, 3.4, tier, skill);
   }
 
   /**
@@ -3182,7 +3334,23 @@ export class SwordSkillFx {
       const back = this.pommelBack(FLIGHT_SCALE);
       this.ribbons.push(f.ribbon, x - dx * back, y - dy * back, z - dz * back);
       if (f.silk >= 0) this.pushSilk(f.silk, x, y, z, dx, dy, dz, back, f.blade * 1.3);
-      if (u < 1) {
+      const travel = this.hooks.travel;
+      if (u < 1 && travel !== undefined) {
+        const a = this.aTravel;
+        a.slot = f.slot;
+        a.blade = f.blade;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        a.dx = dx;
+        a.dy = dy;
+        a.dz = dz;
+        a.tipM = FLIGHT_SCALE * 1.1;
+        a.u = u;
+        a.dt = dt;
+        a.pal = this.pal;
+      }
+      if (u < 1 && (travel === undefined || !travel(this.aTravel))) {
         // A small glint riding the very tip (turning steadily, not a random angle a frame; small, so the blade
         // itself reads) and sparkle shed along the path.
         const tip = FLIGHT_SCALE * 1.1;
@@ -3238,10 +3406,20 @@ export class SwordSkillFx {
     while (k.launched < 3 && k.t >= T_K1_HITS[k.launched]! - 0.1) {
       if (k.launched > 0) {
         this.k1Socket(k.launched, this.v);
-        this.flareAt(this.v.x, this.v.y, this.v.z, 0.1, 0.6, 0.85);
-        this.twinkle(this.v.x, this.v.y, this.v.z, 1.3, 0.14, 1);
-        this.shockAt(this.v.x, this.v.y, this.v.z, 0.9, 0.18, 0.75);
-        this.rays(this.v.x, this.v.y, this.v.z, this.n(5), 1.1, 0.1, 0.13, 0.5);
+        const hook = this.hooks.launch;
+        const a = this.aLaunch;
+        if (hook !== undefined) {
+          a.slot = "k1";
+          a.at.copy(this.v);
+          a.index = k.launched;
+          a.pal = this.pal;
+        }
+        if (hook === undefined || !hook(a)) {
+          this.flareAt(this.v.x, this.v.y, this.v.z, 0.1, 0.6, 0.85);
+          this.twinkle(this.v.x, this.v.y, this.v.z, 1.3, 0.14, 1);
+          this.shockAt(this.v.x, this.v.y, this.v.z, 0.9, 0.18, 0.75);
+          this.rays(this.v.x, this.v.y, this.v.z, this.n(5), 1.1, 0.1, 0.13, 0.5);
+        }
         this.k1Launch(k.launched);
       }
       k.launched += 1;
@@ -3717,7 +3895,7 @@ export class SwordSkillFx {
       this.show(B + j, this.w.x, y + (1 - out) * 3, this.w.z, -ix, -1, -iz, K4_SWORD * out, true, out);
       this.bladeTint(B + j, 1.6 + 0.6 * pulse(clamp01((k.t - T_K4_OPEN) / 0.3)));
       // A thin trail above the falling sword's pommel (never over the sword itself).
-      if (fall < 1) this.beamAt(this.w.x, y + this.pommelBack(K4_SWORD), this.w.z, 0, 1, 0, 1.0 + 3.2 * (1 - fall), TRAIL_M * 1.8, -1, 0.7, 0.6, 0.05, 0.8, 0);
+      if (fall < 1) this.beamAt(this.w.x, y + this.pommelBack(K4_SWORD), this.w.z, 0, 1, 0, 1.0 + 3.2 * (1 - fall), this.kit.trail.widthM * 1.8, -1, 0.7, 0.6, 0.05, 0.8, 0);
       else if (hold > 0.002) {
         // The array's columns of light breathe at the corners while it holds: thin, so the planted sword reads.
         const breathe = (0.75 + 0.25 * Math.sin(this.time * 5 + j)) * hold;
@@ -4013,12 +4191,13 @@ export class SwordSkillFx {
       b.dy = -dy;
       b.dz = -dz;
       b.len0 = b.len1 = lengthM * trail;
-      b.w0 = TRAIL_M;
-      b.w1 = TRAIL_M * 0.4;
+      const tr = this.kit.trail;
+      b.w0 = tr.widthM;
+      b.w1 = tr.widthM * 0.4;
       b.life = -1;
-      b.cr = TRAIL_CORE[0] * 0.6 * k;
-      b.cg = TRAIL_CORE[1] * 0.6 * k;
-      b.cb = TRAIL_CORE[2] * 0.6 * k;
+      b.cr = tr.core[0] * 0.6 * k;
+      b.cg = tr.core[1] * 0.6 * k;
+      b.cb = tr.core[2] * 0.6 * k;
       b.hr = rim[0] * 0.3 * k;
       b.hg = rim[1] * 0.3 * k;
       b.hb = rim[2] * 0.3 * k;

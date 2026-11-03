@@ -4,6 +4,8 @@
  * skills lab implements it with stand-in models; the game will implement it
  * over its actors view (hits and deaths still come from sim events there).
  */
+import type { FoeStatusKind } from "./element-kit";
+
 export interface TargetField {
   /** Slots, live or not. */
   readonly size: number;
@@ -29,4 +31,9 @@ export interface TargetField {
    * its own ink smoke and motes).
    */
   hit(i: number, dx: number, dz: number, power: number, rgb: number): boolean;
+  /**
+   * The element's status on beast `i` for `seconds` (canon D59, element-kit.ts FoeStatus: Fire's burn, Water's wet,
+   * …), shown in `rgb` (0xRRGGBB) once the hit's flash is over. Optional: a field without it shows none.
+   */
+  status?(i: number, kind: FoeStatusKind, seconds: number, rgb: number): void;
 }

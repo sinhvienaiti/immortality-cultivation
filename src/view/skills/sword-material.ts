@@ -25,6 +25,22 @@ export const SWORD_LIGHT: { value: number } = { value: 1 };
 /** The edge line's light (linear, HDR × glow): a cyan-tinted white, so its bloom reads cyan, not a white smear. */
 export const EDGE_HOT: readonly [number, number, number] = [0.62 * 3.6, 0.88 * 3.6, 1.0 * 3.6];
 
+/**
+ * The element's look on every skill sword (canon D59; element-kit.ts BladeLook): one set of uniforms shared by the
+ * swords' materials and the impostors. `edge` is the edge line's light (Metal: EDGE_HOT); `mode` 0 steel, 1 furnace
+ * (Fire's hot blade: its shader branch lands with the Fire look, nothing reads it yet).
+ */
+export const SWORD_LOOK = {
+  edge: { value: new THREE.Vector3(EDGE_HOT[0], EDGE_HOT[1], EDGE_HOT[2]) },
+  mode: { value: 0 },
+};
+
+/** Puts an element's blade look on every skill sword (no allocation). */
+export function applyBladeLook(look: { readonly mode: "steel" | "furnace"; readonly edge: readonly [number, number, number] }): void {
+  SWORD_LOOK.edge.value.set(look.edge[0], look.edge[1], look.edge[2]);
+  SWORD_LOOK.mode.value = look.mode === "furnace" ? 1 : 0;
+}
+
 const PARS_VERTEX = /* glsl */ `
 attribute float aEdge;
 attribute vec4 iFx;
@@ -113,7 +129,7 @@ export interface SwordMaterialOptions {
 /** Patches a weapon's own material (cloned by the caller) into the skill swords' look. Load time only. */
 export function patchSwordMaterial(material: THREE.MeshStandardMaterial, opts: SwordMaterialOptions): THREE.MeshStandardMaterial {
   const uniforms = {
-    uSwEdge: { value: new THREE.Vector3(EDGE_HOT[0], EDGE_HOT[1], EDGE_HOT[2]) },
+    uSwEdge: SWORD_LOOK.edge,
     uSwJade: { value: new THREE.Vector3(opts.jade[0], opts.jade[1], opts.jade[2]) },
     uSwLight: SWORD_LIGHT,
     uSwBladeFrom: { value: opts.bladeFrom },

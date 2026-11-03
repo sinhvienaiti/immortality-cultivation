@@ -10,7 +10,7 @@
  * frame. Key 7's far river and K5's gate ring use it; mid and hero swords are the textured meshes (blades.ts).
  */
 import * as THREE from "three";
-import { EDGE_HOT, SWORD_LIGHT } from "./sword-material";
+import { SWORD_LIGHT, SWORD_LOOK } from "./sword-material";
 
 /** The atlas' layout (<id>-impostor.json). */
 export interface SwordAtlasMeta {
@@ -194,7 +194,7 @@ export class SwordImpostors {
         uCell: { value: new THREE.Vector4(0.035, 0.965, 0.25, 4) },
         tLit: { value: null },
         tMask: { value: null },
-        uEdge: { value: new THREE.Vector3(EDGE_HOT[0], EDGE_HOT[1], EDGE_HOT[2]) },
+        uEdge: SWORD_LOOK.edge,
         // The bake is the lab's lookdev light through no tone curve; the meshes' light gain follows the darkening.
         uGain: { value: 1 },
         uLight: SWORD_LIGHT,

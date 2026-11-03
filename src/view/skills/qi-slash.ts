@@ -140,6 +140,14 @@ export class QiSlash {
     this.mesh.visible = false;
   }
 
+  /** The element's colours (linear; element-kit.ts StreamTone.slash): hot core, body, lit body, falloff. */
+  setColours(white: readonly number[], body: readonly number[], bodyLit: readonly number[], deep: readonly number[]): void {
+    (this.u.uWhite!.value as THREE.Vector3).set(white[0]!, white[1]!, white[2]!);
+    (this.u.uCyan!.value as THREE.Vector3).set(body[0]!, body[1]!, body[2]!);
+    (this.u.uCyanLit!.value as THREE.Vector3).set(bodyLit[0]!, bodyLit[1]!, bodyLit[2]!);
+    (this.u.uNavy!.value as THREE.Vector3).set(deep[0]!, deep[1]!, deep[2]!);
+  }
+
   dispose(): void {
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();

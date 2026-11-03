@@ -48,7 +48,9 @@ import { LabSound, type SoundTake } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
-import { MYRIAD_SWORDS_COLOUR, MYRIAD_SWORDS_PER_TIER, MyriadSwordsFx, type SwordPose, type MyriadSwordsPhase } from "../view/skills/myriad-swords";
+import { MYRIAD_SWORDS_PER_TIER, MyriadSwordsFx, type SwordPose, type MyriadSwordsPhase } from "../view/skills/myriad-swords";
+import { METAL } from "../view/skills/element-metal";
+import { ElementStage } from "../view/skills/element-stage";
 import { CasterPresence } from "./presence";
 import { SWORD_LIGHT } from "../view/skills/sword-material";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
@@ -459,18 +461,18 @@ const hitsOf: Record<string, number> = {};
 const numberRgb: Record<string, number> = {};
 let numberRgbWeapon = "";
 const tmpColour = new THREE.Color();
-/** Key 7's number tint (linear): Clear Wind's jade-cyan. */
-const MYRIAD_TINT = MYRIAD_SWORDS_COLOUR;
 /** The clock key 7's sweep starts (s, F192). */
 const MYRIAD_SWEEP_AT = 192 / 60;
 function skillRgb(slot: string): number {
-  if (numberRgbWeapon !== fx.weapon) {
+  // Cached per weapon and element (a key string only when either changes).
+  if (numberRgbWeapon !== fx.weapon + "/" + fx.element.id) {
     for (const k of Object.keys(numberRgb)) delete numberRgb[k];
-    numberRgbWeapon = fx.weapon;
+    numberRgbWeapon = fx.weapon + "/" + fx.element.id;
   }
   let v = numberRgb[slot];
   if (v === undefined) {
-    const h = slot === "k7" ? MYRIAD_TINT : fx.paletteOf(slot as SwordSlot).halo;
+    // Key 7 takes its element's number tint (Metal: Clear Wind's jade-cyan).
+    const h = slot === "k7" ? myriad.tone.number : fx.paletteOf(slot as SwordSlot).halo;
     v = tmpColour.setRGB(h[0], h[1], h[2]).getHex(THREE.SRGBColorSpace);
     numberRgb[slot] = v;
   }
@@ -678,6 +680,24 @@ function cycleWeapon(): void {
   void setWeapon(SWORDS[(i + 1) % SWORDS.length]!.id);
 }
 
+// The element (canon D59): one stage the element kits draw with, shared by the Kiếm skills and key 7. A kit's
+// texture name is a Kenney sheet in art-src/lab/tex, or a path under art-src/lab/vfx/ (with a "/").
+const VFX_BASE = "/art-src/lab/vfx/";
+function kitTexture(name: string): THREE.Texture {
+  if (!name.includes("/")) return tex(name);
+  let t = texCache.get(name);
+  if (t === undefined) {
+    t = texLoader.load(VFX_BASE + name);
+    t.colorSpace = THREE.SRGBColorSpace;
+    texCache.set(name, t);
+  }
+  return t;
+}
+const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE });
+// The skills draw in Metal (their own layers) on this stage until the lab can switch elements.
+fx.setElement(METAL, stage);
+myriad.setElement(METAL, stage);
+
 // An enemy blow for the guard demo: a red bolt (enemy colour, canon §21.1) from a beast to the caster.
 const enemyBolt = new SpritePool(8, textures.glow, "add", "camera", 16);
 view.layers.fx.add(enemyBolt.mesh);
@@ -833,7 +853,7 @@ function flushTyping(): void {
     pendingMyriad = false;
     myriad.cast();
     // The release at the caster (round 3b, item 5): a burst column behind the body and a ground ring, on this frame.
-    fx.burst("k1", 3);
+    fx.burst("k1", 3, "k7");
     // The first visible action of key 7 (its eight blades leave now): the probe's VFX release.
     probe.flash();
   }
@@ -886,6 +906,7 @@ function reset(): void {
   compiler.reset();
   numbers.clear();
   myriad.reset();
+  stage.reset();
   cutin.stop();
   ultDark = false;
   ultDarkEnd = -1;
@@ -1023,8 +1044,11 @@ function frame(dt: number): void {
   caster.update(world);
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
+  stage.begin();
   fx.update(world, dt);
   myriad.update(world);
+  // The element kits' own layers move and upload after both skill sets have drawn into them.
+  stage.update(world);
   // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
   handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);

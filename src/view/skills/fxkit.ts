@@ -348,6 +348,15 @@ export class SpritePool {
     return this.live;
   }
 
+  /** The pool's sheet (an element kit swaps it; element-kit.ts `textures`). */
+  get texture(): THREE.Texture {
+    return (this.mesh.material as THREE.ShaderMaterial).uniforms.map!.value as THREE.Texture;
+  }
+
+  set texture(t: THREE.Texture) {
+    (this.mesh.material as THREE.ShaderMaterial).uniforms.map!.value = t;
+  }
+
   /**
    * Drops the one-frame sprites already drawn. Call it at the start of a
    * frame, before that frame's cards are emitted: otherwise last frame's
@@ -640,6 +649,15 @@ export class RibbonPool {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;
     this.mesh.visible = false;
+  }
+
+  /** The ribbons' erosion sheet (an element kit swaps it; element-kit.ts `textures`). */
+  get texture(): THREE.Texture {
+    return this.material.uniforms.map!.value as THREE.Texture;
+  }
+
+  set texture(t: THREE.Texture) {
+    this.material.uniforms.map!.value = t;
   }
 
   /** Starts ribbon `i` at a point with a width and an HDR colour; it eases in over `fadeIn` s (smoothstep). */
