@@ -101,8 +101,33 @@ export const FIRE_STREAM: StreamTone = {
  * the decal pool's procedural char, a soft irregular burn graded out into browned stone, ember cracks and a rim that
  * cool from gold to orange, eroding away (never fading).
  */
-const SCORCH: GroundAftermath = { texture: null, life: 3.4, growIn: 0.06, erodeFrom: 0.5, body: CHAR, alpha: 0.6, heat: [1.6, 0.62, 0.12], cool: 0.85 };
-const SCORCH_LINE: GroundAftermath = { ...SCORCH, life: 4.2, erodeFrom: 0.6, cool: 0.9 };
+// It outlasts the ground fire burning on it (~3 s, round 3: the owner's "the flames vanish a little fast"), its
+// ember cracks cooling over ~4 s.
+const SCORCH: GroundAftermath = { texture: null, life: 5.2, growIn: 0.05, erodeFrom: 0.62, body: CHAR, alpha: 0.6, heat: [1.6, 0.62, 0.12], cool: 0.55 };
+const SCORCH_LINE: GroundAftermath = { ...SCORCH, life: 5.6, erodeFrom: 0.66, cool: 0.6 };
+
+/**
+ * How long the fire lingers (round 3, the owner's 03/11 note "the flames vanish a little fast"): the attack is as
+ * instant as before (first frame at its peak, the same rate to the clip's peak), then the peak holds and the flame
+ * burns down slowly, eroding and cooling toward char (never a quick alpha fade). Frames of fire-burst (16 at 18 fps):
+ * it opens over 0–6, holds its full lotus over 5–9, breaks up over 10–11, and dies as one tongue over 12–14.
+ */
+const LOTUS_PEAK = 7;
+/** fire-ground (16 at 12 fps): its dome of tongues over 2–6, then it shrinks, darkens and dies over 7–15. */
+const GROUND_PEAK = 6;
+/**
+ * Key 7 keeps its field readable (lingering lotuses must not pile into a veil over the beasts and their word tags):
+ * past this many live lotuses a new one lingers less, down to its old timing.
+ */
+const LOTUS_CROWD = 28;
+/** The finisher's flame slash: its own hold and erosion after the shape's sweep (Metal's 0.22 s and 0.4 s). */
+const SLASH_SWEEP_S = 0.26;
+const SLASH_HOLD_S = 0.34;
+const SLASH_ERODE_S = 0.6;
+const smooth01 = (t: number): number => {
+  const x = t < 0 ? 0 : t > 1 ? 1 : t;
+  return x * x * (3 - 2 * x);
+};
 
 // ── The layers ───────────────────────────────────────────────────────────────
 
@@ -117,6 +142,7 @@ const opts: FlipOptions = {};
 function flip(): FlipOptions {
   const o = opts;
   o.life = o.rate = o.frame = o.until = o.rot = o.spin = o.grow = o.alpha = o.intensity = o.occlude = o.erode = undefined;
+  o.slowFrom = o.slowRate = undefined;
   o.vx = o.vy = o.vz = o.drag = o.gravity = o.ground = o.fadeIn = o.fadeOut = o.delay = o.cool = o.lift = undefined;
   o.tint = undefined;
   o.dir = undefined;
@@ -161,6 +187,10 @@ class FireLayers {
   private readonly flameSlash: FlameSlash;
   private readonly groundRings: HeatRingPool;
   private slashAcc = 0;
+  /** The flame slash as last given by the shape, kept while it lingers after the shape's own slash is gone. */
+  private slashOn = false;
+  private slashT = 0;
+  private readonly slashEnds = { ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, half: 0, mask: null as THREE.Texture | null };
   private readonly scorch: GroundDecalPool;
   private readonly emitters: Emitter[] = Array.from({ length: 24 }, () => ({ on: false, x: 0, z: 0, r: 0, t: 0, life: 0, rate: 0, acc: 0 }));
   private chargeAcc = 0;
@@ -170,7 +200,8 @@ class FireLayers {
   constructor(private readonly stage: ElementStage) {
     const P = stage.flipbooks;
     // Key 7 and K5 keep up to ~90 lotuses alive at once (deaths collapse into one each; 03/11 recheck).
-    this.burst = P.pool(FOLDER, "fire-burst", { mode: "rgba", capacity: 96, renderOrder: 12 });
+    // Lingering (round 3) they hold ~90 at once in K5's deaths: room to spare, a full pool would drop new ones.
+    this.burst = P.pool(FOLDER, "fire-burst", { mode: "rgba", capacity: 128, renderOrder: 12 });
     this.charge = P.pool(FOLDER, "fire-charge", { mode: "rgba", capacity: 6, renderOrder: 13 });
     this.sparks = P.pool(FOLDER, "fire-sparks", { mode: "fire", capacity: 64, renderOrder: 14 });
     this.ground = P.pool(FOLDER, "fire-ground", { mode: "rgba", capacity: 32, renderOrder: 11 });
@@ -185,12 +216,17 @@ class FireLayers {
     this.sheath.blur = 1.8;
     this.burst.softM = 0.3;
     this.ground.softM = 0.2;
+    // A lingering clip crossfades slowly between its frames: its coverage stays matter or erodes (never two half-shown
+    // frames adding up to a see-through veil on pale stone).
+    this.burst.setSharpen(0.06, 0.4);
+    this.ground.setSharpen(0.06, 0.4);
     this.line.softM = 0.2;
     const T = stage.textures;
     this.groundInk = stage.pool(8, T.glow, "ink", "ground", 3, { crop: 0.64 });
     this.scorch = stage.decals(SCORCH.texture, 64, 4);
     this.smoke = stage.pool(96, stage.texture("smoke_07"), "ink", "camera", 9, { fadeIn: 0.15 });
-    this.ash = stage.pool(160, T.splash, "ink", "camera", 9);
+    // Every death in key 7 and K5 sheds ten flakes for ~2 s (160 slots dropped ~600 flakes there: round 3 check).
+    this.ash = stage.pool(1024, T.splash, "ink", "camera", 9);
     this.rings = stage.heatRings(24, "camera", 14);
     this.rings.setLook(SEAL_SOOT, 0.8, SEAL_BODY, SEAL_LIT, SEAL_CORE);
     this.slash = stage.pool(32, T.slash, "add", "camera", 12);
@@ -226,8 +262,8 @@ class FireLayers {
     this.motes.emit();
   }
 
-  /** An ember thrown off (x, y, z) at speed `sp` round the ground direction (dx, dz), arcing down. */
-  private ember(x: number, y: number, z: number, dx: number, dz: number, sp: number, spread: number): void {
+  /** An ember thrown off (x, y, z) at speed `sp` round the ground direction (dx, dz), arcing down, living `lifeK` × ~0.6 s. */
+  private ember(x: number, y: number, z: number, dx: number, dz: number, sp: number, spread: number, lifeK = 1.25): void {
     const R = this.stage.rand;
     const a = Math.atan2(dz, dx) + R.range(-spread, spread);
     const s = this.motes.spec.reset();
@@ -241,7 +277,7 @@ class FireLayers {
     s.gravity = -7;
     s.drag = 1.6;
     s.stretch = 0.03;
-    s.life = R.range(0.35, 0.7);
+    s.life = R.range(0.35, 0.7) * lifeK;
     s.size0 = R.range(0.1, 0.16);
     s.size1 = 0.03;
     const hot = R.next() < 0.4;
@@ -253,17 +289,30 @@ class FireLayers {
     this.motes.emit();
   }
 
-  /** The anime flame lotus (fire-burst, real alpha) rooted on the ground at (x, z), `size` m tall. */
-  private lotus(x: number, z: number, size: number, rate: number, first: number, lift: number, delay = 0): void {
+  /**
+   * The anime flame lotus (fire-burst, real alpha) rooted on the ground at (x, z), `size` m tall: it opens at `rate`
+   * from `first`, holds its peak and burns down at `linger` × the clip's rate (lingering), eroding and cooling from
+   * `cool` of its life. A crowded field (key 7) shortens the linger toward the attack's rate.
+   */
+  private lotus(x: number, z: number, size: number, rate: number, first: number, lift: number, linger: number, delay = 0, cool = 0.6): void {
     const o = flip();
     o.rate = rate;
     o.frame = first;
-    o.cool = 0.55;
+    o.slowFrom = LOTUS_PEAK;
+    o.slowRate = this.crowded(linger, rate);
+    o.until = 14;
+    o.cool = cool;
     o.ground = 0;
     o.lift = lift;
     o.rot = 0;
     if (delay > 0) o.delay = delay;
     this.burst.spawn(v.set(x, 0, z), size, o);
+  }
+
+  /** A linger rate eased back toward `rate` (no linger) once the field holds more than LOTUS_CROWD live lotuses. */
+  private crowded(linger: number, rate: number): number {
+    const over = Math.max(0, this.burst.live - LOTUS_CROWD) / LOTUS_CROWD;
+    return Math.min(rate, linger + (rate - linger) * Math.min(1, over));
   }
 
   private sparkRays(x: number, y: number, z: number, size: number, k: number): void {
@@ -298,7 +347,7 @@ class FireLayers {
       s.drag = R.range(2.2, 3.4);
       s.rise = R.range(0.8, 1.6);
       s.sway = R.range(0.08, 0.3);
-      s.life = R.range(0.7, 1.6);
+      s.life = R.range(0.9, 2.0);
       // Mostly small specks, a few bigger (0.08–0.35 m); the fastest are the hottest.
       s.size = 0.08 + 0.2 * Math.pow(R.next(), 3);
       s.heat = heat * R.range(0.8, 1.12) * (0.85 + 0.25 * q);
@@ -324,7 +373,7 @@ class FireLayers {
       s.drag = 1.2;
       s.rise = R.range(0.6, 1.2);
       s.sway = R.range(0.12, 0.35);
-      s.life = R.range(1.0, 1.9);
+      s.life = R.range(1.3, 2.4);
       s.size = 0.07 + 0.13 * Math.pow(R.next(), 2.5);
       s.heat = heat * R.range(0.8, 1.1);
       s.flicker = R.range(0.3, 0.55);
@@ -343,7 +392,7 @@ class FireLayers {
     s.vy = R.range(0.45, 0.8);
     s.vz = R.range(-0.15, 0.15);
     s.drag = 0.4;
-    s.life = R.range(1.3, 1.8);
+    s.life = R.range(1.8, 2.5);
     s.size0 = size * 0.5;
     s.size1 = size * 1.5;
     s.rot = R.range(0, 6.28);
@@ -360,14 +409,9 @@ class FireLayers {
   private burnGround(x: number, z: number, r: number, life: number, rate: number, big: boolean): void {
     const R = this.stage.rand;
     this.scorch.spawn(x, z, (big ? 2.4 : 1.9) * r, SCORCH, R.range(0, 6.28), R.range(0.85, 1.2));
-    const o = flip();
-    o.rate = 0.75;
-    o.cool = 0.45;
-    o.ground = 0;
-    o.frame = 2;
-    this.ground.spawn(v.set(x, 0, z), (big ? 1.0 : 0.72) * r, o);
-    // When the ground fire is gone, embers rise off it.
-    this.risingEmbers(x, z, 0.45 * r, this.stage.n(big ? 14 : 9), 0.78, 1.1);
+    this.groundFire(x, z, (big ? 1.0 : 0.72) * r, 0);
+    // As the ground fire burns down, embers rise off it.
+    this.risingEmbers(x, z, 0.45 * r, this.stage.n(big ? 14 : 9), 0.78, 1.9);
     for (let k = 0; k < (big ? 3 : 2); k += 1) this.wisp(x, z, 0.9 * r, k * 0.18);
     for (const e of this.emitters) {
       if (e.on) continue;
@@ -376,11 +420,27 @@ class FireLayers {
       e.z = z;
       e.r = r;
       e.t = 0;
-      e.life = life * 1.5;
+      e.life = life * 2;
       e.rate = rate * 0.7;
       e.acc = 0;
       return;
     }
+  }
+
+  /**
+   * A low ground fire (fire-ground) at (x, z), `size` m: its dome of tongues at once, then it shrinks, darkens and
+   * burns down over ~3 s into embers and char (a crowded field: sooner).
+   */
+  private groundFire(x: number, z: number, size: number, delay: number): void {
+    const o = flip();
+    o.rate = 0.75;
+    o.frame = 2;
+    o.slowFrom = GROUND_PEAK;
+    o.slowRate = this.ground.live > 12 ? 0.5 : 0.32;
+    o.cool = 0.55;
+    o.ground = 0;
+    if (delay > 0) o.delay = delay;
+    this.ground.spawn(v.set(x, 0, z), size, o);
   }
 
   /**
@@ -439,7 +499,10 @@ class FireLayers {
       const o = flip();
       o.rate = 1.5;
       o.frame = 1;
-      o.cool = 0.5;
+      o.slowFrom = LOTUS_PEAK;
+      o.slowRate = 0.9;
+      o.until = 14;
+      o.cool = 0.55;
       o.lift = 0.2;
       // In the air the lotus has no ground to hide its root: fade the root out softly (the cell's bottom edge cut
       // its white-hot root in a straight line, 03/11 check).
@@ -523,7 +586,7 @@ class FireLayers {
     r.x = p.x;
     r.y = p.y;
     r.z = p.z;
-    r.life = 0.24;
+    r.life = 0.3;
     r.r0 = 0.25 * s;
     r.r1 = 1.3 * s;
     r.width = 0.14;
@@ -533,7 +596,7 @@ class FireLayers {
     this.stage.camera.getWorldDirection(camF);
     const fl = Math.hypot(camF.x, camF.z) || 1;
     const c = a.caster;
-    this.lotus(c.x + (camF.x / fl) * 0.55, c.z + (camF.z / fl) * 0.55, 2.3 * s, 1.3, 2, 0);
+    this.lotus(c.x + (camF.x / fl) * 0.55, c.z + (camF.z / fl) * 0.55, 2.3 * s, 1.3, 2, 0, 0.55);
     this.sparkRays(p.x, p.y, p.z, 1.7 * s, 1.4);
     this.emberBurst(p.x, p.y, p.z, 1.2 * s, 1.0);
     const n = this.stage.n(big ? 16 : 10);
@@ -550,7 +613,10 @@ class FireLayers {
     const o = flip();
     o.rate = 1.6;
     o.frame = 2;
-    o.cool = 0.5;
+    o.slowFrom = LOTUS_PEAK;
+    o.slowRate = 0.9;
+    o.until = 14;
+    o.cool = 0.55;
     o.lift = 0.2;
     // Its root fades softly in the air (no straight cut at the cell's edge).
     o.ground = p.y - 0.5;
@@ -594,7 +660,7 @@ class FireLayers {
     const s = a.scale * (a.big ? 1.3 : 1);
     // Pinpoint, then the lotus opens at the beast (in front of it: the beast burns), sparks and embers fly.
     this.dot(p.x, p.y, p.z, 1.15 * s, 0.6 * s, 0.08, WHITE_GOLD, 4.5);
-    this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 1, 0.7);
+    this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 1, 0.7, 0.5);
     this.sparkRays(p.x, p.y, p.z, 1.5 * s, 1.35);
     this.emberBurst(p.x, p.y, p.z, 1.1 * s, 1.0);
     const n = this.stage.n(8 + Math.round(6 * a.power));
@@ -634,7 +700,10 @@ class FireLayers {
     const o = flip();
     o.rate = 1.1;
     o.frame = 9;
-    o.cool = 0.4;
+    o.slowFrom = 11;
+    o.slowRate = this.crowded(0.55, 1.1);
+    o.until = 14;
+    o.cool = 0.45;
     o.ground = 0;
     o.lift = 0.5;
     this.burst.spawn(v.set(p.x, 0, p.z), r * 3.4, o);
@@ -651,7 +720,7 @@ class FireLayers {
       s.vz = a.dz * 0.6 + R.range(-0.5, 0.5);
       s.drag = 1.2;
       s.gravity = -0.4;
-      s.life = R.range(1.1, 1.8);
+      s.life = R.range(1.4, 2.2);
       s.size0 = R.range(0.1, 0.18);
       s.size1 = 0.05;
       s.rot = R.range(0, 6.28);
@@ -707,7 +776,7 @@ class FireLayers {
     if (k >= 1.3) {
       // A lead blade: the lotus at the beast.
       this.dot(a.x, a.y, a.z, 1.0 * k, 0.5 * k, 0.08, WHITE_GOLD, 4.2);
-      this.lotus(a.x + a.dx * 0.15, a.z + a.dz * 0.15, 1.45 * k, 1.3, 1, 0.6);
+      this.lotus(a.x + a.dx * 0.15, a.z + a.dz * 0.15, 1.45 * k, 1.3, 1, 0.6, 0.55);
       this.sparkRays(a.x, a.y, a.z, 1.1 * k, 1.3);
       this.emberBurst(a.x, a.y, a.z, 0.75 * k, 1.0);
       if (k >= 2) this.stage.accent(a.x, a.y, a.z, 0.22);
@@ -716,12 +785,12 @@ class FireLayers {
     // A river sword stays thin (the field-wide river must not turn into flame soup): a pinpoint, spark rays, embers.
     this.dot(a.x, a.y, a.z, 0.6 * k, 0.3 * k, 0.07, CORE, 3);
     this.sparkRays(a.x, a.y, a.z, 0.65 * k, 0.8);
-    for (let i = 0; i < 3; i += 1) this.ember(a.x, a.y, a.z, a.dx, a.dz, 5, 0.9);
+    for (let i = 0; i < 3; i += 1) this.ember(a.x, a.y, a.z, a.dx, a.dz, 5, 0.9, 1.1);
     return true;
   }
 
   leadStrike(a: { x: number; z: number }): boolean {
-    this.lotus(a.x, a.z, 2.9, 1.15, 1, 0.3);
+    this.lotus(a.x, a.z, 2.9, 1.15, 1, 0.3, 0.5);
     this.burnGround(a.x, a.z, 1.3, 1.4, 16, true);
     this.emberBurst(a.x, 0.6, a.z, 1.4, 0.95);
     return true;
@@ -756,10 +825,10 @@ class FireLayers {
     for (let k = 0; k < cards; k += 1) {
       const u = (k + 0.5) / cards;
       const o = flip();
-      o.life = 2.0 + R.range(0, 0.5);
-      o.rate = 1;
+      o.life = 2.6 + R.range(0, 0.6);
+      o.rate = 0.7;
       o.frame = R.range(0, 16);
-      o.cool = 0.6;
+      o.cool = 0.62;
       o.dir = dir.set(ux, 0, uz);
       o.ground = 0;
       o.delay = u * 0.26;
@@ -767,14 +836,8 @@ class FireLayers {
     }
     for (let k = 0; k < 5; k += 1) {
       const u = (k + 0.5) / 5 + R.range(-0.05, 0.05);
-      const o = flip();
-      o.rate = 0.75;
-      o.cool = 0.45;
-      o.ground = 0;
-      o.frame = 2;
-      o.delay = u * 0.26;
-      this.ground.spawn(v.set(a.ax + dx * u, 0, a.az + dz * u), 0.95, o);
-      this.risingEmbers(a.ax + dx * u, a.az + dz * u, 0.5, this.stage.n(7), 0.8, u * 0.26 + 1.1);
+      this.groundFire(a.ax + dx * u, a.az + dz * u, 0.95, u * 0.26);
+      this.risingEmbers(a.ax + dx * u, a.az + dz * u, 0.5, this.stage.n(7), 0.8, u * 0.26 + 1.9);
     }
     const b = this.seams.spec.reset();
     b.x = a.ax - ux * 1.5;
@@ -787,7 +850,7 @@ class FireLayers {
     b.grow = 0.26;
     b.w0 = 0.42;
     b.w1 = 0.2;
-    b.life = 2.4;
+    b.life = 3.0;
     b.cr = CORE[0] * 4.5;
     b.cg = CORE[1] * 4.5;
     b.cb = CORE[2] * 4.5;
@@ -807,27 +870,52 @@ class FireLayers {
    * as heat with flame tongues; embers shed off it behind the head while it burns.
    */
   finisherSlash(a: StreamSlashArgs): boolean {
-    if (a.fade <= 0.003) {
+    // The shape's slash (its ends, width and clock) while it shows; after it goes, the flame lingers on its own clock
+    // (a longer hold and erosion than Metal's sword-qi, the shape's timing unchanged).
+    const e = this.slashEnds;
+    if (a.fade > 0.003) {
+      e.ax = a.ax;
+      e.ay = a.ay;
+      e.az = a.az;
+      e.bx = a.bx;
+      e.by = a.by;
+      e.bz = a.bz;
+      e.half = a.halfPx;
+      e.mask = a.mask;
+      this.slashT = a.t;
+      this.slashOn = true;
+    } else if (this.slashOn) this.slashT += a.dt;
+    if (!this.slashOn) {
       this.flameSlash.hide();
       this.slashAcc = 0;
       return true;
     }
-    this.flameSlash.set(a.ax, a.ay, a.az, a.bx, a.by, a.bz, a.halfPx * 1.3, a.head, a.fade, a.erode, a.mask, a.t);
-    this.slashAcc += 90 * a.dt * a.fade * (1 - a.erode) * this.stage.dens;
+    const t = this.slashT;
+    const head = 1 - (1 - Math.min(1, t / SLASH_SWEEP_S)) ** 2;
+    const erode = smooth01((t - SLASH_SWEEP_S - SLASH_HOLD_S) / SLASH_ERODE_S);
+    const fade = 1 - smooth01((t - SLASH_SWEEP_S - SLASH_HOLD_S - SLASH_ERODE_S * 0.55) / (SLASH_ERODE_S * 0.45));
+    if (fade <= 0.003) {
+      this.flameSlash.hide();
+      this.slashOn = false;
+      this.slashAcc = 0;
+      return true;
+    }
+    this.flameSlash.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, e.half * 1.3, head, fade, erode, e.mask, t);
+    this.slashAcc += 90 * a.dt * fade * (1 - erode) * this.stage.dens;
     const R = this.stage.rand;
     while (this.slashAcc >= 1) {
       this.slashAcc -= 1;
-      const u = R.next() * a.head;
+      const u = R.next() * head;
       const s = this.embers.reset();
-      s.x = a.ax + (a.bx - a.ax) * u + R.range(-0.3, 0.3);
-      s.y = a.ay + (a.by - a.ay) * u + R.range(-0.2, 0.2);
-      s.z = a.az + (a.bz - a.az) * u + R.range(-0.3, 0.3);
+      s.x = e.ax + (e.bx - e.ax) * u + R.range(-0.3, 0.3);
+      s.y = e.ay + (e.by - e.ay) * u + R.range(-0.2, 0.2);
+      s.z = e.az + (e.bz - e.az) * u + R.range(-0.3, 0.3);
       s.vx = R.range(-1.2, 1.2);
       s.vy = R.range(0.6, 2.2);
       s.vz = R.range(-1.2, 1.2);
       s.drag = 1.8;
       s.rise = R.range(0.8, 1.4);
-      s.life = R.range(0.7, 1.3);
+      s.life = R.range(0.9, 1.6);
       s.size = 0.08 + 0.14 * Math.pow(R.next(), 3);
       s.heat = R.range(0.8, 1.05);
       this.embers.emit();
@@ -849,7 +937,7 @@ class FireLayers {
     b.grow = 0.05;
     b.w0 = 0.12;
     b.w1 = 0.08;
-    b.life = 0.6;
+    b.life = 0.85;
     b.cr = CORE[0] * 3.6;
     b.cg = CORE[1] * 3.6;
     b.cb = CORE[2] * 3.6;
@@ -859,9 +947,9 @@ class FireLayers {
     b.fadeBase = 0.2;
     b.fadeTip = 0.2;
     this.seams.emit();
-    // Flame tongues along the cut (the heat-field band, cooling to its tail), burning out over ~0.5 s.
+    // Flame tongues along the cut (the heat-field band, cooling to its tail), burning out over ~0.8 s.
     const o = flip();
-    o.life = 0.5;
+    o.life = 0.8;
     o.rate = 1;
     o.frame = this.stage.rand.range(0, 16);
     o.dir = dir.set(a.dx, a.dy, a.dz);
@@ -882,11 +970,11 @@ class FireLayers {
     r.z = a.z;
     r.r0 = 0.2;
     r.r1 = 1.4;
-    r.life = 0.42;
+    r.life = 0.62;
     r.width = 0.11;
     r.heat = 1;
     this.groundRings.emit();
-    this.lotus(a.x - a.dx * 0.1, a.z - a.dz * 0.1, 1.5, 1.4, 1, 0.3);
+    this.lotus(a.x - a.dx * 0.1, a.z - a.dz * 0.1, 1.5, 1.4, 1, 0.3, 0.6);
     this.scorch.spawn(a.x, a.z, 1.7, SCORCH, this.stage.rand.range(0, 6.28));
     this.emberBurst(a.x, 0.3, a.z, 0.8, 1.0);
     return true;
@@ -895,6 +983,7 @@ class FireLayers {
   streamReset(): void {
     this.flameSlash.hide();
     this.slashAcc = 0;
+    this.slashOn = false;
   }
 
   slashSpark(a: StreamSparkArgs): boolean {

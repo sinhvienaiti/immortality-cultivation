@@ -1,4 +1,4 @@
-// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; a full pool drops a new sprite instead of cutting a live one short; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
+// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; a full pool drops a new sprite instead of cutting a live one short; a two-rate time map (an attack at one rate, then a slower linger) and a per-pool alpha sharpen that keeps a slowed crossfade solid; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
 /**
  * Flipbook sprites for the element layer (canon D59, ELEMENT_LAYER §3 "FlipbookPlayer"): Fire, Thunder and Wind
  * clips, and RGBA clips with real alpha of every element, cut from Adobe Firefly Video into atlases. Media stays
@@ -26,7 +26,8 @@
  *   (it covers the pale floor round the flame: the anti-veil); 0.35–0.8 the body from deep orange to amber at 0.95;
  *   over 0.8 the white-gold core (× 2.2, the only part that blooms). The ramp is the pool's (`setHeatRamp`); a pool's
  *   `taper` cools the clip from its head (cell right, the way `dir` points) to its tail (a trail behind a blade).
- * The material: frames blended in time, a pivot, billboards that turn to follow a world direction on screen (a
+ * The material: frames blended in time (a crossfade between neighbouring frames, so a clip slowed down never steps;
+ * a pool's `sharpen` keeps that crossfade solid: two half-shown frames never add up to a see-through veil), a pivot, billboards that turn to follow a world direction on screen (a
  * flame along a flight), analytic soft particles against the ground, and an exact depth lift.
  */
 import * as THREE from "three";
@@ -275,6 +276,7 @@ uniform vec3 uHeatAmber;
 uniform vec3 uHeatCore;
 uniform float uTaper;
 uniform float uBlur;
+uniform vec2 uSharpen;
 varying vec2 vUv;
 varying float vFrame;
 varying float vAlpha;
@@ -312,6 +314,13 @@ void main() {
     // RGBA, straight alpha: premultiply each frame, then crossfade (a straight crossfade fringes at the edges).
     vec3 pm = mix(t0.rgb * t0.a, t1.rgb * t1.a, w);
     float a = mix(t0.a, t1.a, w);
+    if (uSharpen.y > 0.0) {
+      // Sharpened coverage: a crossfade's half-shown parts (and a soft clip's thin haze) are remapped through a
+      // threshold, broken by noise, so they stay matter or go (erosion), never a see-through veil over pale stone.
+      float sa = smoothstep(uSharpen.x, uSharpen.y, a + (n - 0.5) * 0.12);
+      pm *= a > 1e-4 ? sa / a : 0.0;
+      a = sa;
+    }
     if (vAge.w > 0.0) {
       // Eased in (or held part-shown) by erosion, thin parts first: its alpha keeps its matte, never see-through.
       float thrE = vAge.w * 1.05 - 0.03;
@@ -376,6 +385,12 @@ export interface FlipOptions {
   life?: number;
   /** Playback speed × the clip's fps (default 1); 0 holds `frame`. */
   rate?: number;
+  /**
+   * A linger: from this frame on the clip plays at `slowRate` instead (the attack stays at `rate`, the peak and the
+   * burn-down last longer; neighbouring frames crossfade, so it never steps). Undefined: one rate.
+   */
+  slowFrom?: number;
+  slowRate?: number;
   /** First frame (fractional; a loop: any phase). */
   frame?: number;
   /** Last frame a one-shot plays to. */
@@ -423,6 +438,33 @@ const WHITE = new THREE.Color(1, 1, 1);
 /** `life` for a sprite drawn on this frame only (a head or a core the caller redraws every frame). */
 export const ONE_FRAME = 1e-4;
 
+/** The frame shown at `age` s: `first` + `fps` a second, then from `slowFrom` (≥ 0) on at `slowFps`. */
+export function frameAt(first: number, fps: number, slowFrom: number, slowFps: number, age: number): number {
+  const f = first + age * fps;
+  if (slowFrom < 0 || f <= slowFrom || fps <= 0) return f;
+  return slowFrom + (age - (slowFrom - first) / fps) * slowFps;
+}
+
+/** The frame a one-shot's linger starts at (FlipOptions.slowFrom inside its frames), or −1 for none. */
+function slowFromOf(meta: FlipbookMeta, o: FlipOptions): number {
+  const first = o.frame ?? (meta.loop ? 0 : meta.start);
+  const last = Math.min(meta.frames, o.until !== undefined ? o.until + 1 : meta.frames);
+  return o.slowFrom !== undefined && o.slowRate !== undefined && o.slowFrom > first && o.slowFrom < last ? o.slowFrom : -1;
+}
+
+/** Seconds a sprite spawned with `o` lives: its `life`, else one pass of the clip at its rate (and its linger's). */
+export function playLife(meta: FlipbookMeta, o: FlipOptions): number {
+  if (o.life !== undefined) return o.life;
+  const rate = o.rate ?? 1;
+  if (meta.loop || rate <= 0) return 1;
+  const first = o.frame ?? meta.start;
+  const last = Math.min(meta.frames, o.until !== undefined ? o.until + 1 : meta.frames);
+  const fps = Math.max(1e-3, meta.fps * rate);
+  const slow = slowFromOf(meta, o);
+  if (slow < 0) return Math.max(1 / 60, (last - first) / fps);
+  return Math.max(1 / 60, (slow - first) / fps + (last - slow) / (meta.fps * Math.max(0.01, o.slowRate!)));
+}
+
 /** Fragment shader modes (uMode). */
 const MODE_INDEX: Record<FlipbookMode, number> = { rgba: 0, fire: 1, smoke: 2, heat: 3 };
 
@@ -439,9 +481,9 @@ export class FlipbookPool {
   private readonly iDir: Float32Array;
   private readonly iAge: Float32Array;
   private readonly iLift: Float32Array;
-  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode */
+  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode, slowFrom, slowFps */
   private readonly state: Float32Array;
-  private static readonly STRIDE = 33;
+  private static readonly STRIDE = 35;
   private cursor = 0;
   live = 0;
   /** Sprites dropped since the last clear because every slot held a live one. */
@@ -490,6 +532,7 @@ export class FlipbookPool {
         uHeatCore: { value: new THREE.Vector3(1, 0.982, 0.871) },
         uTaper: { value: 0 },
         uBlur: { value: 0 },
+        uSharpen: { value: new THREE.Vector2(0, 0) },
         uPivot: { value: new THREE.Vector2(0.5, 0.5) },
         uAspect: { value: 1 },
         uHeading: { value: 0 },
@@ -569,6 +612,14 @@ export class FlipbookPool {
     this.mesh.material.uniforms.uBlur!.value = value;
   }
 
+  /**
+   * Mode "rgba": its coverage remapped through [lo, hi] (0, 0: off): a crossfade of a slowed clip (and a soft clip's
+   * haze) stays solid matter or erodes instead of showing the ground through it.
+   */
+  setSharpen(lo: number, hi: number): void {
+    (this.mesh.material.uniforms.uSharpen!.value as THREE.Vector2).set(lo, hi);
+  }
+
   /** Mode "heat": 0 the clip as it is … 1 it cools from its head (cell right) to soot at its tail (a trail). */
   set taper(value: number) {
     this.mesh.material.uniforms.uTaper!.value = value;
@@ -605,8 +656,9 @@ export class FlipbookPool {
     const rate = options.rate ?? 1;
     const fps = meta.fps * rate;
     const first = options.frame ?? (meta.loop ? 0 : meta.start);
-    const last = Math.min(meta.frames, options.until !== undefined ? options.until + 1 : meta.frames);
-    const life = options.life ?? (meta.loop || rate <= 0 ? 1 : Math.max(1 / 60, (last - first) / Math.max(1e-3, fps)));
+    const slowFrom = slowFromOf(meta, options);
+    const slowFps = slowFrom >= 0 ? meta.fps * Math.max(0.01, options.slowRate!) : 0;
+    const life = playLife(meta, options);
     const tint = options.tint ?? WHITE;
     const k = options.intensity ?? 1;
     const dir = options.dir ?? null;
@@ -645,6 +697,8 @@ export class FlipbookPool {
     st[o + 30] = options.lift ?? 0;
     st[o + 31] = options.span ?? 0;
     st[o + 32] = Math.min(1, Math.max(0, options.erode ?? 0));
+    st[o + 33] = slowFrom;
+    st[o + 34] = slowFps;
   }
 
   /** Draws each sprite at its age (frame 0 at age 0, full alpha unless it fades in), then ages it by `dt`. */
@@ -674,7 +728,7 @@ export class FlipbookPool {
       this.iPos[n * 3 + 2] = st[o + 2]!;
       this.iData[n * 4] = st[o + 6]! * grow;
       this.iData[n * 4 + 1] = st[o + 8]!;
-      this.iData[n * 4 + 2] = st[o + 12]! + age * st[o + 13]!;
+      this.iData[n * 4 + 2] = frameAt(st[o + 12]!, st[o + 13]!, st[o + 33]!, st[o + 34]!, age);
       this.iData[n * 4 + 3] = st[o + 14]! * fadeIn * fadeOut;
       this.iColor[n * 4] = st[o + 21]!;
       this.iColor[n * 4 + 1] = st[o + 22]!;

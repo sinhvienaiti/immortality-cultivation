@@ -5,7 +5,7 @@ import { METAL } from "../../src/view/skills/element-metal";
 import { ElementStage } from "../../src/view/skills/element-stage";
 import { DEFAULT_ELEMENT, elementById, elementKits, elementOrMetal } from "../../src/view/skills/elements";
 import { EmberPool } from "../../src/view/skills/embers";
-import { FlipbookPool, parseFlipbookManifest } from "../../src/view/skills/flipbook";
+import { FlipbookPool, frameAt, parseFlipbookManifest, playLife, type FlipbookMeta, type FlipOptions } from "../../src/view/skills/flipbook";
 import { GroundDecalPool } from "../../src/view/skills/ground-decals";
 import { RibbonPool } from "../../src/view/skills/fxkit";
 import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
@@ -716,7 +716,8 @@ describe("Fire (Sword × Fire, canon D59)", () => {
       });
     }
     expect(qiShown).toBe(0);
-    expect(flame).toBeGreaterThan(10);
+    // It lingers past the shape's own slash (0.88 s, 53 frames: round 3).
+    expect(flame).toBeGreaterThan(64);
     // A big beast (tier 2) cut by the finisher: its seam is the kit's, along the stroke with a length.
     expect(seams).toHaveBeenCalled();
     expect(seams.mock.calls[0]![0].len).toBeGreaterThan(0);
@@ -737,6 +738,61 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(flame.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
     pool.setFlame(null);
     expect(pool.mesh.material).toBe(light);
+  });
+
+  it("lets the fire linger (round 3, the owner's note): the attack as fast, the peak held, a slow burn-down without steps", () => {
+    // The time map: the attack's rate up to the linger frame, the slower rate after it, continuous at the switch.
+    expect(frameAt(1, 22.5, 7, 9, 0)).toBe(1);
+    expect(frameAt(1, 22.5, 7, 9, 6 / 22.5)).toBeCloseTo(7, 6);
+    expect(frameAt(1, 22.5, 7, 9, 6 / 22.5 + 0.5)).toBeCloseTo(11.5, 6);
+    expect(frameAt(1, 22.5, -1, 0, 0.5)).toBeCloseTo(12.25, 6);
+    const burst: FlipbookMeta = { id: "fire-burst", url: "", cols: 4, rows: 4, frames: 16, fps: 18, loop: false, mode: "rgba", aspect: 1.73, pivot: [0.48, 0.97], start: 0, heading: 0 };
+    const ground: FlipbookMeta = { ...burst, id: "fire-ground", fps: 12 };
+    const spawns: { id: string; o: FlipOptions }[] = [];
+    const spy = vi.spyOn(FlipbookPool.prototype, "spawn").mockImplementation(function (this: FlipbookPool, _at, _size, o) {
+      spawns.push({ id: this.id, o: { ...o } });
+    });
+    try {
+      const cam = camera();
+      const tex = sheets();
+      const fx = new SwordSkillFx(swordHost(field(3, true), new THREE.Group(), cam), tex, "high");
+      const stage = stageFor(new THREE.Group(), cam, tex, []);
+      fx.setElement(elementById("fire")!, stage);
+      fx.cast("k1", 0, -6);
+      for (let i = 0; i < 120; i += 1) {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    // The impact lotus (rooted at the beast, rate 1.25 from frame 1): its attack unchanged, its whole life 1.0–1.3 s.
+    const lotus = spawns.filter((s) => s.id === "fire-burst" && s.o.rate === 1.25);
+    expect(lotus.length).toBeGreaterThan(0);
+    for (const s of lotus) {
+      expect(s.o.frame).toBe(1);
+      expect(s.o.slowRate!).toBeLessThan(s.o.rate!);
+      const life = playLife(burst, s.o);
+      expect(life).toBeGreaterThanOrEqual(1.0);
+      expect(life).toBeLessThanOrEqual(1.3);
+      // It burns out by erosion toward char late in that life, never by an alpha fade.
+      expect(s.o.cool!).toBeGreaterThan(0.5);
+      expect(s.o.fadeOut).toBeUndefined();
+    }
+    // The ground fire burns down over 2.5–3.5 s.
+    const fires = spawns.filter((s) => s.id === "fire-ground");
+    expect(fires.length).toBeGreaterThan(0);
+    for (const s of fires) {
+      const life = playLife(ground, s.o);
+      expect(life).toBeGreaterThanOrEqual(2.5);
+      expect(life).toBeLessThanOrEqual(3.5);
+    }
+    // A slowed clip crossfades its frames and its coverage is sharpened (no half-shown veil).
+    const pool = new FlipbookPool("fire-burst", "rgba", 2, 12, new THREE.Texture());
+    pool.setSharpen(0.06, 0.4);
+    expect((pool.mesh.material.uniforms.uSharpen!.value as THREE.Vector2).toArray()).toEqual([0.06, 0.4]);
+    expect(pool.mesh.material.uniforms.uStep!.value).toBe(0);
   });
 
   it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {
