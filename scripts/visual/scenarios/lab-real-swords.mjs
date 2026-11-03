@@ -31,7 +31,8 @@ export default async function (page) {
   const out = join(root, `raw-${phase}`);
   const only = process.env.ONLY ? process.env.ONLY.split(",") : null;
   mkdirSync(out, { recursive: true });
-  await page.goto(`${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind`, { settle: 1500 });
+  // cutin=0.9: the K5 frame tables were timed on the 0.9 s cut-in; the lab's default is 1.7 s since 03/11 (style C).
+  await page.goto(`${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind&cutin=0.9`, { settle: 1500 });
   for (let i = 0; i < 240; i += 1) {
     if (await page.eval("!!(window.__lab && window.__lab.ready)")) break;
     await sleep(250);

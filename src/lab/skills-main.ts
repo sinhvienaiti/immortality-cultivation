@@ -608,12 +608,14 @@ const van = new VanKiemFx(
  * with that file); 1.7 s in all.
  */
 const cutin = new CutIn(document.body);
+const ULT_HOLD = Number(params.get("cutin") ?? "1.7") || 1.7;
 const ULT_CUTIN = {
   name: "MILKY-WAY SWORD RAIN",
   hanzi: "天河劍雨",
-  seconds: Number(params.get("cutin") ?? "1.7") || 1.7,
+  seconds: ULT_HOLD,
   art: CUTIN_ART.c,
-  shoutAt: 1.08,
+  // A shorter hold (?cutin=, the old measurement scenarios pin 0.9) cuts to the shout earlier, never not at all.
+  shoutAt: Math.min(1.08, 0.64 * ULT_HOLD),
 };
 cutin.preload(ULT_CUTIN.art);
 const ultAim = { x: 0, z: -9 };

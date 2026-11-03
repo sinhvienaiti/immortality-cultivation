@@ -28,7 +28,8 @@ const PLAN = {
 export default async function (page) {
   const phase = process.env.PHASE ?? "after";
   const base = process.env.BASE ?? "http://127.0.0.1:3018/skills-lab.html";
-  const url = process.env.URL ?? `${base}?fixed=1&ui=0&weapon=clear-wind${phase === "before" ? "" : ""}`;
+  // cutin=0.9: the K5 frame tables were timed on the 0.9 s cut-in; the lab's default is 1.7 s since 03/11 (style C).
+  const url = process.env.URL ?? `${base}?fixed=1&ui=0&weapon=clear-wind&cutin=0.9${phase === "before" ? "" : ""}`;
   const out = resolve(process.env.OUT_DIR ?? "tmp/shots/power", "raw-" + phase);
   const skills = (process.env.SKILLS ?? (phase === "before" ? "k1,k5" : "k1,k5,k7")).split(",");
   const views = (process.env.VIEWS ?? "play,zoom").split(",");

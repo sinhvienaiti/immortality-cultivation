@@ -91,6 +91,8 @@ export class LabSound {
   private readonly buffers = new Map<string, AudioBuffer>();
   private readonly loading = new Map<string, Promise<AudioBuffer | null>>();
   private readonly last = new Map<string, number>();
+  /** Callouts sounding now (the voice bus), stopped on reset. */
+  private readonly voices = new Set<AudioBufferSourceNode>();
   private discovered: Promise<void> | null = null;
   private readonly impact: Record<"flesh" | "stone" | "spirit", Bucket> = {
     flesh: { open: false, age: 0, count: 0, x: 0, power: 0 },
@@ -215,7 +217,7 @@ export class LabSound {
       if (this.clock - (this.lastRecorded.get(id) ?? -Infinity) < gap) return false;
       this.lastRecorded.set(id, this.clock);
       const url = list[this.rr++ % list.length]!;
-      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: rate * (0.96 + 0.08 * ((this.rr * 0.618) % 1)) });
+      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate) });
       this.played += 1;
       return true;
     }
@@ -229,16 +231,27 @@ export class LabSound {
     this.last.set(id, now);
     const source = context.createBufferSource();
     source.buffer = buffer;
-    // A little variation per take (the kit's ±5 %).
-    source.playbackRate.value = rate * (0.96 + 0.08 * ((this.rr * 0.618) % 1));
+    source.playbackRate.value = this.rateOf(bus, rate);
     const volume = context.createGain();
     volume.gain.value = gain;
     const panner = context.createStereoPanner();
     panner.pan.value = clamp(pan, -1, 1);
     source.connect(volume).connect(panner).connect(this.buses.get(bus) ?? this.master!);
     source.start();
+    if (bus === "voice") {
+      this.voices.add(source);
+      source.onended = () => this.voices.delete(source);
+    }
     this.played += 1;
     return true;
+  }
+
+  /**
+   * A little variation per take (the kit's ±5 %), never on the voice: a callout keeps the picked voice's pitch, and
+   * its stressed word stays where the ultimate's cut-in is timed (callout-k5's "天").
+   */
+  private rateOf(bus: Bus, rate: number): number {
+    return bus === "voice" ? rate : rate * (0.96 + 0.08 * ((this.rr * 0.618) % 1));
   }
 
   /** The first of `ids` that has files, else the last (asked, silent). */
@@ -352,6 +365,15 @@ export class LabSound {
   }
 
   reset(): void {
+    // A callout still sounding (up to 3 s) would shout over the next cut-in.
+    for (const s of this.voices) {
+      try {
+        s.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    this.voices.clear();
     for (const k of Object.keys(this.asked)) delete this.asked[k];
     this.played = 0;
     for (const b of Object.values(this.impact)) b.open = false;

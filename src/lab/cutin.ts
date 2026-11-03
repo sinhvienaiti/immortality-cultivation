@@ -57,11 +57,15 @@ const ART_BAND: Band = [0.12, 0.04, 0.9, 0.82];
 const WIPE_S = 0.2;
 const STAMP_AT = 0.42;
 
+/** A box in a painting, shares of its width and height: left, top, right, bottom. */
+type Box = readonly [number, number, number, number];
 /** One frame of a two-frame painting: its URL, aspect and where her face sits (shares of its width and height). */
 export interface CutInFrame {
   readonly src: string;
   readonly aspect: number;
   readonly face: readonly [number, number];
+  /** What the title must never cover (her face, her hands); without it the title keeps its default place. */
+  readonly keep?: readonly Box[];
 }
 export interface CutInArt {
   readonly gather: CutInFrame;
@@ -82,10 +86,11 @@ const SHAKE_PX = 8;
 
 /** Dev server paths (art-src is never built or committed); ChatGPT paintings, prompts beside them. */
 const CUTIN_DIR = "/art-src/skills/cutin/";
-const frame = (file: string, w: number, h: number, fx: number, fy: number): CutInFrame => ({
+const frame = (file: string, w: number, h: number, fx: number, fy: number, keep?: readonly Box[]): CutInFrame => ({
   src: CUTIN_DIR + file,
   aspect: w / h,
   face: [fx, fy],
+  ...(keep ? { keep } : {}),
 });
 /** The three styles shown to the owner on 03/11: A donghua 3D, B anime cel, C ink and light. */
 export const CUTIN_ART: Readonly<Record<"a" | "b" | "c", CutInArt>> = {
@@ -97,13 +102,40 @@ export const CUTIN_ART: Readonly<Record<"a" | "b" | "c", CutInArt>> = {
     gather: frame("tt-cutin-b-gather.v1-try1.png", 1916, 821, 0.29, 0.21),
     shout: frame("tt-cutin-b-shout.v1-try1.png", 1823, 863, 0.3, 0.32),
   },
+  // The owner's pick. Anchored between her eyes in both frames, so her eyes hold still through the cut; face and hand
+  // boxes measured on the files (review 03/11: the shout anchor was on her hairline, the title on her knuckles).
   c: {
-    gather: frame("tt-cutin-c-gather.v1-try1.png", 1836, 857, 0.3, 0.23),
-    shout: frame("tt-cutin-c-shout.v1-try1.png", 1836, 857, 0.27, 0.23),
+    gather: frame("tt-cutin-c-gather.v1-try1.png", 1836, 857, 0.306, 0.224, [
+      [0.24, 0.08, 0.38, 0.36],
+      [0.33, 0.31, 0.4, 0.59],
+    ]),
+    shout: frame("tt-cutin-c-shout.v1-try1.png", 1836, 857, 0.31, 0.235, [
+      [0.24, 0.12, 0.38, 0.36],
+      [0.43, 0.25, 0.556, 0.554],
+    ]),
   },
 };
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/**
+ * Where a painting frame lands (px: left, top, width, height): her face at (ART_FACE_X, ART_FACE_Y), scaled by `push`
+ * about it and raised by `rise` (share of the height), always covering the band's width and bottom.
+ */
+function artRect(f: CutInFrame, push: number, rise: number, W: number, H: number, bandBot: number): [number, number, number, number] {
+  const w = Math.max(ART_MIN_W * W, ART_MIN_H * H * f.aspect) * push;
+  const h = w / f.aspect;
+  const x = Math.min(0, Math.max(W - w, ART_FACE_X * W - f.face[0] * w));
+  const y = Math.max(bandBot - h, (ART_FACE_Y - rise) * H - f.face[1] * h);
+  return [x, y, w, h];
+}
+
+/** The title's sizes from the English name's (share of the height): the hanzi above it and the seal after it. */
+const NAME_H = 0.062;
+const HANZI_OF_NAME = 0.058 / 0.062;
+const SEAL_OF_NAME = 0.082 / 0.062;
+/** Over a painting the name may shrink to this (share of the height) to keep off her face and hands. */
+const NAME_MIN_H = 0.034;
 const smooth = (t: number): number => {
   const x = clamp01(t);
   return x * x * (3 - 2 * x);
@@ -169,7 +201,15 @@ export class CutIn {
   private readonly artShout: HTMLDivElement;
   private readonly artFlash: HTMLDivElement;
   private readonly titleShade: HTMLDivElement;
-  private readonly preloaded = new Set<string>();
+  /** Decoded painting frames, kept referenced so the decode is not dropped before the ultimate fires. */
+  private readonly images = new Map<string, HTMLImageElement>();
+  /** The English name's settled width in em (measured once per start: no layout read per frame). */
+  private nameEm = 12.9;
+  /** When the shout frame first showed (s), −1 before: its flash, punch and shake count from that frame. */
+  private cutT = -1;
+  /** fitTitle's last result and the screen size it was for ("" after start). */
+  private titleKey = "";
+  private titleFit: readonly [number, number, number] = [0, 0, 0];
   private edges: Band = BAND;
   private t = -1;
   private spec: CutInSpec = { name: "", hanzi: "", seconds: 0.9 };
@@ -279,10 +319,10 @@ export class CutIn {
   /** Starts decoding a painting's frames, so its first cut-in never shows an empty band. */
   preload(art: CutInArt): void {
     for (const f of [art.gather, art.shout]) {
-      if (this.preloaded.has(f.src)) continue;
-      this.preloaded.add(f.src);
+      if (this.images.has(f.src)) continue;
       const img = new Image();
       img.src = f.src;
+      this.images.set(f.src, img);
       void img.decode().catch(() => undefined);
     }
   }
@@ -290,6 +330,8 @@ export class CutIn {
   start(spec: CutInSpec): void {
     this.spec = spec;
     this.t = 0;
+    this.cutT = -1;
+    this.titleKey = "";
     const art = spec.art;
     this.edges = art ? ART_BAND : BAND;
     if (art) {
@@ -309,6 +351,11 @@ export class CutIn {
       this.sealText.append(c);
     }
     this.root.style.display = "block";
+    // The name's settled width (letter-spacing 0.05em) once, at 100 px: the title is laid out from it.
+    this.name.style.fontSize = "100px";
+    this.name.style.letterSpacing = "0.05em";
+    const measured = this.name.offsetWidth;
+    if (measured > 0) this.nameEm = measured / 100;
     this.draw();
   }
 
@@ -335,18 +382,61 @@ export class CutIn {
    * her face on screen (px).
    */
   private placeArt(el: HTMLDivElement, f: CutInFrame, push: number, rise: number, W: number, H: number, bandBot: number): [number, number] {
-    const w = Math.max(ART_MIN_W * W, ART_MIN_H * H * f.aspect) * push;
-    const h = w / f.aspect;
-    const fx = ART_FACE_X * W;
-    const fy = (ART_FACE_Y - rise) * H;
-    const x = Math.min(0, Math.max(W - w, fx - f.face[0] * w));
-    const y = Math.max(bandBot - h, fy - f.face[1] * h);
+    const [x, y, w, h] = artRect(f, push, rise, W, H, bandBot);
     el.style.backgroundSize = `${w}px ${h}px`;
     el.style.backgroundPosition = `${x}px ${y}px`;
     const m = `linear-gradient(180deg,rgba(0,0,0,0) ${y}px,#000 ${y + 0.07 * H}px)`;
     el.style.setProperty("-webkit-mask-image", m);
     el.style.setProperty("mask-image", m);
     return [x + f.face[0] * w, y + f.face[1] * h];
+  }
+
+  /**
+   * Over a painting: the title block (hanzi, name, rule, seal) right-aligned low in the open band, at the largest size
+   * that stays on screen and off every `keep` box of both frames, the punch-in included. Returns the name's left, top
+   * and font size (px); cached per screen size.
+   */
+  private fitTitle(art: CutInArt, W: number, H: number): readonly [number, number, number] {
+    const key = `${W}x${H}`;
+    if (key === this.titleKey) return this.titleFit;
+    const [TOP_L, TOP_R, BOT_L, BOT_R] = this.edges;
+    const bandBot = Math.max(BOT_L, BOT_R) * H;
+    const yAtOpen = (xs: number, v: number): number => {
+      const top = TOP_L + (TOP_R - TOP_L) * xs;
+      const bot = BOT_L + (BOT_R - BOT_L) * xs;
+      return (top + (bot - top) * v) * H;
+    };
+    const pad = 0.012 * H;
+    const keep: Box[] = [];
+    const frames = [
+      [art.gather, [1, 1.025]],
+      [art.shout, [1, 1 + PUNCH + 0.03]],
+    ] as const;
+    for (const [f, pushes] of frames) {
+      for (const push of pushes) {
+        const [x, y, w, h] = artRect(f, push, 0, W, H, bandBot);
+        for (const k of f.keep ?? []) keep.push([x + k[0] * w - pad, y + k[1] * h - pad, x + k[2] * w + pad, y + k[3] * h + pad]);
+      }
+    }
+    const slope = Math.abs(((TOP_R - TOP_L) * H) / W);
+    const right = 0.975 * W;
+    let fit: readonly [number, number, number] = [0, 0, 0];
+    for (let share = NAME_H; share >= NAME_MIN_H - 1e-9; share -= 0.002) {
+      const nz = Math.round(share * H);
+      const nameW = this.nameEm * nz;
+      const nx = right - nameW - 1.34 * nz * SEAL_OF_NAME;
+      // Low in the band: the seal's lowest corner (1.37 × the name's size under its top) on the band's 97 % line.
+      const ny = yAtOpen((nx + nameW / 2) / W, 0.97) - 1.37 * nz;
+      fit = [nx, ny, nz];
+      if (nx < 0.02 * W) continue;
+      const rise = (slope * (right - nx)) / 2;
+      const top = ny - 1.08 * nz * HANZI_OF_NAME - rise;
+      const bottom = ny + 1.37 * nz + rise;
+      if (keep.every((k) => right <= k[0] || nx >= k[2] || bottom <= k[1] || top >= k[3])) break;
+    }
+    this.titleKey = key;
+    this.titleFit = fit;
+    return fit;
   }
 
   private draw(): void {
@@ -357,8 +447,10 @@ export class CutIn {
     const [TOP_L, TOP_R, BOT_L, BOT_R] = this.edges;
     const art = this.spec.art;
     const shoutAt = this.spec.shoutAt ?? 0.45 * T;
-    /** Seconds since the shout frame cut in (negative before). */
-    const since = art ? t - shoutAt : -1;
+    // The cut is latched on the first frame at or past shoutAt, so that frame always shows the full flash and punch.
+    if (art && this.cutT < 0 && t >= shoutAt) this.cutT = t;
+    /** Seconds since the shout frame first showed (negative before). */
+    const since = art && this.cutT >= 0 ? t - this.cutT : -1;
     // Open at once to its full height (the wipe reveals it); close over the last 0.14 s to its middle line.
     const close = smooth((t - (T - 0.14)) / 0.14);
     const open = 1 - close;
@@ -370,11 +462,12 @@ export class CutIn {
     const br = midR + (BOT_R - midR) * open;
     const slide = (1 - easeOut(t / 0.2)) * -3 + close * 5;
     this.band.style.clipPath = `polygon(0% ${tl * 100}%, 100% ${tr * 100}%, 100% ${br * 100}%, 0% ${bl * 100}%)`;
-    // The cut to the shout shakes the band briefly (deterministic: lab time).
+    // The cut to the shout shakes the painting briefly (deterministic: lab time). Only the painting: it overscans the
+    // band, so no strip of the world opens at a screen edge and the gold edges stay on the band's.
     const shake = since >= 0 && since < SHAKE_S ? SHAKE_PX * (1 - since / SHAKE_S) : 0;
     const shx = shake * Math.sin(since * 2 * Math.PI * 22);
     const shy = 0.6 * shake * Math.cos(since * 2 * Math.PI * 27);
-    this.band.style.transform = `translateX(${slide}%) translate(${shx}px, ${shy}px)`;
+    this.band.style.transform = `translateX(${slide}%)`;
     // The ink-splash wipe: a soft wipe left to right whose edge is torn by splatter masks riding it.
     const w = easeOut(t / WIPE_S);
     const edgeX = -12 + 124 * w;
@@ -420,8 +513,11 @@ export class CutIn {
       const s = this.placeArt(this.artShout, art.shout, pushS, 0, W, H, bandBot);
       const fadeIn = smooth((t - 0.04) / 0.1);
       this.artGather.style.opacity = since < 0 ? String(fadeIn) : "0";
-      this.artShout.style.opacity = since < 0 ? "0" : "1";
+      // The waiting shout frame shows at 0.4 % (invisible) so it is rasterised before the cut, not on the cut frame.
+      this.artShout.style.opacity = since < 0 ? String(0.004 * fadeIn) : "1";
       this.titleShade.style.opacity = String(fadeIn);
+      const shk = `translate(${shx}px, ${shy}px)`;
+      for (const d of [this.artGather, this.artShout, this.artFlash]) d.style.transform = shk;
       // The flash sits at her face: full on its first frame, gone in FLASH_S.
       const fl = since >= 0 && since < FLASH_S ? Math.pow(1 - since / FLASH_S, 2) : 0;
       const [fx, fy] = since < 0 ? g : s;
@@ -484,16 +580,17 @@ export class CutIn {
     this.watermark.style.top = `${yAt(0.5, 0.5) - wz * 0.55}px`;
     this.watermark.style.transform = `rotate(${angle}rad) translateX(${0.08 * W * (1 - easeOut(t / 0.35)) - 0.05 * W * clamp01(t / T)}px)`;
     this.watermark.style.opacity = String(0.13 * smooth((t - 0.08) / 0.2) * open);
-    // Over a two-frame painting the title sits low on the right, clear of her thrust hand and arm.
-    const nx = (art ? 0.5 : 0.46) * W;
-    const nz = Math.round(0.062 * H);
-    const ny = (art ? yAt(0.66, 0.86) : yAt(0.6, 0.6)) - nz * 0.5;
+    // Over a two-frame painting the title is laid out from its measured width, clear of her face and hands (fitTitle).
+    const [nx, ny, nz] = art ? this.fitTitle(art, W, H) : [0.46 * W, yAt(0.6, 0.6) - Math.round(NAME_H * H) * 0.5, Math.round(NAME_H * H)];
     const track = 1 - smooth((t - 0.12) / 0.32);
     // The title layer slides in from the right (faster than the painting: parallax) and flashes white as it lands.
     const titleSlide = 0.1 * W * (1 - easeOut((t - 0.08) / 0.26));
     const fl = (t - 0.3) / 0.16;
     const flash = fl > 0 && fl < 1 ? (fl < 0.15 ? fl / 0.15 : 1 - (fl - 0.15) / 0.85) : 0;
-    this.name.style.filter = flash > 0.001 ? `brightness(${1 + 1.6 * flash}) drop-shadow(0 0 ${Math.round(14 * flash)}px rgba(255,250,235,${0.9 * flash}))` : "none";
+    // Over a painting the name keeps its dark legibility shadows through and after its flash.
+    const shadows = art ? " drop-shadow(0 2px 2px rgba(0,0,0,0.9)) drop-shadow(0 0 14px rgba(255,214,120,0.35))" : "";
+    this.name.style.filter =
+      flash > 0.001 ? `brightness(${1 + 1.6 * flash}) drop-shadow(0 0 ${Math.round(14 * flash)}px rgba(255,250,235,${0.9 * flash}))${shadows}` : shadows.trim() || "none";
     this.name.style.fontSize = `${nz}px`;
     this.name.style.letterSpacing = `${0.05 + 0.3 * track}em`;
     this.name.style.left = `${nx}px`;
@@ -501,7 +598,7 @@ export class CutIn {
     this.name.style.transform = `rotate(${angle}rad) translateX(${30 * track + titleSlide}px)`;
     this.name.style.opacity = String(smooth((t - 0.1) / 0.12) * open);
     this.name.style.backgroundPosition = `${100 - 120 * clamp01((t - 0.15) / 0.6)}% 0`;
-    const hz = Math.round(0.058 * H);
+    const hz = Math.round(nz * HANZI_OF_NAME);
     this.hanzi.style.fontSize = `${hz}px`;
     this.hanzi.style.left = `${nx + 0.01 * W}px`;
     this.hanzi.style.top = `${ny - hz * 1.08}px`;
@@ -509,7 +606,7 @@ export class CutIn {
     this.hanzi.style.clipPath = `inset(-20% ${(1 - rv) * 100}% -20% -5%)`;
     this.hanzi.style.transform = `rotate(${angle}rad) translateX(${titleSlide * 0.8}px) scale(${1.06 - 0.06 * rv})`;
     this.hanzi.style.opacity = String(0.92 * open);
-    const rw = 0.44 * W * easeOut((t - 0.22) / 0.25);
+    const rw = (art ? this.nameEm * nz : 0.44 * W) * easeOut((t - 0.22) / 0.25);
     this.rule.style.width = `${rw}px`;
     this.rule.style.left = `${nx}px`;
     this.rule.style.top = `${ny + nz * 1.12}px`;
@@ -518,10 +615,11 @@ export class CutIn {
     // The seal slams down at STAMP_AT after the hanzi (it signs the calligraphy): big and turned, then home with an
     // overshoot.
     // Round 3b (item 6): the seal sits past the end of the English title on its row, never over it (it covered "WAY").
-    const sz = Math.round(0.082 * H);
-    // With a two-frame painting the seal slams with the shout.
-    const st = (t - (art ? shoutAt + 0.05 : STAMP_AT)) / 0.12;
-    const nameW = this.name.offsetWidth || 0.42 * W;
+    const sz = Math.round(nz * SEAL_OF_NAME);
+    // With a two-frame painting the seal slams with the shout, early enough to be seen before the band closes.
+    const st = (t - (art ? Math.min(shoutAt + 0.05, T - 0.4) : STAMP_AT)) / 0.12;
+    // The settled width (measured once in start): no layout read per frame.
+    const nameW = this.nameEm * nz;
     const sx = Math.min(W - sz * 0.62, nx + nameW + sz * 0.72);
     this.seal.style.width = `${sz}px`;
     this.seal.style.height = `${sz}px`;

@@ -24,7 +24,8 @@ export default async function (page) {
   const base = process.env.BASE ?? "http://127.0.0.1:3020/skills-lab.html";
   const q = process.env.Q ?? "high";
   const runs = Number(process.env.RUNS ?? "3");
-  await page.goto(`${base}?fixed=1&ui=0&probe=0&q=${q}&dpr=1&weapon=clear-wind`, { settle: 1500 });
+  // cutin=0.9: the K5 frame tables were timed on the 0.9 s cut-in; the lab's default is 1.7 s since 03/11 (style C).
+  await page.goto(`${base}?fixed=1&ui=0&probe=0&q=${q}&dpr=1&weapon=clear-wind&cutin=0.9`, { settle: 1500 });
   for (let i = 0; i < 240; i += 1) {
     if (await page.eval("!!(window.__lab && window.__lab.ready)")) break;
     await sleep(250);
@@ -52,7 +53,8 @@ export default async function (page) {
     // Thiên Hà after its cut-in (61 frames), its three waves.
     await page.eval("window.__lab.type('k5')");
     await page.eval("window.__lab.step(80)");
-    const k5 = await page.eval("window.__lab.perf(120)");
+    // K5_FRAMES: a longer window for round 3b's sword rain (its waves and climax run past 120 frames).
+    const k5 = await page.eval(`window.__lab.perf(${Number(process.env.K5_FRAMES ?? "120")})`);
     for (const r of [idle, hunt, finish, k5]) if (r?.evalError) throw new Error(r.evalError);
     gpu = hunt.gpu;
     rows.idle.push(stats(idle));
