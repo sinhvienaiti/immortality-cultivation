@@ -23,6 +23,9 @@
  * the bloom pass's bright buffer). ?k5n=<n> sets Thiên Hà's swarm size (≤ K5_MAX) and __lab.perf /
  * __lab.swarm measure its frame cost with the full mesh, the LOD or the
  * stand-in (lab-k5-perf.mjs).
+ * Element (canon D59, ELEMENT_LAYER.md): ?element=metal|fire (default metal), the panel's Element list, E cycles the
+ * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
+ * their shapes and take the element's material (element-kit.ts).
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -49,8 +52,9 @@ import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
 import { MYRIAD_SWORDS_PER_TIER, MyriadSwordsFx, type SwordPose, type MyriadSwordsPhase } from "../view/skills/myriad-swords";
-import { METAL } from "../view/skills/element-metal";
+import { DEFAULT_ELEMENT, elementById, elementKits } from "../view/skills/elements";
 import { ElementStage } from "../view/skills/element-stage";
+import type { FlipbookMode } from "../view/skills/flipbook";
 import { CasterPresence } from "./presence";
 import { SWORD_LIGHT } from "../view/skills/sword-material";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
@@ -694,9 +698,25 @@ function kitTexture(name: string): THREE.Texture {
   return t;
 }
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE });
-// The skills draw in Metal (their own layers) on this stage until the lab can switch elements.
-fx.setElement(METAL, stage);
-myriad.setElement(METAL, stage);
+const elementListeners: ((id: string) => void)[] = [];
+/** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
+async function setElement(id: string): Promise<boolean> {
+  const kit = elementById(id);
+  if (kit === undefined) {
+    console.warn(`[lab] unknown element "${id}"; elements: ${elementKits().map((k) => k.id).join(", ")}`);
+    return false;
+  }
+  await stage.prepare(kit);
+  fx.setElement(kit, stage);
+  myriad.setElement(kit, stage);
+  for (const f of elementListeners) f(kit.id);
+  return true;
+}
+function cycleElement(): void {
+  const kits = elementKits();
+  const i = kits.findIndex((k) => k.id === fx.element.id);
+  void setElement(kits[(i + 1) % kits.length]!.id);
+}
 
 // An enemy blow for the guard demo: a red bolt (enemy colour, canon §21.1) from a beast to the caster.
 const enemyBolt = new SpritePool(8, textures.glow, "add", "camera", 16);
@@ -929,6 +949,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "b" || e.key === "B") enemyShot();
   else if (e.key === "r" || e.key === "R") reset();
   else if (e.key === "w" || e.key === "W") cycleWeapon();
+  else if (e.key === "e" || e.key === "E") cycleElement();
   else if (e.key === "=" || e.key === "+") zoom.zoomIn();
   else if (e.key === "-" || e.key === "_") zoom.zoomOut();
   else if (e.key === "z" || e.key === "Z") zoom.toggle();
@@ -960,6 +981,7 @@ if (params.get("ui") !== "0") {
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
+    ["E", "Next element"],
     ["Z", "Zoom: close view / whole field (wheel, = and - too)"],
   ];
   for (const [key, name] of names) {
@@ -1018,6 +1040,23 @@ if (params.get("ui") !== "0") {
   weaponListeners.push((id) => (select.value = id));
   wl.append(select);
   panel.append(wl);
+  // Element selector (canon D59): the registered kits; one still being built names the look it draws as.
+  const el = document.createElement("label");
+  el.textContent = "Element ";
+  const elSelect = document.createElement("select");
+  elSelect.style.cssText = select.style.cssText;
+  for (const kit of elementKits()) {
+    const o = document.createElement("option");
+    o.value = kit.id;
+    o.textContent = kit.fallback !== undefined ? `${kit.name} (draws as ${kit.fallback} until built)` : kit.name;
+    o.title = kit.verb;
+    elSelect.append(o);
+  }
+  elSelect.value = fx.element.id;
+  elSelect.onchange = () => void setElement(elSelect.value);
+  elementListeners.push((id) => (elSelect.value = id));
+  el.append(elSelect);
+  panel.append(el);
   document.body.append(panel);
 }
 
@@ -1169,6 +1208,13 @@ declare global {
       setWeapon(id: string): Promise<boolean>;
       /** The equipped weapon's id. */
       weapon(): string;
+      /** Canon D59: puts the skills in element `id` (metal, fire, …) and resolves the active element's id; no id: the active one. */
+      element(id?: string): Promise<string>;
+      /**
+       * Plays flipbook clip `id` of art-src/lab/vfx/<folder>/ once at (x, y, z), `sizeM` tall, on the ground's soft fade (a
+       * look at a clip in the lab's light; `mode` overrides the manifest's). Resolves false when the clip is missing.
+       */
+      clip(folder: string, id: string, x: number, y: number, z: number, sizeM: number, mode?: FlipbookMode): Promise<boolean>;
       /** "play" (the game's fixed camera) or "close" on (x, z) at 55° from `distanceM`. */
       camera(mode: "play" | "close", x?: number, z?: number, distanceM?: number): void;
       /** Canon D57 zoom: with a value 0 (whole field) to 1 (close view on Lam) jumps there; returns the shown zoom. */
@@ -1254,6 +1300,8 @@ declare global {
 void (async () => {
   const wanted = params.get("weapon") ?? DEFAULT_WEAPON;
   const equipped = setWeapon(wanted).then((ok) => (ok ? true : setWeapon(DEFAULT_WEAPON)));
+  const wantedElement = params.get("element") ?? DEFAULT_ELEMENT;
+  const elemented = setElement(wantedElement).then((ok) => (ok ? true : setElement(DEFAULT_ELEMENT)));
   // The cut-in's and the numbers' fonts, loaded before the first use (a capture never shows a fallback face).
   const fonts = Promise.all([
     document.fonts.load('400 120px "Ma Shan Zheng"', ULT_CUTIN.hanzi),
@@ -1261,7 +1309,7 @@ void (async () => {
     document.fonts.load('700 36px "Cormorant Garamond"', ULT_CUTIN.name),
     document.fonts.load('italic 700 54px "Cormorant Garamond"', "0123456789.KM×"),
   ]).catch(() => undefined);
-  await Promise.all([herd.load(), caster.load(), look.ready, equipped, fonts]);
+  await Promise.all([herd.load(), caster.load(), look.ready, equipped, elemented, fonts]);
   if (caster.model !== null) {
     presence.attach(caster.model);
     const names = collectLayerNames(fx, new Map());
@@ -1342,6 +1390,17 @@ void (async () => {
     boltActive: () => bolt.active,
     setWeapon,
     weapon: () => fx.weapon,
+    async element(id) {
+      if (id !== undefined) await setElement(id);
+      return fx.element.id;
+    },
+    async clip(folder, id, x, y, z, sizeM, mode) {
+      await stage.flipbooks.ready(folder);
+      const pool = stage.flipbooks.pool(folder, id, mode !== undefined ? { mode } : {});
+      if (!pool.ready) return false;
+      pool.spawn(screenV.set(x, y, z), sizeM, { ground: 0 });
+      return true;
+    },
     zoom(value) {
       if (value !== undefined) {
         customCamera = false;
