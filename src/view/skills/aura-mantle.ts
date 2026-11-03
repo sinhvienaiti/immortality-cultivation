@@ -551,6 +551,10 @@ void main() {
   vec4 vp = viewMatrix * wp;
   float pxPerM = projectionMatrix[1][1] * 0.5 * uView.y / max(-vp.z, 0.05);
   wp.xyz += n * (0.015 + 1.5 * uDpr / pxPerM) * iH.w;
+  // Behind the blade in depth like the cards (0.08 m): the hull is cut from the LOD, whose surface strays from the full
+  // model's by more than the blade's thickness here and there, and must never draw over the steel.
+  vec3 e = wp.xyz - cameraPosition;
+  wp.xyz += e / max(length(e), 1e-3) * 0.08;
   vY = position.y;
   vW = iH.x;
   vFlow = iH.y;
@@ -586,7 +590,8 @@ void main() {
   float st = mix(0.62, texture2D(tStreak, vec2(-(vY + vFlow) * 2.0, 0.2 + 0.6 * graze)).r, uOpt.x);
   vec3 col = mix(uDeep, uBody, st) * (0.6 + 0.4 * smoothstep(0.3, 1.0, fp));
   col = mix(col, uEdge, smoothstep(0.75, 0.95, graze));
-  float a = vW * uLayer * on;
+  // The band's part nearest the blade fades out (the cards' 1 px gap at the steel; the hull never touches the edge).
+  float a = vW * uLayer * on * smoothstep(0.45, 0.75, graze);
   float ink = uInk.a * (0.6 + 0.4 * smoothstep(0.0, 0.25, fp));
   gl_FragColor = vec4((uInk.rgb * ink + col * 0.85) * a, ink * a);
   #include <tonemapping_fragment>
@@ -606,10 +611,29 @@ export function hullGeometry(geometry: THREE.BufferGeometry, bladeFrom: number):
       for (let k = 0; k < 3; k += 1) keep.push(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k));
     }
   }
+  // Outward winding (measured 03/11: Clear Wind's LOD winds inward, which double-sided materials never show; the hull's
+  // back faces were then its near side and drew over the blade): flip it when the shell's signed volume is negative.
+  let vol = 0;
+  for (let i = 0; i + 8 < keep.length; i += 9) {
+    const ax = keep[i]!, ay = keep[i + 1]!, az = keep[i + 2]!;
+    const bx = keep[i + 3]!, by = keep[i + 4]!, bz = keep[i + 5]!;
+    const cx = keep[i + 6]!, cy = keep[i + 7]!, cz = keep[i + 8]!;
+    vol += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+  }
+  if (vol < 0) {
+    for (let i = 0; i + 8 < keep.length; i += 9) {
+      for (let k = 0; k < 3; k += 1) {
+        const t = keep[i + 3 + k]!;
+        keep[i + 3 + k] = keep[i + 6 + k]!;
+        keep[i + 6 + k] = t;
+      }
+    }
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(keep), 3));
   const welded = mergeVertices(g, 1e-4);
   welded.computeVertexNormals();
+  welded.userData.flipped = vol < 0;
   src.dispose();
   g.dispose();
   return welded;
