@@ -102,14 +102,15 @@ export const CUTIN_ART: Readonly<Record<"a" | "b" | "c", CutInArt>> = {
     gather: frame("tt-cutin-b-gather.v1-try1.png", 1916, 821, 0.29, 0.21),
     shout: frame("tt-cutin-b-shout.v1-try1.png", 1823, 863, 0.3, 0.32),
   },
-  // The owner's pick. Anchored between her eyes in both frames, so her eyes hold still through the cut; face and hand
+  // The owner's pick, upscaled 2x with Firefly Upscaler (Adobe model; the 1836 px originals showed soft on screen).
+  // Anchored between her eyes in both frames, so her eyes hold still through the cut; face and hand
   // boxes measured on the files (review 03/11: the shout anchor was on her hairline, the title on her knuckles).
   c: {
-    gather: frame("tt-cutin-c-gather.v1-try1.png", 1836, 857, 0.306, 0.224, [
+    gather: frame("tt-cutin-c-gather-up2x.v1-try1.jpg", 3671, 1713, 0.306, 0.224, [
       [0.24, 0.08, 0.38, 0.36],
       [0.33, 0.31, 0.4, 0.59],
     ]),
-    shout: frame("tt-cutin-c-shout.v1-try1.png", 1836, 857, 0.31, 0.235, [
+    shout: frame("tt-cutin-c-shout-up2x.v1-try1.jpg", 3671, 1713, 0.31, 0.235, [
       [0.24, 0.12, 0.38, 0.36],
       [0.43, 0.25, 0.556, 0.554],
     ]),
