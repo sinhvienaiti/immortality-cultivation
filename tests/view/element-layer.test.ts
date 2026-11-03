@@ -9,7 +9,8 @@ import { FirePointPool } from "../../src/view/skills/fire-points";
 import { FlipbookPool, frameAt, parseFlipbookManifest, playLife, type FlipbookMeta, type FlipOptions } from "../../src/view/skills/flipbook";
 import { GroundDecalPool } from "../../src/view/skills/ground-decals";
 import { HeatRingPool } from "../../src/view/skills/heat-rings";
-import { RibbonPool, SpritePool } from "../../src/view/skills/fxkit";
+import { FlameSlash } from "../../src/view/skills/flame-slash";
+import { BeamPool, RibbonPool, SpritePool } from "../../src/view/skills/fxkit";
 import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
 import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
 import type { TargetField } from "../../src/view/skills/targets";
@@ -950,6 +951,37 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     }
     // Metal keeps its own (no flash or burn: the host's white-cyan and edge).
     expect(METAL.foe).toBeNull();
+  });
+
+  it("draws the flame slash round a smooth spine with regular tongues outside the crescent, its molten lines gold (round 3)", () => {
+    const fs = new FlameSlash(15);
+    const m = fs.mesh.material;
+    // The strip is wider than the crescent (room for the tongues), the spine read from a band table when there is one.
+    expect(Number(m.defines.WIDE)).toBeGreaterThan(1.3);
+    fs.set(0, 0, 0, 10, 0, 0, 80, 1, 1, 0, null, 0.3);
+    expect(m.uniforms.uHalf!.value).toBeCloseTo(80 * Number(m.defines.WIDE), 5);
+    expect(m.fragmentShader).toContain("tBand");
+    expect(m.fragmentShader).toContain("tongue");
+    // Without a readable image (here) it measures the band in the shader.
+    expect(m.uniforms.uHasBand!.value).toBe(0);
+    // The finisher's molten line and the cut seams: gold just over the bloom (white-gold x 4.5 bloomed into a cream band).
+    const cores: number[] = [];
+    const be = vi.spyOn(BeamPool.prototype, "emit").mockImplementation(function (this: BeamPool) {
+      cores.push(Math.max(this.spec.cr, this.spec.cg, this.spec.cb), this.spec.cb / this.spec.cr);
+    });
+    try {
+      const stage = stageFor(new THREE.Group(), camera(), sheets(), []);
+      const hooks = stage.hooksOf(elementById("fire")!).stream!;
+      hooks.finisher!({ ax: -5, az: -6, bx: 5, bz: -6 });
+      hooks.cutSeam!({ target: 0, ux: 1, uz: 0, x: 0, y: 0.5, z: -6, dx: 1, dy: 0, dz: 0, len: 1 });
+    } finally {
+      be.mockRestore();
+    }
+    expect(cores.length).toBe(4);
+    expect(cores[0]!).toBeLessThanOrEqual(2.2);
+    expect(cores[2]!).toBeLessThanOrEqual(2.2);
+    // Gold, not white (blue well under red).
+    expect(cores[1]!).toBeLessThan(0.45);
   });
 
   it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {

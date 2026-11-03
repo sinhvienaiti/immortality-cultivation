@@ -99,7 +99,8 @@ export const FIRE_STREAM: StreamTone = {
   // Amber (hue ~36°): the river's hits flash the beast and tint its rim in it (0xf07020, cubed into the lab's dissolve
   // edge, read as a raw-flesh coral; round 3).
   hitRgb: 0xffa030,
-  cutRgb: 0xffa850,
+  // The finisher's cut flashes the beasts amber too (0xffa850 at the herd's rim level read cream-white).
+  cutRgb: 0xff9a28,
   number: [1.0, 0.45, 0.08],
   slash: { white: [1.0, 0.7, 0.32], body: [0.72, 0.13, 0.008], bodyLit: [0.95, 0.34, 0.035], deep: [0.03, 0.005, 0.002] },
 };
@@ -945,12 +946,14 @@ class FireLayers {
     b.dz = uz;
     b.len0 = b.len1 = l + 3;
     b.grow = 0.26;
-    b.w0 = 0.42;
-    b.w1 = 0.2;
+    // A thin molten line, gold under a small bloom (white-gold x 4.5 over 0.42 m bloomed into a cream band on light
+    // stone: round 3).
+    b.w0 = 0.3;
+    b.w1 = 0.16;
     b.life = 3.0;
-    b.cr = CORE[0] * 4.5;
-    b.cg = CORE[1] * 4.5;
-    b.cb = CORE[2] * 4.5;
+    b.cr = 1.0 * 2.0;
+    b.cg = 0.72 * 2.0;
+    b.cb = 0.32 * 2.0;
     b.hr = ORANGE[0] * 0.85;
     b.hg = ORANGE[1] * 0.85;
     b.hb = ORANGE[2] * 0.85;
@@ -1035,9 +1038,9 @@ class FireLayers {
     b.w0 = 0.12;
     b.w1 = 0.08;
     b.life = 0.85;
-    b.cr = CORE[0] * 3.6;
-    b.cg = CORE[1] * 3.6;
-    b.cb = CORE[2] * 3.6;
+    b.cr = 1.0 * 2.0;
+    b.cg = 0.72 * 2.0;
+    b.cb = 0.32 * 2.0;
     b.hr = ORANGE[0] * 0.8;
     b.hg = ORANGE[1] * 0.8;
     b.hb = ORANGE[2] * 0.8;
