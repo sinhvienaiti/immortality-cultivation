@@ -12,6 +12,9 @@
  *   world-close (the ultimate's world change, the finisher, the bell), and
  *   callout-<slot> then callout (the shout);
  * - hush: 40–60 ms of near-silence before a finisher (the buses duck).
+ * Element (canon D59): with `element` set (the kit's sound suffix, e.g. "fire"), every event plays
+ * "<event>-<element>" when it has files and falls back to "<event>" (release-k1-fire, then release-k1, then
+ * release-fire, then release), live and while recording.
  * Files: art-src/lab/audio/manifest.json ({ "<event-id>": ["a.ogg", …] }) when
  * present, else 01–03 .ogg or .wav in each folder, found by HEAD requests
  * (the dev server answers a missing file with its HTML page, so the type is
@@ -88,6 +91,8 @@ export interface SoundTake {
 
 export class LabSound {
   enabled = true;
+  /** The element's sound suffix (canon D59; "" none): "<event>-<element>" plays first when it has files. */
+  element = "";
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private readonly buses = new Map<Bus, GainNode>();
@@ -113,6 +118,23 @@ export class LabSound {
   private clock = 0;
   private recording: SoundTake[] | null = null;
   private readonly lastRecorded = new Map<string, number>();
+
+  /** `variants`: element suffixes to look for beside each event when there is no manifest (the files are probed). */
+  constructor(private readonly variants: readonly string[] = []) {}
+
+  /** The files `id` plays with the element: "<id>-<element>" when it has some, else `id`'s. */
+  private resolve(id: string): string {
+    if (this.element !== "") {
+      const variant = id + "-" + this.element;
+      if (this.files.has(variant)) return variant;
+    }
+    return id;
+  }
+
+  /** `id` has files, with the element's or its own. */
+  private has(id: string): boolean {
+    return this.files.has(this.resolve(id));
+  }
 
   /**
    * Starts recording from now (captures): later sounds are logged on the lab clock instead of played. Resolves
@@ -165,8 +187,9 @@ export class LabSound {
     } catch {
       // No manifest: probe below.
     }
+    const ids = SOUND_IDS.flatMap((id) => [id, ...this.variants.filter((v) => v !== "").map((v) => id + "-" + v)]);
     await Promise.all(
-      SOUND_IDS.map(async (id) => {
+      ids.map(async (id) => {
         const found: string[] = [];
         for (const n of ["01", "02", "03"]) {
           for (const ext of ["ogg", "wav"]) {
@@ -213,7 +236,10 @@ export class LabSound {
   /** Plays one take of `id` (round robin over its files); silent when it has none (yet). */
   private play(id: string, bus: Bus, gain: number, pan = 0, rate = 1, gap = 0.03): boolean {
     this.asked[id] = (this.asked[id] ?? 0) + 1;
-    const list = this.files.get(id);
+    // The element's take when it has one (counted under its own id too); the gap stays the event's.
+    const use = this.resolve(id);
+    if (use !== id) this.asked[use] = (this.asked[use] ?? 0) + 1;
+    const list = this.files.get(use);
     const recording = this.recording;
     if (recording !== null) {
       // The same choices as live playback (round robin, ±5 % rate, the gap), on the lab clock.
@@ -261,7 +287,7 @@ export class LabSound {
 
   /** The first of `ids` that has files, else the last (asked, silent). */
   private playFirst(a: string, b: string, bus: Bus, gain: number, pan = 0): void {
-    if (this.files.has(a)) this.play(a, bus, gain, pan);
+    if (this.has(a)) this.play(a, bus, gain, pan);
     else this.play(b, bus, gain, pan);
   }
 

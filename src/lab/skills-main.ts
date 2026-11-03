@@ -25,7 +25,8 @@
  * stand-in (lab-k5-perf.mjs).
  * Element (canon D59, ELEMENT_LAYER.md): ?element=metal|fire (default metal), the panel's Element list, E cycles the
  * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
- * their shapes and take the element's material (element-kit.ts).
+ * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
+ * they exist.
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -303,7 +304,7 @@ bus.on((e) => {
 });
 // Sound hooks (canon D58 (6), sound.ts): files under art-src/lab/audio/<event-id>/, silent when absent; the same
 // events as the body, VFX, camera and hit-stop, on the same frame. Audio starts on the first key or click.
-const sound = new LabSound();
+const sound = new LabSound(elementKits().map((k) => k.sound));
 bus.on((e) => sound.on(e));
 const unlockAudio = (): void => sound.unlock();
 window.addEventListener("keydown", unlockAudio);
@@ -709,6 +710,7 @@ async function setElement(id: string): Promise<boolean> {
   await stage.prepare(kit);
   fx.setElement(kit, stage);
   myriad.setElement(kit, stage);
+  sound.element = kit.sound;
   for (const f of elementListeners) f(kit.id);
   return true;
 }
