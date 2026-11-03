@@ -5,7 +5,7 @@
 // round the caster between the frame before the key and the key's frame (the release is visible on that frame).
 // PNGs go to OUT_DIR/raw-<PHASE>/<id>-<frame>.png (WORLD=1 adds <id>-<frame>-world.png, the same frame without the VFX
 // layer), numbers to OUT_DIR/fire-<PHASE>.json; make sheets, then delete raw.
-//   BASE=http://127.0.0.1:3071/skills-lab.html PHASE=fire-mid ELEMENT=fire [GROUND=#d6d0c2] [ONLY=k1,k7] [PLAN=fixes] \
+//   BASE=http://127.0.0.1:3071/skills-lab.html PHASE=fire-mid ELEMENT=fire [GROUND=#d6d0c2] [ONLY=k1,k7] [PLAN=fixes|linger] \
 //   OUT_DIR=tmp/shots/element-fire node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-fire.mjs --width=1920 --height=1080
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -35,6 +35,19 @@ const FIXES = [
   ["k7c", "k7", "close:-4,-7,13", false, [40, 60, 90, 150, 194, 197, 201, 205, 215, 240, 260, 300]],
 ];
 
+/**
+ * PLAN=linger (round 3, the owner's 03/11 note "the flames vanish a little fast"): how long each fire lasts, frames
+ * after the hit. Key 1 close on its first hit (the lotus, embers, the ground fire and the burnt ground; the hit is the
+ * frame the lab's first impact event fires, found by stepping), and key 7 close on its finisher (the flame slash, the
+ * burning seams and the plants) from frame 192 (T_FIN) after the key.
+ */
+const AFTER_HIT = [0, 6, 12, 24, 36, 48, 60, 90, 120, 180];
+const LINGER = [
+  ["k1h", "k1", "close:-0.3,-5.6,10", false, "hit", AFTER_HIT],
+  ["k1hp", "k1", "play", false, "hit", AFTER_HIT],
+  ["k7f", "k7", "close:-4,-7,13", false, 192, AFTER_HIT],
+];
+
 export default async function (page) {
   const base = process.env.BASE ?? "http://127.0.0.1:3071/skills-lab.html";
   const phase = process.env.PHASE ?? "fire";
@@ -48,7 +61,12 @@ export default async function (page) {
   const shots = [];
   const releases = [];
   let loaded = "";
-  for (const [id, slot, cam, typed, frames] of process.env.PLAN === "fixes" ? FIXES : PLAN) {
+  const plan = process.env.PLAN === "fixes" ? FIXES : process.env.PLAN === "linger" ? LINGER : PLAN;
+  for (const item of plan) {
+    const [id, slot, cam, typed] = item;
+    // A linger item: [.., hit ("hit": the first impact event, or a frame after the key), offsets after it].
+    const hitAt = item.length > 5 ? item[4] : null;
+    let frames = item.length > 5 ? item[5] : item[4];
     if (only && !only.includes(id)) continue;
     const url = `${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind&cutin=0.9&element=${element}${ground}${typed ? "&typed=1" : ""}`;
     if (url !== loaded) {
@@ -75,10 +93,23 @@ export default async function (page) {
     if (r && r.evalError) throw new Error(r.evalError);
     let at = 0;
     let maxNonFinite = 0;
-    for (const f of frames) {
+    let hit = 0;
+    if (hitAt === "hit") {
+      // Step to the frame the first blow lands (the lab's impact event), at most 120 frames.
+      while (at < 120 && (await page.eval("window.__lab.events().impact")) === 0) {
+        await page.eval("window.__lab.step(1)");
+        at += 1;
+      }
+      hit = at;
+    } else if (typeof hitAt === "number") hit = hitAt;
+    const offsets = hitAt === null ? null : frames;
+    if (hitAt !== null) frames = frames.map((f) => hit + f);
+    for (let fi = 0; fi < frames.length; fi += 1) {
+      const f = frames[fi];
       if (f > at) await page.eval(`window.__lab.step(${f - at})`);
       at = Math.max(at, f);
-      const file = join(out, `${id}-${String(f).padStart(3, "0")}.png`);
+      const name = offsets === null ? String(f).padStart(3, "0") : "h" + String(offsets[fi]).padStart(3, "0");
+      const file = join(out, `${id}-${name}.png`);
       await page.shot(file);
       const bright = await page.eval("window.__lab.bright()");
       // WORLD=1: the same frame with the VFX layer hidden (no time passes), to tell the effect's pixels from the world's.
@@ -88,7 +119,7 @@ export default async function (page) {
         await page.eval("window.__lab.debugShow('fx', true)");
       }
       maxNonFinite = Math.max(maxNonFinite, bright.nonFinite ?? 0);
-      shots.push({ id, slot, cam, typed, frame: f, file, bright: { pixels: bright.pixels, share: bright.share, max: bright.max, nonFinite: bright.nonFinite }, screen: await page.eval("window.__lab.screen()") });
+      shots.push({ id, slot, cam, typed, frame: f, hit: hitAt === null ? undefined : hit, file, bright: { pixels: bright.pixels, share: bright.share, max: bright.max, nonFinite: bright.nonFinite }, screen: await page.eval("window.__lab.screen()") });
     }
     const m = await page.eval("window.__lab.metrics()");
     const rel = (m.releases ?? []).map((x) => ({ slot: x.slot, keyToVfxMs: x.keyToVfxMs, keyToBodyMs: x.keyToBodyMs }));
