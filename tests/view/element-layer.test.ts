@@ -4,6 +4,7 @@ import type { ElementKit, FoeStatusKind, SwordHooks, StreamHooks } from "../../s
 import { METAL } from "../../src/view/skills/element-metal";
 import { ElementStage } from "../../src/view/skills/element-stage";
 import { DEFAULT_ELEMENT, elementById, elementKits, elementOrMetal } from "../../src/view/skills/elements";
+import { EmberPool } from "../../src/view/skills/embers";
 import { FlipbookPool, parseFlipbookManifest } from "../../src/view/skills/flipbook";
 import { GroundDecalPool } from "../../src/view/skills/ground-decals";
 import { RibbonPool } from "../../src/view/skills/fxkit";
@@ -451,6 +452,55 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     const beams = (fx as unknown as { beams: { mesh: THREE.Mesh<THREE.InstancedBufferGeometry> } }).beams.mesh;
     expect(beams.geometry.instanceCount).toBeGreaterThan(10);
     expect(liveSprites(kitLayer)).toBeGreaterThan(0);
+  });
+
+  it("throws loose embers that live their life and cool to orange, never to dark red (03/11 fixes)", () => {
+    const pool = new EmberPool(8);
+    const u = pool.mesh.material.uniforms;
+    // Its cooling ramp: every stop orange to gold (hue 18–50°), the dim end too.
+    for (const k of ["uHot", "uAmber", "uOrange", "uDim"]) {
+      const c = u[k]!.value as THREE.Vector3;
+      const h = hue([c.x, c.y, c.z]);
+      expect(h).toBeGreaterThan(18);
+      expect(h).toBeLessThan(50);
+    }
+    const s = pool.reset();
+    s.x = 1;
+    s.life = 0.5;
+    s.delay = 0.1;
+    pool.emit();
+    pool.emit();
+    pool.update(1 / 60);
+    expect(pool.mesh.visible).toBe(true);
+    expect(pool.mesh.geometry.instanceCount).toBe(2);
+    for (let i = 0; i < 40; i += 1) pool.update(1 / 60);
+    expect(pool.mesh.visible).toBe(false);
+    pool.emit();
+    pool.clear();
+    pool.update(1 / 60);
+    expect(pool.mesh.visible).toBe(false);
+  });
+
+  it("Fire's blows throw embers into its ember pool, not the heat-field ember atlas", () => {
+    const kitLayer = new THREE.Group();
+    const cam = camera();
+    const tex = sheets();
+    const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
+    const stage = stageFor(kitLayer, cam, tex, []);
+    const fire = elementById("fire")!;
+    fx.setElement(fire, stage);
+    expect(Object.values(fire.flipbooks).flat()).not.toContain("dragonhold-embers");
+    fx.cast("k1", 0, -6);
+    let embers = 0;
+    for (let i = 0; i < 90; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+      kitLayer.traverse((o) => {
+        if (o.name === "fx-embers" && o.visible) embers = Math.max(embers, (o as THREE.Mesh<THREE.InstancedBufferGeometry>).geometry.instanceCount);
+      });
+    }
+    expect(embers).toBeGreaterThan(20);
   });
 
   it("a ribbon pool swaps to the flame look and back without touching its ribbons", () => {

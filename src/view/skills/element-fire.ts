@@ -28,6 +28,7 @@ import * as THREE from "three";
 import type { AftermathArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamSegmentArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, TravelArgs } from "./element-kit";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
+import type { EmberPool } from "./embers";
 import type { BeamPool, SpritePool } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
 import { SWORD_LOOK } from "./sword-material";
@@ -49,7 +50,10 @@ const ORANGE = lin("#FF8A2A");
 const VERMILION = lin("#D93800");
 const SOOT = lin("#240715");
 const CHAR = lin("#1C120E");
-const EMBER_DARK = lin("#6A1606");
+/** Embers cool through amber and orange into a dim orange glow (its green ≥ 0.2 of its red: never dark red). */
+const EMBER_HOT = lin("#FFD884");
+const EMBER_ORANGE = lin("#FA8A26");
+const EMBER_DIM = lin("#AC5A1C");
 /** The white spark mask's tint (the fire-sparks atlas is white on black). */
 const SPARK_TINT = new THREE.Color().setRGB(1, 0.5, 0.12);
 
@@ -115,7 +119,8 @@ class FireLayers {
   private readonly burst: FlipbookPool;
   private readonly charge: FlipbookPool;
   private readonly sparks: FlipbookPool;
-  private readonly embers: FlipbookPool;
+  /** Loose embers: thrown off blows, rising off the burnt ground, cooling white-gold → amber → a dim orange. */
+  private readonly embers: EmberPool;
   private readonly ground: FlipbookPool;
   private readonly sheath: FlipbookPool;
   private readonly line: FlipbookPool;
@@ -142,19 +147,15 @@ class FireLayers {
     this.burst = P.pool(FOLDER, "fire-burst", { mode: "rgba", capacity: 48, renderOrder: 12 });
     this.charge = P.pool(FOLDER, "fire-charge", { mode: "rgba", capacity: 6, renderOrder: 13 });
     this.sparks = P.pool(FOLDER, "fire-sparks", { mode: "fire", capacity: 64, renderOrder: 14 });
-    this.embers = P.pool(FOLDER, "dragonhold-embers", { mode: "heat", capacity: 64, renderOrder: 13 });
     this.ground = P.pool(FOLDER, "fire-ground", { mode: "rgba", capacity: 32, renderOrder: 11 });
     this.sheath = P.pool(FOLDER, "dragonhold-flame-trail", { mode: "heat", capacity: 200, renderOrder: 11 });
     this.line = P.pool(FOLDER, "fire-trail", { mode: "rgba", capacity: 24, renderOrder: 11 });
     for (const p of [this.burst, this.charge, this.ground, this.line]) p.setSoot(SOOT[0] * 1.6, SOOT[1] * 1.6, SOOT[2] * 1.6);
-    for (const p of [this.embers, this.sheath]) p.setHeatRamp(VERMILION, AMBER, WHITE_GOLD);
+    this.sheath.setHeatRamp(VERMILION, AMBER, WHITE_GOLD);
     this.sheath.setSoot(SOOT[0], SOOT[1], SOOT[2]);
-    // Embers cool to a dark ember red, not ink (a soot outline on thin strands read as an ink splash).
-    this.embers.setSoot(EMBER_DARK[0], EMBER_DARK[1], EMBER_DARK[2]);
     // The sheath cools from the blade toward its tail (a soot tail behind the sword), its band read soft.
     this.sheath.taper = 0.6;
     this.sheath.blur = 1.8;
-    this.embers.blur = 0.5;
     this.burst.softM = 0.3;
     this.ground.softM = 0.2;
     this.line.softM = 0.2;
@@ -167,6 +168,8 @@ class FireLayers {
     this.slash = stage.pool(32, T.slash, "add", "camera", 12);
     this.motes = stage.pool(900, T.glow, "add", "camera", 13, { crop: 0.6 });
     this.seams = stage.beams(24, 13);
+    this.embers = stage.embers(1024, 13);
+    this.embers.setRamp(EMBER_HOT, AMBER, EMBER_ORANGE, EMBER_DIM);
   }
 
   // ── Small emitters ─────────────────────────────────────────────────────────
@@ -239,14 +242,61 @@ class FireLayers {
     this.sparks.spawn(v.set(x, y, z), size, o);
   }
 
-  private emberBurst(x: number, y: number, z: number, size: number, heat: number, rate: number, delay = 0): void {
-    const o = flip();
-    o.rate = rate;
-    o.rot = this.stage.rand.range(0, Math.PI * 2);
-    o.intensity = heat;
-    o.cool = 0.5;
-    if (delay > 0) o.delay = delay;
-    this.embers.spawn(v.set(x, y, z), size, o);
+  /**
+   * A burst of loose embers off a blow at (x, y, z): `size` m across (their count and speed grow with it), born at
+   * `heat` (1 white-gold, 0.7 amber), thrown out and up, then carried up by the hot air while they cool and shrink.
+   */
+  private emberBurst(x: number, y: number, z: number, size: number, heat: number, delay = 0): void {
+    const R = this.stage.rand;
+    const n = this.stage.n(Math.round(8 + 9 * size));
+    for (let i = 0; i < n; i += 1) {
+      const s = this.embers.reset();
+      const a = R.range(0, Math.PI * 2);
+      const q = R.next();
+      const r = size * 0.18 * Math.sqrt(R.next());
+      s.x = x + Math.cos(a) * r;
+      s.y = y + R.range(-0.15, 0.2) * size;
+      s.z = z + Math.sin(a) * r;
+      const sp = (1.2 + 3.2 * q) * (0.55 + 0.45 * size);
+      s.vx = Math.cos(a) * sp;
+      s.vz = Math.sin(a) * sp;
+      s.vy = R.range(0.8, 3.2) * (0.6 + 0.4 * size);
+      s.drag = R.range(2.2, 3.4);
+      s.rise = R.range(0.8, 1.6);
+      s.sway = R.range(0.08, 0.3);
+      s.life = R.range(0.7, 1.6);
+      // Mostly small specks, a few bigger (0.08–0.35 m); the fastest are the hottest.
+      s.size = 0.08 + 0.2 * Math.pow(R.next(), 3);
+      s.heat = heat * R.range(0.8, 1.12) * (0.85 + 0.25 * q);
+      s.flicker = R.range(0.25, 0.5);
+      s.delay = delay + R.range(0, 0.06);
+      this.embers.emit();
+    }
+  }
+
+  /** `n` embers rising off burnt ground at (x, z) within `r` m (a fire dying, or the scorch still hot). */
+  private risingEmbers(x: number, z: number, r: number, n: number, heat: number, delay: number): void {
+    const R = this.stage.rand;
+    for (let i = 0; i < n; i += 1) {
+      const s = this.embers.reset();
+      const a = R.range(0, Math.PI * 2);
+      const d = r * Math.sqrt(R.next());
+      s.x = x + Math.cos(a) * d;
+      s.y = R.range(0.05, 0.3);
+      s.z = z + Math.sin(a) * d;
+      s.vx = R.range(-0.3, 0.3);
+      s.vy = R.range(0.5, 1.4);
+      s.vz = R.range(-0.3, 0.3);
+      s.drag = 1.2;
+      s.rise = R.range(0.6, 1.2);
+      s.sway = R.range(0.12, 0.35);
+      s.life = R.range(1.0, 1.9);
+      s.size = 0.07 + 0.13 * Math.pow(R.next(), 2.5);
+      s.heat = heat * R.range(0.8, 1.1);
+      s.flicker = R.range(0.3, 0.55);
+      s.delay = delay + R.range(0, 0.5);
+      this.embers.emit();
+    }
   }
 
   private wisp(x: number, z: number, size: number, delay: number): void {
@@ -282,8 +332,8 @@ class FireLayers {
     o.ground = 0;
     o.frame = 2;
     this.ground.spawn(v.set(x, 0, z), (big ? 1.0 : 0.72) * r, o);
-    // When the ground fire is gone, embers.
-    this.emberBurst(x, 0.25, z, 1.3 * r, 0.75, 1.5, 1.2);
+    // When the ground fire is gone, embers rise off it.
+    this.risingEmbers(x, z, 0.45 * r, this.stage.n(big ? 14 : 9), 0.78, 1.1);
     for (let k = 0; k < (big ? 3 : 2); k += 1) this.wisp(x, z, 0.9 * r, k * 0.18);
     for (const e of this.emitters) {
       if (e.on) continue;
@@ -452,7 +502,7 @@ class FireLayers {
     const c = a.caster;
     this.lotus(c.x + (camF.x / fl) * 0.55, c.z + (camF.z / fl) * 0.55, 2.3 * s, 1.3, 2, 0);
     this.sparkRays(p.x, p.y, p.z, 1.7 * s, 1.4);
-    this.emberBurst(p.x, p.y, p.z, 1.8 * s, 0.9, 1.7);
+    this.emberBurst(p.x, p.y, p.z, 1.2 * s, 1.0);
     const n = this.stage.n(big ? 16 : 10);
     for (let i = 0; i < n; i += 1) this.ember(p.x, p.y, p.z, c.fx, c.fz, 6, Math.PI);
     if (big) {
@@ -513,7 +563,7 @@ class FireLayers {
     this.dot(p.x, p.y, p.z, 1.15 * s, 0.6 * s, 0.08, WHITE_GOLD, 4.5);
     this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 1, 0.7);
     this.sparkRays(p.x, p.y, p.z, 1.5 * s, 1.35);
-    this.emberBurst(p.x, p.y, p.z, 1.6 * s, 0.85, 1.9);
+    this.emberBurst(p.x, p.y, p.z, 1.1 * s, 1.0);
     const n = this.stage.n(8 + Math.round(6 * a.power));
     for (let i = 0; i < n; i += 1) this.ember(p.x, p.y, p.z, a.dx, a.dz, 7, 1.0);
     if (a.big) this.stage.accent(p.x, p.y, p.z, 0.3);
@@ -555,7 +605,8 @@ class FireLayers {
     o.ground = 0;
     o.lift = 0.5;
     this.burst.spawn(v.set(p.x, 0, p.z), r * 3.4, o);
-    this.emberBurst(p.x, p.y, p.z, r * 2.6, 0.66, 1.6);
+    // It falls into embers: a ring of them off its body, cooler than a blow's.
+    this.emberBurst(p.x, p.y, p.z, Math.min(1.6, r * 2), 0.85);
     const n = this.stage.n(10);
     for (let i = 0; i < n; i += 1) {
       const s = this.ash.spec.reset();
@@ -584,7 +635,6 @@ class FireLayers {
 
   frame(dt: number): void {
     SWORD_LOOK.time.value += dt;
-    const R = this.stage.rand;
     for (const e of this.emitters) {
       if (!e.on) continue;
       e.t += dt;
@@ -595,9 +645,7 @@ class FireLayers {
       e.acc += e.rate * (1 - e.t / e.life) * this.stage.dens * dt;
       while (e.acc >= 1) {
         e.acc -= 1;
-        const ang = R.range(0, Math.PI * 2);
-        const d = e.r * Math.sqrt(R.next());
-        this.dot(e.x + Math.cos(ang) * d, 0.12, e.z + Math.sin(ang) * d, R.range(0.1, 0.16), 0.03, R.range(0.7, 1.2), R.next() < 0.3 ? CORE : AMBER, 1.7, R.range(-0.2, 0.2), R.range(0.8, 1.8), R.range(-0.2, 0.2));
+        this.risingEmbers(e.x, e.z, e.r, 1, this.stage.rand.range(0.7, 0.95), 0);
       }
     }
   }
@@ -628,7 +676,7 @@ class FireLayers {
       this.dot(a.x, a.y, a.z, 1.0 * k, 0.5 * k, 0.08, WHITE_GOLD, 4.2);
       this.lotus(a.x + a.dx * 0.15, a.z + a.dz * 0.15, 1.45 * k, 1.3, 1, 0.6);
       this.sparkRays(a.x, a.y, a.z, 1.1 * k, 1.3);
-      this.emberBurst(a.x, a.y, a.z, 1.1 * k, 0.85, 1.9);
+      this.emberBurst(a.x, a.y, a.z, 0.75 * k, 1.0);
       if (k >= 2) this.stage.accent(a.x, a.y, a.z, 0.22);
       return true;
     }
@@ -642,7 +690,7 @@ class FireLayers {
   leadStrike(a: { x: number; z: number }): boolean {
     this.lotus(a.x, a.z, 2.9, 1.15, 1, 0.3);
     this.burnGround(a.x, a.z, 1.3, 1.4, 16, true);
-    this.emberBurst(a.x, 0.6, a.z, 2.0, 0.8, 1.5);
+    this.emberBurst(a.x, 0.6, a.z, 1.4, 0.95);
     return true;
   }
 
@@ -693,7 +741,7 @@ class FireLayers {
       o.frame = 2;
       o.delay = u * 0.26;
       this.ground.spawn(v.set(a.ax + dx * u, 0, a.az + dz * u), 0.95, o);
-      this.emberBurst(a.ax + dx * u, 0.3, a.az + dz * u, 1.6, 0.8, 1.4, u * 0.26 + 1.1);
+      this.risingEmbers(a.ax + dx * u, a.az + dz * u, 0.5, this.stage.n(7), 0.8, u * 0.26 + 1.1);
     }
     const b = this.seams.spec.reset();
     b.x = a.ax - ux * 1.5;
@@ -786,10 +834,10 @@ export const FIRE: ElementKit = {
   textures: {},
   flipbooks: {
     charge: ["fire-charge"],
-    release: ["fire-burst", "fire-sparks", "dragonhold-embers"],
+    release: ["fire-burst", "fire-sparks"],
     travel: ["dragonhold-flame-trail"],
-    impact: ["fire-burst", "fire-sparks", "dragonhold-embers"],
-    aftermath: ["fire-ground", "fire-trail", "dragonhold-embers"],
+    impact: ["fire-burst", "fire-sparks"],
+    aftermath: ["fire-ground", "fire-trail"],
   },
   ground: SCORCH,
   foe: { kind: "burn", seconds: 1.4, rgb: 0xd04a0c },

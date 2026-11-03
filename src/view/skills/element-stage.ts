@@ -1,7 +1,7 @@
 /**
  * What an element kit draws with (canon D59, ELEMENT_LAYER §3): one stage per scene, shared by sword-skills.ts and
  * myriad-swords.ts. A kit's `attach(stage)` runs once here (load time) and makes its own layers through the stage:
- * sprite, ribbon and beam pools on the effect layer, flipbook clips (FlipbookPlayer, from
+ * sprite, ribbon and beam pools on the effect layer, loose embers (EmberPool), flipbook clips (FlipbookPlayer, from
  * art-src/lab/vfx/<kit id>/), ground decals (GroundDecalPool), and reads the base sprite sheets or a named texture.
  * The stage updates and clears everything it made; layers stay hidden while empty, so an element that is not
  * picked costs no draw call. Frame order (the host): begin() before the skills update, update(dt) after them.
@@ -9,6 +9,7 @@
 import type * as THREE from "three";
 import type { ElementHooks, ElementId, ElementKit } from "./element-kit";
 import { FlipbookPlayer, type FlipbookMeta } from "./flipbook";
+import { EmberPool } from "./embers";
 import { BeamPool, Rand, RibbonPool, SpritePool, type SpriteBlend, type SpriteFacing, type SpritePoolOptions } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
 import type { SwordSkillTextures } from "./sword-skills";
@@ -54,6 +55,7 @@ export class ElementStage {
   private readonly sprites: SpritePool[] = [];
   private readonly ribbonPools: RibbonPool[] = [];
   private readonly beamPools: BeamPool[] = [];
+  private readonly emberPools: EmberPool[] = [];
   private readonly decalPools = new Map<string, GroundDecalPool>();
   private readonly hooks = new Map<ElementId, ElementHooks>();
 
@@ -137,6 +139,14 @@ export class ElementStage {
     return b;
   }
 
+  /** A loose-ember pool of the kit's own (load time). */
+  embers(capacity: number, renderOrder = 13): EmberPool {
+    const e = new EmberPool(capacity, renderOrder);
+    this.emberPools.push(e);
+    this.layer.add(e.mesh);
+    return e;
+  }
+
   /** The ground decals drawn with texture `name` (one pool per texture, made on first use; load time). */
   decals(name: string, capacity = 64, renderOrder = 4): GroundDecalPool {
     let d = this.decalPools.get(name);
@@ -160,6 +170,7 @@ export class ElementStage {
     for (const p of this.sprites) p.update(dt);
     for (const b of this.beamPools) b.update(dt);
     for (const r of this.ribbonPools) r.update(dt, this.camera);
+    for (const e of this.emberPools) e.update(dt);
     for (const d of this.decalPools.values()) d.update(dt);
     this.flipbooks.update(dt);
   }
@@ -169,6 +180,7 @@ export class ElementStage {
     for (const p of this.sprites) p.clear();
     for (const b of this.beamPools) b.clear();
     for (const r of this.ribbonPools) for (let i = 0; i < r.capacity; i += 1) r.kill(i);
+    for (const e of this.emberPools) e.clear();
     for (const d of this.decalPools.values()) d.clear();
     this.flipbooks.clear();
     this.rand.reseed(RAND_SEED);
