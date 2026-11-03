@@ -69,6 +69,7 @@ import { FIRE_FURNACE_BLADE, FIRE_LAB } from "../view/skills/element-fire";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
+import { AuraGpuTimer, drawSwordMask, partsCoverage } from "./aura-gates";
 import { flameOf } from "../view/skills/sword-skills";
 import { resolveReducedMotion } from "../ui/skin";
 import { expectedTicks, gradeOf } from "../typing/grading";
@@ -1307,6 +1308,9 @@ function showView(mode: "follow" | "play" | "orbit", distanceM: number): void {
   }
 }
 const screenV = new THREE.Vector3();
+/** The aura gates' tools (aura-gates.ts): the mask's restore, the per-layer GPU timer. */
+let maskRestore: (() => void) | null = null;
+let auraGpu: AuraGpuTimer | null = null;
 
 declare global {
   interface Window {
@@ -1364,6 +1368,12 @@ declare global {
       auraShow(part: "mantle" | "star" | "silk" | "halo" | "all", on: boolean): void;
       /** SWORD_AURA §5.1: one Clear Wind on a fixed 6 s flight (waiting while typed, release, S, a sharp turn and dive, the hit, return, melt). */
       auraSolo(): boolean;
+      /** SWORD_AURA §6: draws the swords' geometric mask to the screen (true; aura-gates.ts), or puts the frame back (false). No time passes. */
+      swordMask(on: boolean): void;
+      /** SWORD_AURA §6 "Chồng lớp": each aura part drawn alone; pixels covered by 0, 1, 2, 3+ parts (half resolution). */
+      auraParts(): { size: number[]; byCount: number[]; parts: Record<string, number> };
+      /** GPU ms of each aura layer's draw over `frames` frames (one layer a frame in turn), or why not. */
+      auraGpu(frames: number): Record<string, unknown>;
       /**
        * Plays flipbook clip `id` of art-src/lab/vfx/<folder>/ once at (x, y, z), `sizeM` tall, on the ground's soft fade (a
        * look at a clip in the lab's light; `mode` overrides the manifest's). Resolves false when the clip is missing.
@@ -1566,13 +1576,49 @@ void (async () => {
       auraSolo.start();
       return true;
     },
+    swordMask(on) {
+      if (on) {
+        maskRestore?.();
+        const d = myriad.auraDebug;
+        const a = swordAura.anchors;
+        const lead = [fx.blades.mesh, d.lead, auraSolo.blade.mesh];
+        const mid = [fx.blades.swarm, d.mid].filter((m): m is THREE.InstancedMesh => m !== null);
+        maskRestore = drawSwordMask(view.stage.renderer, view.scene, view.camera, lead, mid, a?.bladeFrom ?? 0.085, a?.guardFrom ?? -0.125);
+      } else {
+        maskRestore?.();
+        maskRestore = null;
+        view.render(0);
+      }
+    },
+    auraParts() {
+      const d = myriad.auraDebug;
+      const parts: Record<string, THREE.Object3D[]> = { mantle: [swordAura.meshes[0]!], star: [swordAura.meshes[1]!], silk: [fx.ribbonMesh, d.ribbons, auraSolo.silk.mesh] };
+      if (auraMantle.hull !== null) parts.hull = [auraMantle.hull];
+      const r = partsCoverage(view.stage.renderer, view.scene, view.camera, parts);
+      view.render(0);
+      return r;
+    },
+    auraGpu(frames) {
+      auraGpu ??= new AuraGpuTimer(view.stage.renderer, swordAura.timed);
+      auraGpu.arm(true);
+      for (let i = 0; i < frames; i += 1) {
+        frame(1 / 60);
+        auraGpu.frame();
+      }
+      auraGpu.arm(false);
+      return auraGpu.report(view.info().gpu);
+    },
     auraShow(part, on) {
       const meshes = swordAura.meshes;
-      if (part === "mantle" || part === "all") meshes[0]!.visible = on && (meshes[0] as THREE.Mesh & { geometry: THREE.InstancedBufferGeometry }).geometry.instanceCount > 0;
+      if (part === "mantle" || part === "all") {
+        meshes[0]!.visible = on && (meshes[0] as THREE.Mesh & { geometry: THREE.InstancedBufferGeometry }).geometry.instanceCount > 0;
+        if (auraMantle.hull !== null) auraMantle.hull.visible = on && auraMantle.hull.count > 0;
+      }
       if (part === "star" || part === "all") meshes[1]!.visible = on && (meshes[1] as THREE.Mesh & { geometry: THREE.InstancedBufferGeometry }).geometry.instanceCount > 0;
       if (part === "silk" || part === "all") {
         fx.ribbonMesh.visible = on;
         myriad.auraDebug.ribbons.visible = on;
+        auraSolo.silk.mesh.visible = on;
       }
       if (part === "halo" || part === "all") myriad.auraDebug.far.setHalo(on && swordAura.on);
       view.render(0);

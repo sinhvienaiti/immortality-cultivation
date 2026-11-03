@@ -403,8 +403,8 @@ export class MyriadSwordsFx {
   }
 
   /** The lead blades' ribbons and the far swords (the lab hides one to look at an aura layer alone; no time passes). */
-  get auraDebug(): { ribbons: THREE.Object3D; far: SwordImpostors } {
-    return { ribbons: this.ribbons.mesh, far: this.far };
+  get auraDebug(): { ribbons: THREE.Object3D; far: SwordImpostors; lead: THREE.Mesh; mid: THREE.Mesh | null } {
+    return { ribbons: this.ribbons.mesh, far: this.far, lead: this.blades.mesh, mid: this.blades.swarm };
   }
 
   /** Compiles the aura's programs of key 7 (the lead blades' moded ribbons, the far swords' halo) now; they stay off. */
