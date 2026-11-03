@@ -127,7 +127,17 @@ export interface ScreenAccent {
    * The graphic impact frames' palette (screen-fx.ts ImpactPass; display values): the dark frame's world tone, the
    * inverted frame's paper and the accent round figures and cores. Absent: the frames' own (Metal's navy and cyan).
    */
-  readonly frames?: { readonly navy: Rgb; readonly paper: Rgb; readonly accent: Rgb };
+  readonly frames?: {
+    readonly navy: Rgb;
+    readonly paper: Rgb;
+    readonly accent: Rgb;
+    /**
+     * The element's own colour per role (screen-fx.ts FramePalette.roles): the dark frame's focus rays and strike,
+     * the inverted frame's focus lines (and its light as dark shapes), strokes (cores, brush burst) and the figures'
+     * contour. Absent: Metal's roles (cyan rays, a white strike, navy lines, ink strokes, cyan contour).
+     */
+    readonly roles?: { readonly rays: Rgb; readonly strike: Rgb; readonly lines: Rgb; readonly strokes: Rgb; readonly contour: Rgb };
+  };
 }
 
 /**

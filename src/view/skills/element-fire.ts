@@ -858,7 +858,20 @@ export const FIRE: ElementKit = {
   ground: SCORCH,
   foe: { kind: "burn", seconds: 1.4, rgb: 0xd04a0c },
   sigil: { mode: "solid", soot: SEAL_SOOT, sootAlpha: 0.8, body: SEAL_BODY, lit: SEAL_LIT, core: SEAL_CORE },
-  screen: { flash: { tint: [0.55, 0.26, 0.06], strength: 1 }, distortion: 0, frames: { navy: [0.09, 0.03, 0.02], paper: [1.0, 0.84, 0.58], accent: [1.0, 0.5, 0.1] } },
+  // The graphic impact frames in fire (03/11 fixes: its pale peach paper washed the whole screen for two frames): the
+  // dark frame a soot-umber world (hue ~20°, never the enemy red or a blood red) with amber focus rays, black figures,
+  // its light in gold and a white-gold strike; the inverted frame a vermilion-amber ground with that light as dark
+  // soot shapes, black figures with a white-gold contour and soot strokes and brush burst. Display values.
+  screen: {
+    flash: { tint: [0.55, 0.26, 0.06], strength: 1 },
+    distortion: 0,
+    frames: {
+      navy: [0.17, 0.07, 0.02],
+      paper: [0.93, 0.38, 0.06],
+      accent: [1.0, 0.62, 0.12],
+      roles: { rays: [0.62, 0.3, 0.04], strike: [1.0, 0.985, 0.93], lines: [0.15, 0.05, 0.015], strokes: [0.07, 0.025, 0.01], contour: [1.0, 0.8, 0.36] },
+    },
+  },
   sound: "fire",
   attach: (stage) => new FireLayers(stage).hooks(),
 };

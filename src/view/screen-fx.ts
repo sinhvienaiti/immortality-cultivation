@@ -88,6 +88,18 @@ export const SCREEN_TIERS: Readonly<Record<ScreenTier, TierFx>> = {
   ultimate: { shakePx: 16, shakeS: 0.35, rollDeg: 0.35, punch: 0.04, punchS: 0.3, stopMs: 50, finisherStopMs: 110, slow: 0.3, slowS: 0.28, dark: 0.45, darkS: 0.5, hold: 0.45, desat: 0.6, frames: 2, localFrame: true, localPx: 110 },
 };
 
+/**
+ * A graphic frames' palette (display values): the dark frame's world, the inverted frame's paper, the accent; with
+ * `roles`, an element's own colour for each role (dark frame: focus rays, strike; inverted: focus lines, strokes,
+ * contour), and the strike read from its saturated light rather than brightness alone.
+ */
+export interface FramePalette {
+  readonly navy: readonly number[];
+  readonly paper: readonly number[];
+  readonly accent: readonly number[];
+  readonly roles?: { readonly rays: readonly number[]; readonly strike: readonly number[]; readonly lines: readonly number[]; readonly strokes: readonly number[]; readonly contour: readonly number[] };
+}
+
 /** The graphic frames' own palette (display values): navy world, paper, cyan (Metal's; an element may swap it). */
 const FRAME_PALETTE = { navy: [0.035, 0.06, 0.15], paper: [0.95, 0.975, 1.0], accent: [0.22, 0.82, 1.0] } as const;
 
@@ -267,6 +279,15 @@ uniform vec3 uNavy;
 uniform vec3 uInk;
 uniform vec3 uPaper;
 uniform vec3 uCyan;
+#ifdef ROLES
+// An element's own roles (element-kit.ts ScreenAccent.frames, Fire): the dark frame's focus rays and strike, the
+// inverted frame's focus lines, strokes and contour (display values).
+uniform vec3 uRays;
+uniform vec3 uStrike;
+uniform vec3 uLines;
+uniform vec3 uStrokes;
+uniform vec3 uContour;
+#endif
 varying vec2 vUv;
 /** An authored mask placed at xf.xy (uv), xf.z the sheet's size (share of the view's height), turned xf.w on screen. */
 float shapeAt(sampler2D t, vec4 xf, float mirror) {
@@ -298,15 +319,28 @@ void main() {
   float glow = smoothstep(0.5, 0.8, max(l, sat * 1.15)) * (1.0 - core);
   float sa = uHasA > 0.5 ? shapeAt(tShapeA, uA, uMirror.x) : 0.0;
   float sb = uHasB > 0.5 ? shapeAt(tShapeB, uB, uMirror.y) : 0.0;
+#ifdef ROLES
+  // The strike is the element's saturated light and its hottest cores, so pale ground is never read as the strike
+  // (by brightness alone light stone counted as glow and cores and the frame washed out).
+  core = max(smoothstep(0.86, 0.95, l), smoothstep(0.72, 0.88, l) * smoothstep(0.12, 0.3, sat));
+  glow = smoothstep(0.3, 0.55, sat) * smoothstep(0.3, 0.6, mx) * (1.0 - core);
+#endif
   vec3 g;
   float a = uMix;
   if (uLocal.w > 0.0) {
     // A local frame: the burst star (or a procedural eight-ray star) bounds an inverted patch: paper, the figure
     // dark with a cyan contour, the strike's cores and a slash crescent in ink.
     g = uPaper * (1.0 - 0.22 * smoothstep(0.08, 0.5, l));
+#ifdef ROLES
+    g = mix(g, uLines, glow);
+    g = mix(g, uInk, m);
+    g = mix(g, uContour, edge);
+    g = mix(g, uStrokes, max(core, sb));
+#else
     g = mix(g, uInk, m);
     g = mix(g, uCyan, max(edge, glow));
     g = mix(g, uInk, max(core, sb));
+#endif
     float region;
     if (uHasA > 0.5) region = sa;
     else {
@@ -322,18 +356,35 @@ void main() {
     // Dark frame: a navy world keeping a trace of its values, dim cyan focus rays behind the figures, the figures
     // black, the strike white with cyan round it.
     g = uNavy * (0.55 + 0.9 * smoothstep(0.04, 0.45, l));
+#ifdef ROLES
+    g = mix(g, uRays, sa * (1.0 - m));
+    g = mix(g, uInk, m);
+    g = mix(g, uCyan, glow);
+    g = mix(g, uStrike, max(core, sb * (1.0 - m)));
+#else
     g = mix(g, uCyan * 0.42, sa * (1.0 - m));
     g = mix(g, uInk, m);
     g = mix(g, uCyan, glow);
     g = mix(g, vec3(1.0), max(core, sb * (1.0 - m)));
+#endif
   } else {
     // Inverted high key: paper (darker where the world was lighter), ink focus lines behind the figures, dark
     // figures with a cyan contour, the strike's cores as ink strokes in a cyan rim, an ink brush burst at the strike.
     g = uPaper * (1.0 - 0.22 * smoothstep(0.08, 0.5, l));
+#ifdef ROLES
+    // The inverse of the dark frame: the element's ground (Fire: vermilion-amber), its light as dark soot shapes, dark
+    // figures with a white-gold contour, the cores and brush burst as soot strokes.
+    g = mix(g, uLines, sa * 0.85 * (1.0 - m));
+    g = mix(g, uLines, glow);
+    g = mix(g, uInk, m);
+    g = mix(g, uContour, edge);
+    g = mix(g, uStrokes, max(core, sb));
+#else
     g = mix(g, uNavy * 0.6, sa * 0.85 * (1.0 - m));
     g = mix(g, uInk, m);
     g = mix(g, uCyan, max(edge, glow));
     g = mix(g, uInk, max(core, sb));
+#endif
   }
   gl_FragColor = vec4(mix(src.rgb, g, a), 1.0);
 }`;
@@ -361,6 +412,11 @@ class ImpactPass extends Pass {
     uInk: { value: new THREE.Vector3(0.0, 0.004, 0.02) },
     uPaper: { value: new THREE.Vector3(0.95, 0.975, 1.0) },
     uCyan: { value: new THREE.Vector3(0.22, 0.82, 1.0) },
+    uRays: { value: new THREE.Vector3() },
+    uStrike: { value: new THREE.Vector3(1, 1, 1) },
+    uLines: { value: new THREE.Vector3() },
+    uStrokes: { value: new THREE.Vector3() },
+    uContour: { value: new THREE.Vector3() },
   };
   /** Draws the figures' coverage (alpha) into the mask; null: the frame reads the strike alone. */
   drawMask: ((renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) => void) | null = null;
@@ -381,6 +437,16 @@ class ImpactPass extends Pass {
       toneMapped: false,
     });
     this.quad = new FullScreenQuad(this.material);
+  }
+
+  /** Whether the frames draw an element's own roles (ROLES); true when the program changed (prewarm it again). */
+  setRoles(on: boolean): boolean {
+    const d = this.material.defines as Record<string, string>;
+    if (on === "ROLES" in d) return false;
+    if (on) d.ROLES = "";
+    else delete d.ROLES;
+    this.material.needsUpdate = true;
+    return true;
   }
 
   override setSize(width: number, height: number): void {
@@ -583,7 +649,7 @@ export class ScreenFx {
    * full strength; null: none) and the graphic frames' palette (display values: the dark frame's world tone, the
    * inverted frame's paper, the accent round figures and cores; null: Metal's navy, paper and cyan).
    */
-  setAccent(warm: readonly number[] | null, frames: { readonly navy: readonly number[]; readonly paper: readonly number[]; readonly accent: readonly number[] } | null): void {
+  setAccent(warm: readonly number[] | null, frames: FramePalette | null): boolean {
     if (warm === null) this.warmTint.set(0, 0, 0);
     else this.warmTint.set(warm[0]!, warm[1]!, warm[2]!);
     const u = this.impactPass.uniforms;
@@ -591,6 +657,16 @@ export class ScreenFx {
     u.uNavy.value.set(f.navy[0]!, f.navy[1]!, f.navy[2]!);
     u.uPaper.value.set(f.paper[0]!, f.paper[1]!, f.paper[2]!);
     u.uCyan.value.set(f.accent[0]!, f.accent[1]!, f.accent[2]!);
+    // An element's own roles (all five, or none: Metal's frames are drawn by their own program, unchanged).
+    const r = frames?.roles;
+    if (r !== undefined) {
+      u.uRays.value.set(r.rays[0]!, r.rays[1]!, r.rays[2]!);
+      u.uStrike.value.set(r.strike[0]!, r.strike[1]!, r.strike[2]!);
+      u.uLines.value.set(r.lines[0]!, r.lines[1]!, r.lines[2]!);
+      u.uStrokes.value.set(r.strokes[0]!, r.strokes[1]!, r.strokes[2]!);
+      u.uContour.value.set(r.contour[0]!, r.contour[1]!, r.contour[2]!);
+    }
+    return this.impactPass.setRoles(r !== undefined);
   }
 
   /** The element's warm flash on a big blow: `strength` (0–1) of its tint, rising in 20 ms and gone in `seconds`. */

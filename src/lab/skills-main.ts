@@ -738,7 +738,8 @@ async function setElement(id: string): Promise<boolean> {
   sound.element = kit.sound;
   // The screen accent, the herd's hit silhouette and the hero victims' plants follow the element (Metal: their own).
   const flash = kit.screen.flash;
-  screen.setAccent(flash === null ? null : [flash.tint[0] * flash.strength, flash.tint[1] * flash.strength, flash.tint[2] * flash.strength], kit.screen.frames ?? null);
+  // A frame palette with its own roles is another program: compile it now, not on the first blow.
+  if (screen.setAccent(flash === null ? null : [flash.tint[0] * flash.strength, flash.tint[1] * flash.strength, flash.tint[2] * flash.strength], kit.screen.frames ?? null)) screen.prewarm(view.stage.renderer);
   const metal = kit.attach === undefined;
   const t = myriad.tone;
   herd.setElementLook(metal ? null : [t.core[0] * 2.2, t.core[1] * 2.2, t.core[2] * 2.2], metal ? null : [t.halo[0], t.halo[1], t.halo[2]]);

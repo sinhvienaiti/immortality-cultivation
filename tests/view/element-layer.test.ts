@@ -551,6 +551,29 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(rings).toBeGreaterThan(0);
   });
 
+  it("gives the graphic impact frames fire roles: a soot-umber dark frame, a saturated vermilion inverted frame, never pale", () => {
+    const f = elementById("fire")!.screen.frames!;
+    const hsv = (c: readonly number[]): { h: number; s: number; v: number } => {
+      const mx = Math.max(...c);
+      const mn = Math.min(...c);
+      const d = mx - mn;
+      const h = d === 0 ? 0 : mx === c[0] ? (60 * ((c[1]! - c[2]!) / d) + 360) % 360 : mx === c[1] ? 60 * ((c[2]! - c[0]!) / d) + 120 : 60 * ((c[0]! - c[1]!) / d) + 240;
+      return { h, s: mx > 0 ? d / mx : 0, v: mx };
+    };
+    expect(f.roles).toBeDefined();
+    // The inverted frame's ground is saturated (no pale peach paper), the dark frame's world a dark umber (hue ≥ 15°:
+    // never a blood red), both far from the enemy red's hue.
+    expect(hsv(f.paper).s).toBeGreaterThan(0.8);
+    expect(hsv(f.paper).h).toBeGreaterThan(15);
+    expect(hsv(f.navy).h).toBeGreaterThanOrEqual(15);
+    expect(hsv(f.navy).v).toBeLessThan(0.25);
+    expect(hsv(f.roles!.rays).s).toBeGreaterThan(0.8);
+    // The strike is white-hot (not a pale peach), the contour gold.
+    expect(hsv(f.roles!.strike).s).toBeLessThan(0.1);
+    expect(hsv(f.roles!.contour).s).toBeGreaterThan(0.45);
+    expect(METAL.screen.frames).toBeUndefined();
+  });
+
   it("a ribbon pool swaps to the flame look and back without touching its ribbons", () => {
     const pool = new RibbonPool(4, 8, new THREE.Texture());
     const light = pool.mesh.material;
