@@ -27,6 +27,10 @@
  * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
  * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
  * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
+ * Sword aura (docs/games/tu-tien/skills/SWORD_AURA.md §5.1): ?aura=off|a (default off: today's look; a =
+ * wind-silk-mantle), the panel's Aura list, A toggles it, __lab.aura(id) sets it, __lab.auraLayer(name, on, intensity)
+ * switches one layer (MantleSheath, MantleHull, SilkTail, MantleHalo, TipStar); ?motion=reduce (resolveReducedMotion)
+ * gives the reduced-motion version of each layer.
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -60,6 +64,9 @@ import type { FlipbookMode } from "../view/skills/flipbook";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { FIRE_FURNACE_BLADE } from "../view/skills/element-fire";
+import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
+import { resolveReducedMotion } from "../ui/skin";
+import { expectedTicks, gradeOf } from "../typing/grading";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
 
@@ -430,6 +437,11 @@ const k5n = Number(params.get("k5n") ?? "");
 const fx = new SwordSkillFx(hostApi, { ...textures }, quality, Number.isFinite(k5n) && k5n > 0 ? { k5Blades: Math.min(K5_MAX, k5n) } : {});
 // ?trim=0: every blade slot drawn, hidden ones too (how BladeSet drew before 02/11; measurement only).
 fx.blades.drawAll = params.get("trim") === "0";
+// The flying swords' aura (SWORD_AURA §4.8): one owner for both sword modules; off by default (today's look).
+const swordAura = new SwordAura(quality);
+swordAura.reduced = resolveReducedMotion("system", typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches, params.get("motion"));
+swordAura.setDirection(auraIdOf(params.get("aura")));
+fx.setAura(swordAura);
 /** The weapon in the caster's hand (after load: it hangs off Lam's hand bone) and the body it keeps out of. */
 let handSword: HandSword | null = null;
 let bodyProxy: BodyProxy | null = null;
@@ -633,6 +645,14 @@ const myriad = new MyriadSwordsFx(
   { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch, noise: ribbonNoise, slashMask: slashCrescent },
   MYRIAD_SWORDS_PER_TIER[quality],
 );
+myriad.setAura(swordAura);
+const auraListeners: ((id: AuraId) => void)[] = [];
+/** Sets the sword aura's direction (off, a); returns the active one. */
+function setAura(id: AuraId): AuraId {
+  swordAura.setDirection(id);
+  for (const f of auraListeners) f(swordAura.direction);
+  return swordAura.direction;
+}
 /**
  * The ultimate's cut-in (canon D58 (4)): Thiên Hà's last key starts it; the world and the typing timer hold while it
  * plays (lab time), then the skill fires. Style C, ink and light, the owner's pick of 03/11: she gathers with eyes
@@ -699,6 +719,9 @@ async function setWeapon(id: string): Promise<boolean> {
   const ok = await fx.setWeapon(def);
   if (ok) {
     await myriad.setWeapon(def);
+    // The aura's anchors: the full model's (every tier is the same GLB).
+    const models = await loadSwordModels(def);
+    swordAura.setAnchors(models.full.aura, models.full.pommelY);
     // The pinned swords of the hero victims: the same real sword (its full model).
     victims.setSword((await loadSwordModels(def)).full);
     for (const f of weaponListeners) f(def.id);
@@ -739,6 +762,7 @@ async function setElement(id: string): Promise<boolean> {
   fx.setElement(kit, stage);
   myriad.setElement(kit, stage);
   if (BLADE_HEAT === "furnace" && kit.id === "fire") applyBladeLook(FIRE_FURNACE_BLADE);
+  swordAura.setElement(kit);
   sound.element = kit.sound;
   // The screen accent, the herd's hit silhouette and the hero victims' plants follow the element (Metal: their own).
   const flash = kit.screen.flash;
@@ -941,6 +965,10 @@ function updateTyping(dt: number): void {
       break;
     }
     if (typing.typed >= typing.letters) {
+      // The word's grade (src/typing/grading.ts): the lab types without errors at the WPM, so it reads perfect (flash
+      // when faster than 0.85 of the expected time); a perfect or flash word pulses its swords' rings (SWORD_AURA §4.9).
+      const grade = gradeOf({ errors: 0, letters: typing.letters, keyTicks: Math.round((typing.letters - 1) * perLetter * 60), expectedTicks: expectedTicks(typing.letters, Math.round(wpm * 1000)) });
+      if (grade === "perfect" || grade === "flash") swordAura.graded();
       probe.lastKey(typing.slot);
       screen.cut();
       caster.release(typing.slot, typing.tx, typing.tz);
@@ -974,6 +1002,7 @@ function reset(): void {
   compiler.reset();
   numbers.clear();
   myriad.reset();
+  swordAura.hide();
   stage.reset();
   cutin.stop();
   ultDark = false;
@@ -1001,6 +1030,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "=" || e.key === "+") zoom.zoomIn();
   else if (e.key === "-" || e.key === "_") zoom.zoomOut();
   else if (e.key === "z" || e.key === "Z") zoom.toggle();
+  else if (e.key === "a" || e.key === "A") setAura(swordAura.direction === "off" ? "a" : "off");
 });
 window.addEventListener(
   "wheel",
@@ -1031,6 +1061,7 @@ if (params.get("ui") !== "0") {
     ["W", "Next sword"],
     ["E", "Next element"],
     ["Z", "Zoom: close view / whole field (wheel, = and - too)"],
+    ["A", "Sword aura on / off"],
   ];
   for (const [key, name] of names) {
     const b = document.createElement("button");
@@ -1105,6 +1136,23 @@ if (params.get("ui") !== "0") {
   elementListeners.push((id) => (elSelect.value = id));
   el.append(elSelect);
   panel.append(el);
+  // Sword aura selector (SWORD_AURA §5.1): off (today's look) or the owner's pick.
+  const al = document.createElement("label");
+  al.textContent = "Aura ";
+  const auraSelect = document.createElement("select");
+  auraSelect.style.cssText = select.style.cssText;
+  for (const [id, name] of [["off", "Off (today)"], ["a", "Wind-Silk Mantle + tip star"]] as const) {
+    const o = document.createElement("option");
+    o.value = id;
+    o.textContent = name;
+    o.title = AURA_NAMES[id];
+    auraSelect.append(o);
+  }
+  auraSelect.value = swordAura.direction;
+  auraSelect.onchange = () => void setAura(auraIdOf(auraSelect.value));
+  auraListeners.push((id) => (auraSelect.value = id));
+  al.append(auraSelect);
+  panel.append(al);
   document.body.append(panel);
 }
 
@@ -1132,8 +1180,13 @@ function frame(dt: number): void {
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   stage.begin();
+  swordAura.begin();
   fx.update(world, dt);
   myriad.update(world);
+  // The aura wears the swords as both modules drew them this frame (CSS viewport for its crowding count).
+  swordAura.viewW = innerWidth;
+  swordAura.viewH = innerHeight;
+  swordAura.end(world, view.camera);
   // The element kits' own layers move and upload after both skill sets have drawn into them.
   stage.update(world);
   // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
@@ -1260,6 +1313,12 @@ declare global {
       weapon(): string;
       /** Canon D59: puts the skills in element `id` (metal, fire, …) and resolves the active element's id; no id: the active one. */
       element(id?: string): Promise<string>;
+      /** SWORD_AURA §5.1: sets the sword aura ("off", "a" or "wind-silk-mantle"); returns the active one. No id: the active one. */
+      aura(id?: string): string;
+      /** One aura layer on or off with an intensity (MantleSheath, MantleHull, SilkTail, MantleHalo, TipStar); returns every layer's state. */
+      auraLayer(name?: string, on?: boolean, intensity?: number): Record<string, { on: boolean; intensity: number }>;
+      /** The aura's records this frame: swords wearing it, Fire's licking flames, reduced motion. */
+      auraInfo(): Record<string, unknown>;
       /**
        * Plays flipbook clip `id` of art-src/lab/vfx/<folder>/ once at (x, y, z), `sizeM` tall, on the ground's soft fade (a
        * look at a clip in the lab's light; `mode` overrides the manifest's). Resolves false when the clip is missing.
@@ -1444,6 +1503,17 @@ void (async () => {
       if (id !== undefined) await setElement(id);
       return fx.element.id;
     },
+    aura(id) {
+      if (id !== undefined) setAura(auraIdOf(id));
+      return swordAura.direction;
+    },
+    auraLayer(name, on = true, intensity = 1) {
+      if (name !== undefined) swordAura.setLayer(name, on, intensity);
+      const out: Record<string, { on: boolean; intensity: number }> = {};
+      for (const l of AURA_LAYERS) out[l] = { ...swordAura.layers[l] };
+      return out;
+    },
+    auraInfo: () => ({ direction: swordAura.direction, name: AURA_NAMES[swordAura.direction], swords: swordAura.count, flames: swordAura.flames(), reduced: swordAura.reduced, quality }),
     async clip(folder, id, x, y, z, sizeM, mode) {
       await stage.flipbooks.ready(folder);
       const pool = stage.flipbooks.pool(folder, id, mode !== undefined ? { mode } : {});

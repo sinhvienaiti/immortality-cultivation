@@ -52,6 +52,7 @@ import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
 import { applyBladeLook, FaceRoll } from "./sword-material";
+import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
 import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate, GATE_SWORDS } from "./sword-rain";
 import type { TargetField } from "./targets";
 import { DEFAULT_WEAPON, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
@@ -611,6 +612,15 @@ export class SwordSkillFx {
   private plantedN = 0;
   private rainEmberAcc = 0;
 
+  // ── Sword aura (SWORD_AURA; the host's shared owner) ────────────────────────
+  /** The flying swords' aura (null or off: the layers below as they were). */
+  private swordAura: SwordAura | null = null;
+  /** Per blade this frame: it wears the aura (its state + 1; 0 none), its waiting tier's width, its release age, its fade. */
+  private readonly bAura = new Uint8Array(BLADE_CAP);
+  private readonly bAuraLevel = new Float32Array(BLADE_CAP);
+  private readonly bAuraRelease = new Float32Array(BLADE_CAP);
+  private readonly bAuraFade = new Float32Array(BLADE_CAP);
+
   // ── Element layer (canon D59, element-kit.ts) ─────────────────────────────
   /** The element kit these shapes are drawn in (Metal: the layers of this file, no hooks). */
   private kit: ElementKit = METAL;
@@ -767,6 +777,28 @@ export class SwordSkillFx {
     this.skillPal = this.skillPals(this.weaponDef);
     this.use(this.palSlot);
     this.applyColours(this.weaponDef);
+  }
+
+  /**
+   * The flying swords' aura (SWORD_AURA §4.8: the host makes one and hands it to every sword module). Key 1's swords
+   * wear it (waiting at the shoulders and in flight); while it is on, the layers it stands for go (§4.6): the glint
+   * running up a waiting blade, the tip glint, the trail and the silk (one SilkTail), Fire's sheath.
+   */
+  setAura(aura: SwordAura | null): void {
+    this.swordAura = aura;
+  }
+
+  /** The aura is drawn now. */
+  private get auraOn(): boolean {
+    return this.swordAura !== null && this.swordAura.on;
+  }
+
+  /** Blade `i` wears the aura this frame in `state` (pushed in settleBlades with its drawn pose). */
+  private markAura(i: number, state: number, level: number, releaseAge: number, fade: number): void {
+    this.bAura[i] = state + 1;
+    this.bAuraLevel[i] = level;
+    this.bAuraRelease[i] = releaseAge;
+    this.bAuraFade[i] = fade;
   }
 
   /** The colours of `slot` with the equipped weapon (the presence layer and the lab read them). */
@@ -1025,6 +1057,33 @@ export class SwordSkillFx {
       this.bCard[i] = k * P[o + 7]!;
       const roll = this.bRoll[i]! + this.faceRoll(P[o]!, P[o + 1]!, P[o + 2]!, P[o + 3]!, P[o + 4]!, P[o + 5]!);
       this.blades.set(i, P[o]!, P[o + 1]!, P[o + 2]!, P[o + 3]!, P[o + 4]!, P[o + 5]!, P[o + 6]! * k, roll);
+      const aura = this.bAura[i]!;
+      this.bAura[i] = 0;
+      if (aura > 0 && this.swordAura !== null && this.swordAura.on) {
+        // The aura wears the pose as drawn: guard point, tip direction, its length with the scale-in.
+        const a = this.swordAura.input;
+        a.id = i;
+        a.gx = P[o]!;
+        a.gy = P[o + 1]!;
+        a.gz = P[o + 2]!;
+        a.dx = P[o + 3]!;
+        a.dy = P[o + 4]!;
+        a.dz = P[o + 5]!;
+        a.blade = 1.1 * P[o + 6]! * k;
+        a.pommelY = 1 - this.blades.span(i);
+        // The rocking roll on top of the face roll turns the blade's flat away: it reads narrower.
+        a.widthK = Math.max(0.25, Math.abs(Math.cos(this.bRoll[i]!)));
+        a.cls = AURA_LEAD;
+        a.state = aura - 1;
+        a.level = this.bAuraLevel[i]!;
+        a.releaseAge = this.bAuraRelease[i]!;
+        a.presence = k;
+        a.dissolve = Math.max(this.bAuraFade[i]!, this.bDis[i]!);
+        a.bright = 1;
+        a.diving = aura - 1 === AURA_FLY;
+        a.hero = true;
+        this.swordAura.push();
+      }
     }
   }
 
@@ -3107,6 +3166,9 @@ export class SwordSkillFx {
         R[j] = this.bPres[HERO.k1 + j]! <= 0 ? rollGoal : R[j]! + (rollGoal - R[j]!) * kf;
         this.show(HERO.k1 + j, bx, by, bz, dx, dy, dz, 1.35, true, 1, R[j]!);
         this.bladeTint(HERO.k1 + j, 1.3 + 0.5 * Math.max(0, p1) + 0.15 * Math.sin(this.time * 3.3 + ph));
+        // The aura grows with the typing in three tiers (SWORD_AURA §4.9): one, two, three blades shown.
+        const shown = k1.active ? 3 : p1 >= K1_SHOW[2] ? 3 : p1 >= K1_SHOW[1] ? 2 : 1;
+        this.markAura(HERO.k1 + j, AURA_WAIT, shown === 3 ? 1 : shown === 2 ? 0.7 : 0.4, -1, 0);
         const pres = smooth01(this.bPres[HERO.k1 + j]!);
         // The element's waiting blade (its hook) in place of the glint below.
         const waiting = this.hooks.waiting;
@@ -3124,11 +3186,13 @@ export class SwordSkillFx {
           a.u = pres;
           a.dt = dt;
           a.pal = this.pal;
+          a.aura = this.auraOn;
           if (waiting(a)) continue;
         }
-        // A glint runs from the guard to the tip every 0.9 s (0.3 s a run), its size eased: one-frame cards.
+        // A glint runs from the guard to the tip every 0.9 s (0.3 s a run), its size eased: one-frame cards. The aura's
+        // seams carry their own travelling glints instead (SWORD_AURA §4.6).
         const gp = ((this.time + j * 0.31) % 0.9) / 0.3;
-        if (gp < 1 && pres > 0.01) {
+        if (gp < 1 && pres > 0.01 && !this.auraOn) {
           const e = Math.sin(Math.PI * gp) * pres;
           const along = L * (0.12 + 0.82 * gp);
           this.twinkle(bx + dx * along, by + dy * along, bz + dz * along, 0.55 * e, -1, 0.85, this.time * 3 + ph);
@@ -3319,6 +3383,8 @@ export class SwordSkillFx {
         }
         const back = 0.2 * easeOutCubic(clamp01(f.hit / (FLIGHT_HOLD_S + FLIGHT_FOLD_S)));
         this.show(f.blade, f.tx - f.ldx * back, f.ty - f.ldy * back, f.tz - f.ldz * back, f.ldx, f.ldy, f.ldz, FLIGHT_SCALE * (1 - fold), false, 1 - fold);
+        // The aura is struck with it, then melts before the blade as it folds into light.
+        if (f.slot === "k1") this.markAura(f.blade, f.hit < FLIGHT_HOLD_S ? AURA_STRIKE : AURA_FADE, 1, f.t, fold);
         continue;
       }
       f.t += dt;
@@ -3362,6 +3428,7 @@ export class SwordSkillFx {
       f.ldy = dy;
       f.ldz = dz;
       this.show(f.blade, x, y, z, dx, dy, dz, FLIGHT_SCALE);
+      if (f.slot === "k1") this.markAura(f.blade, AURA_FLY, 1, f.t, 0);
       const back = this.pommelBack(FLIGHT_SCALE);
       this.ribbons.push(f.ribbon, x - dx * back, y - dy * back, z - dz * back);
       if (f.silk >= 0) this.pushSilk(f.silk, x, y, z, dx, dy, dz, back, f.blade * 1.3);
@@ -3380,12 +3447,13 @@ export class SwordSkillFx {
         a.u = u;
         a.dt = dt;
         a.pal = this.pal;
+        a.aura = this.auraOn && f.slot === "k1";
       }
       if (u < 1 && (travel === undefined || !travel(this.aTravel))) {
         // A small glint riding the very tip (turning steadily, not a random angle a frame; small, so the blade
-        // itself reads) and sparkle shed along the path.
+        // itself reads) and sparkle shed along the path. With the aura on, its tip star takes the glint's place.
         const tip = FLIGHT_SCALE * 1.1;
-        this.twinkle(x + dx * tip, y + dy * tip, z + dz * tip, 0.42, -1, 0.9, this.time * 2.5 + f.blade);
+        if (!(this.auraOn && f.slot === "k1")) this.twinkle(x + dx * tip, y + dy * tip, z + dz * tip, 0.42, -1, 0.9, this.time * 2.5 + f.blade);
         // Sparkle shed at a rate (per second, by tier), not one a frame: the same at any frame rate.
         f.acc += SHED_RATE * this.dens * dt;
         while (f.acc >= 1) {

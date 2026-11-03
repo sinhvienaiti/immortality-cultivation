@@ -61,6 +61,7 @@ import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
 import { QiSlash } from "./qi-slash";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
 import { applyBladeLook, FaceRoll } from "./sword-material";
+import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_MID, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
 import { flameOf } from "./sword-skills";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
@@ -293,6 +294,8 @@ export class MyriadSwordsFx {
   private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0, aura: false };
   /** The lead blades' trail width over Metal's (the element's trail width ÷ Metal's 0.14 m). */
   private trailK = 1;
+  /** The flying swords' aura (SWORD_AURA; the host's shared owner), null or off: the layers as they were. */
+  private swordAura: SwordAura | null = null;
   private readonly aLead = { x: 0, z: 0 };
   /** Strikes and dives so far in this cast (the perceived-strikes check) and the lead blades' dives. */
   strikes = 0;
@@ -375,6 +378,23 @@ export class MyriadSwordsFx {
     this.blades.setModel(models.full, models.lod);
     this.far.setAtlas(atlas);
   }
+
+  /**
+   * The flying swords' aura (SWORD_AURA §4.8). Lead blades and mid swords wear its mantle, far swords its halo in
+   * the impostors; while it is on, the layers it stands for go (§4.6): a mid sword's one-frame trail (its mantle's
+   * tail takes it), Fire's sheath round a lead blade.
+   */
+  setAura(aura: SwordAura | null): void {
+    this.swordAura = aura;
+  }
+
+  /** The aura is drawn now. */
+  private get auraOn(): boolean {
+    return this.swordAura !== null && this.swordAura.on;
+  }
+
+  /** History ids of key 7's swords in the shared aura (key 1 takes the low ones). */
+  static readonly AURA_ID0 = 512;
 
   /** The element kit key 7 is drawn in. */
   get element(): ElementKit {
@@ -1727,6 +1747,7 @@ export class MyriadSwordsFx {
       const b = st === S_RIVER || st === S_SEED ? this.brightAt(this.u[i]!) : 1;
       const fading = st === S_WOUND ? 0.25 : st === S_FADE ? 0.35 : 0;
       const dissolve = Math.min(1, 1 - s + fading * s);
+      const auraOn = this.auraOn;
       if (cls === SWORD_FAR) {
         F.push(x - dx * h, y - dy * h, z - dz * h, x + dx * h, y + dy * h, z + dz * h, 1 - dissolve, 0.12 + 0.12 * Math.sin(this.t * 1.3 + i), 0.35 + 0.65 * b, 0);
       } else {
@@ -1734,6 +1755,7 @@ export class MyriadSwordsFx {
         const lead = cls === SWORD_LEAD;
         const halo = this.tone.halo;
         B.look(i, lead ? 1 : 0.45 + 0.55 * b, st === S_WOUND ? 0.6 : 0, halo[0] * 0.8, halo[1] * 0.8, halo[2] * 0.8, dissolve, i * 0.37);
+        if (auraOn) this.pushAura(i, x, y, z, dx, dy, dz, len, s, dissolve, b);
       }
       // The element's sword in flight (its hook) in place of the trail below.
       const travel = this.hooks.travel;
@@ -1751,10 +1773,12 @@ export class MyriadSwordsFx {
         a.dissolve = dissolve;
         a.diving = st === S_DIVE;
         a.trailM = cls === SWORD_LEAD || st === S_WOUND ? 0 : (st === S_DIVE ? 0.9 : st === S_GATHER || st === S_FOLD ? 0.6 : st === S_STROKE || st === S_AIM ? 0.25 : 0.45) * len;
+        a.aura = auraOn && cls !== SWORD_FAR;
         if (travel(a)) continue;
       }
-      // The trail: long while diving, a short flowing one in the river (the lead blades have their ribbons).
-      if (cls !== SWORD_LEAD && dissolve < 0.5 && st !== S_WOUND) {
+      // The trail: long while diving, a short flowing one in the river (the lead blades have their ribbons). With the
+      // aura on, a mid sword's mantle tail takes its place (SWORD_AURA §4.6).
+      if (cls !== SWORD_LEAD && dissolve < 0.5 && st !== S_WOUND && !(auraOn && cls === SWORD_MID)) {
         const k = (1 - dissolve * 2) * (cls === SWORD_FAR ? 0.55 : 1) * (0.6 + 0.4 * b);
         const tl = (st === S_DIVE ? 0.9 : st === S_GATHER || st === S_FOLD ? 0.6 : st === S_STROKE || st === S_AIM ? 0.25 : 0.45) * len;
         const t = this.beams.spec.reset();
@@ -1783,6 +1807,38 @@ export class MyriadSwordsFx {
     }
     F.end();
     B.sync();
+  }
+
+  /** Sword i wears the aura this frame, its pose as drawn (middle, direction, length; setWhole's guard point). */
+  private pushAura(i: number, x: number, y: number, z: number, dx: number, dy: number, dz: number, len: number, s: number, dissolve: number, bright: number): void {
+    const A = this.swordAura!;
+    const a = A.input;
+    const pommelY = 1 - this.blades.span(i);
+    const blade = len / (1 - pommelY);
+    const mid = ((1 + pommelY) / 2) * blade;
+    const st = this.st[i];
+    const lead = i < HERO_N;
+    a.id = MyriadSwordsFx.AURA_ID0 + i;
+    a.gx = x - dx * mid;
+    a.gy = y - dy * mid;
+    a.gz = z - dz * mid;
+    a.dx = dx;
+    a.dy = dy;
+    a.dz = dz;
+    a.blade = blade;
+    a.pommelY = pommelY;
+    a.widthK = 1;
+    a.cls = lead ? AURA_LEAD : AURA_MID;
+    a.state = st === S_SEED ? AURA_WAIT : st === S_WOUND ? AURA_STRIKE : st === S_FADE ? AURA_FADE : AURA_FLY;
+    a.level = st === S_SEED ? 0.4 + 0.6 * s : 1;
+    // The lead blades leave the hand on F0: their release (the mantle opens from the collar to the tip).
+    a.releaseAge = lead && this.t < 0.4 && this.flown[i] === 0 ? this.t : -1;
+    a.presence = s;
+    a.dissolve = dissolve;
+    a.bright = st === S_RIVER || st === S_SEED ? bright : 1;
+    a.diving = st === S_DIVE;
+    a.hero = lead;
+    A.push();
   }
 
   reset(): void {
