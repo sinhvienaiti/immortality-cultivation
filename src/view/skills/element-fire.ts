@@ -168,7 +168,8 @@ class FireLayers {
 
   constructor(private readonly stage: ElementStage) {
     const P = stage.flipbooks;
-    this.burst = P.pool(FOLDER, "fire-burst", { mode: "rgba", capacity: 48, renderOrder: 12 });
+    // Key 7 and K5 keep up to ~90 lotuses alive at once (deaths collapse into one each; 03/11 recheck).
+    this.burst = P.pool(FOLDER, "fire-burst", { mode: "rgba", capacity: 96, renderOrder: 12 });
     this.charge = P.pool(FOLDER, "fire-charge", { mode: "rgba", capacity: 6, renderOrder: 13 });
     this.sparks = P.pool(FOLDER, "fire-sparks", { mode: "fire", capacity: 64, renderOrder: 14 });
     this.ground = P.pool(FOLDER, "fire-ground", { mode: "rgba", capacity: 32, renderOrder: 11 });

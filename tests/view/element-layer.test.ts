@@ -717,6 +717,32 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(pool.mesh.material).toBe(light);
   });
 
+  it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {
+    const pool = new FlipbookPool("burst", "rgba", 3, 12, new THREE.Texture());
+    pool.attach({ id: "burst", url: "", cols: 4, rows: 4, frames: 16, fps: 24, loop: false, mode: "rgba", aspect: 1, pivot: [0.5, 0.5], start: 0, heading: 0 }, new THREE.Texture());
+    const at = new THREE.Vector3();
+    // Two long sprites and one short one.
+    pool.spawn(at.set(1, 0, 0), 1, { life: 2 });
+    pool.spawn(at.set(2, 0, 0), 1, { life: 2 });
+    pool.spawn(at.set(3, 0, 0), 1, { life: 0.05 });
+    pool.update(1 / 60);
+    // Full: the new one is dropped, the three live ones are still drawn where they were.
+    pool.spawn(at.set(9, 0, 0), 1, { life: 2 });
+    expect(pool.dropped).toBe(1);
+    pool.update(1 / 60);
+    expect(pool.live).toBe(3);
+    const xs = (): number[] => Array.from({ length: pool.live }, (_, i) => (pool.mesh.geometry.getAttribute("iPos").array as Float32Array)[i * 3]!);
+    expect(xs()).toEqual([1, 2, 3]);
+    // When the short one has burned out, its slot takes the next sprite (the long ones keep theirs).
+    for (let i = 0; i < 4; i += 1) pool.update(1 / 60);
+    pool.spawn(at.set(7, 0, 0), 1, { life: 2 });
+    pool.update(1 / 60);
+    expect(xs()).toEqual([1, 2, 7]);
+    expect(pool.dropped).toBe(1);
+    pool.clear();
+    expect(pool.dropped).toBe(0);
+  });
+
   it("a heat-field flipbook pool reads 'heat' from a manifest and takes its ramp and taper", () => {
     const m = parseFlipbookManifest({ flipbooks: { trail: { file: "t.png", cols: 2, rows: 8, frames: 16, mode: "heat", loop: true } } }, "/v/");
     expect(m.get("trail")!.mode).toBe("heat");

@@ -1,4 +1,4 @@
-// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
+// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; a full pool drops a new sprite instead of cutting a live one short; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
 /**
  * Flipbook sprites for the element layer (canon D59, ELEMENT_LAYER §3 "FlipbookPlayer"): Fire, Thunder and Wind
  * clips, and RGBA clips with real alpha of every element, cut from Adobe Firefly Video into atlases. Media stays
@@ -444,6 +444,8 @@ export class FlipbookPool {
   private static readonly STRIDE = 33;
   private cursor = 0;
   live = 0;
+  /** Sprites dropped since the last clear because every slot held a live one. */
+  dropped = 0;
 
   constructor(
     readonly id: string,
@@ -577,12 +579,29 @@ export class FlipbookPool {
     return this.meta === null ? 0.5 : (this.meta.frames - this.meta.start) / (this.meta.fps * Math.max(0.05, rate));
   }
 
-  /** One sprite at `at`, `size` m tall (its width by the cell's aspect). Draws nothing until an atlas is attached. */
+  /**
+   * One sprite at `at`, `size` m tall (its width by the cell's aspect), in a free slot. Draws nothing until an atlas is
+   * attached. A live sprite is never cut short (a flame lotus vanishing in one frame is a pop): when every slot holds a
+   * live one, the new sprite is dropped (counted in `dropped`; size the pool so it stays 0).
+   */
   spawn(at: THREE.Vector3, size: number, options: FlipOptions = {}): void {
     const meta = this.meta;
     if (meta === null) return;
-    const i = this.cursor;
-    this.cursor = (this.cursor + 1) % this.capacity;
+    const S = FlipbookPool.STRIDE;
+    let i = -1;
+    for (let k = 0, j = this.cursor; k < this.capacity; k += 1) {
+      const life = this.state[j * S + 11]!;
+      if (life <= 0 || this.state[j * S + 10]! >= life) {
+        i = j;
+        break;
+      }
+      j = (j + 1) % this.capacity;
+    }
+    if (i < 0) {
+      this.dropped += 1;
+      return;
+    }
+    this.cursor = (i + 1) % this.capacity;
     const rate = options.rate ?? 1;
     const fps = meta.fps * rate;
     const first = options.frame ?? (meta.loop ? 0 : meta.start);
@@ -693,6 +712,7 @@ export class FlipbookPool {
   clear(): void {
     for (let i = 0; i < this.capacity; i += 1) this.state[i * FlipbookPool.STRIDE + 11] = 0;
     this.live = 0;
+    this.dropped = 0;
     this.mesh.geometry.instanceCount = 0;
     this.mesh.visible = false;
   }
