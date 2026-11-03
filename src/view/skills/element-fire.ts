@@ -82,8 +82,10 @@ const SLASH_DEEP = lin("#E8560E");
 const FOLDER = "fire";
 
 /** Every slot burns in the same ramp; the ultimate a little more golden. Load time (glowOfRamp allocates). */
-const FIRE_GLOW: WeaponGlow = glowOfRamp(["#FFF1C9", "#FF8A2A", "#C2361A"]);
-const FIRE_GLOW_GOLD: WeaponGlow = glowOfRamp(["#FFF4D6", "#FFA53A", "#C2461A"]);
+// A struck beast's tint (its rim flash, its brightening, the lab's dissolve edge) is amber: the ramp's flash mixed
+// toward white read as a white-pink ghost on the beast (round 3).
+const FIRE_GLOW: WeaponGlow = { ...glowOfRamp(["#FFF1C9", "#FF8A2A", "#C2361A"]), flashHex: 0xffa030 };
+const FIRE_GLOW_GOLD: WeaponGlow = { ...glowOfRamp(["#FFF4D6", "#FFA53A", "#C2461A"]), flashHex: 0xffb040 };
 function firePalette(_def: WeaponDef, slot: SwordSlot): WeaponGlow {
   return slot === "k5" ? FIRE_GLOW_GOLD : FIRE_GLOW;
 }
@@ -94,7 +96,9 @@ export const FIRE_STREAM: StreamTone = {
   halo: [0.86, 0.27, 0.03],
   trailCore: [1.6, 0.9, 0.32],
   flash: "#ffb060",
-  hitRgb: 0xf07020,
+  // Amber (hue ~36°): the river's hits flash the beast and tint its rim in it (0xf07020, cubed into the lab's dissolve
+  // edge, read as a raw-flesh coral; round 3).
+  hitRgb: 0xffa030,
   cutRgb: 0xffa850,
   number: [1.0, 0.45, 0.08],
   slash: { white: [1.0, 0.7, 0.32], body: [0.72, 0.13, 0.008], bodyLit: [0.95, 0.34, 0.035], deep: [0.03, 0.005, 0.002] },
@@ -1155,7 +1159,9 @@ export const FIRE: ElementKit = {
     aftermath: ["fire-ground", "fire-trail"],
   },
   ground: SCORCH,
-  foe: { kind: "burn", seconds: 1.4, rgb: 0xd04a0c },
+  // A struck beast flashes amber-gold (white-gold read as a white-pink ghost), a kill burns away from a white-gold
+  // edge through amber and orange with char behind it (never coral or raw flesh: round 3).
+  foe: { kind: "burn", seconds: 1.4, rgb: 0xd04a0c, flash: [1.25, 0.58, 0.09], burn: { hot: [2.2, 1.75, 0.95], mid: [1.6, 0.68, 0.05], deep: [0.85, 0.2, 0.01], char: 0.82 } },
   sigil: { mode: "solid", soot: SEAL_SOOT, sootAlpha: 0.8, body: SEAL_BODY, lit: SEAL_LIT, core: SEAL_CORE },
   // The graphic impact frames in fire (03/11 fixes: its pale peach paper washed the whole screen for two frames): the
   // dark frame a soot-umber world (hue ~20°, never the enemy red or a blood red) with amber focus rays, black figures,

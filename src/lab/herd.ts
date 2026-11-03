@@ -130,10 +130,23 @@ const DISSOLVE_VERT = "#include <begin_vertex>\n\tvDissolve = iDissolve;\n\tvEdg
  * The element's look on the herd (canon D59): the one-frame hit silhouette's light (linear HDR; Metal white-cyan,
  * Fire white-gold) and a hero victim's rim (linear; Metal cyan). Set by the lab's element switch.
  */
-const HERD_LOOK = { white: { value: new THREE.Vector3(1.5, 2.0, 2.2) } };
+const HERD_LOOK = {
+  white: { value: new THREE.Vector3(1.5, 2.0, 2.2) },
+  // An element's burning-away kill edge (LAB_BURN): hot, mid, deep, and the char behind it (w).
+  burnHot: { value: new THREE.Vector3() },
+  burnMid: { value: new THREE.Vector3() },
+  burnDeep: { value: new THREE.Vector3() },
+  burnChar: { value: 0 },
+};
 const HERO_RIM: [number, number, number] = [0.06, 0.55, 0.95];
 
 const DISSOLVE_FRAG_PARS = `uniform vec3 uLabWhite;
+#ifdef LAB_BURN
+uniform vec3 uLabBurnHot;
+uniform vec3 uLabBurnMid;
+uniform vec3 uLabBurnDeep;
+uniform float uLabChar;
+#endif
 varying float vWhite;
 varying float vDissolve;
 varying vec3 vEdge;
@@ -156,6 +169,21 @@ float labDissolveN() {
   return n;
 }
 `;
+/**
+ * The dissolve's glowing edge (emissive): in the edge colour; with an element's burn (LAB_BURN, Fire) a kill instead
+ * burns away: white-gold at the very edge, amber, then orange, and the body charred just behind it.
+ */
+const DISSOLVE_EDGE = [
+  "#ifdef LAB_BURN",
+  "\tif ( vDissolve > 0.0 && vCut.w > 0.001 ) {",
+  "\t\tfloat labW = labDn - labTh;",
+  "\t\ttotalEmissiveRadiance += uLabBurnHot * ( 1.0 - smoothstep( 0.0, 0.025, labW ) ) + uLabBurnMid * smoothstep( 0.0, 0.02, labW ) * ( 1.0 - smoothstep( 0.03, 0.075, labW ) ) + uLabBurnDeep * smoothstep( 0.05, 0.08, labW ) * ( 1.0 - smoothstep( 0.09, 0.17, labW ) );",
+  "\t\tdiffuseColor.rgb *= mix( 1.0 - uLabChar, 1.0, smoothstep( 0.1, 0.3, labW ) );",
+  "\t} else if ( vDissolve > 0.0 ) totalEmissiveRadiance += vEdge * ( 1.0 - smoothstep( 0.0, 0.09, labDn - labTh ) );",
+  "#else",
+  "\tif ( vDissolve > 0.0 ) totalEmissiveRadiance += vEdge * ( 1.0 - smoothstep( 0.0, 0.09, labDn - labTh ) );",
+  "#endif",
+].join("\n");
 /** Discard below the threshold (−0.05 at 0: nothing; 1.05 at 1: all). */
 const DISSOLVE_DISCARD = "\tfloat labDn = labDissolveN();\n\tfloat labTh = vDissolve * 1.1 - 0.05;\n\tif ( vDissolve > 0.0 && labDn < labTh ) discard;";
 
@@ -163,6 +191,8 @@ export class LabHerd implements TargetField {
   readonly size = MAX;
   readonly group = new THREE.Group();
   private readonly meshes: THREE.InstancedMesh[] = [];
+  /** Kills burn away (an element's FoeStatus.burn, setBurn). */
+  private burnOn = false;
   private readonly dissolveAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly edgeAttr: THREE.InstancedBufferAttribute[] = [];
   private readonly rimAttr: THREE.InstancedBufferAttribute[] = [];
@@ -303,6 +333,8 @@ export class LabHerd implements TargetField {
       geometry.setAttribute("iCut", cut);
       const material = (Array.isArray(src.material) ? src.material[0]! : src.material) as THREE.MeshStandardMaterial;
       LabHerd.dissolvable(material);
+      // An element switched before the models arrived (the lab's ?element=) still burns its kills away.
+      LabHerd.burnable(material, this.burnOn);
       const inst = new THREE.InstancedMesh(geometry, material, n);
       inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
@@ -327,6 +359,10 @@ export class LabHerd implements TargetField {
   private static dissolvable(material: THREE.MeshStandardMaterial): void {
     material.onBeforeCompile = (shader) => {
       shader.uniforms.uLabWhite = HERD_LOOK.white;
+      shader.uniforms.uLabBurnHot = HERD_LOOK.burnHot;
+      shader.uniforms.uLabBurnMid = HERD_LOOK.burnMid;
+      shader.uniforms.uLabBurnDeep = HERD_LOOK.burnDeep;
+      shader.uniforms.uLabChar = HERD_LOOK.burnChar;
       shader.vertexShader = DISSOLVE_VERT_PARS + shader.vertexShader.replace("#include <begin_vertex>", DISSOLVE_VERT);
       shader.fragmentShader =
         DISSOLVE_FRAG_PARS +
@@ -334,7 +370,7 @@ export class LabHerd implements TargetField {
           .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\n" + DISSOLVE_DISCARD)
           .replace(
             "#include <emissivemap_fragment>",
-            "#include <emissivemap_fragment>\n\tif ( vDissolve > 0.0 ) totalEmissiveRadiance += vEdge * ( 1.0 - smoothstep( 0.0, 0.09, labDn - labTh ) );" +
+            "#include <emissivemap_fragment>\n" + DISSOLVE_EDGE +
               // The hit rim: fresnel in the blow's colour (HDR on the silhouette, a faint fill inside so it reads at 30 px).
               "\n\tfloat labRim = 1.0 - clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );\n\ttotalEmissiveRadiance += vRim * ( 0.12 + 1.6 * labRim * labRim );" +
               // A hero victim's one-frame silhouette: the whole body white-cyan light (round 3a, P6).
@@ -533,6 +569,31 @@ export class LabHerd implements TargetField {
     HERO_RIM[0] = r[0]!;
     HERO_RIM[1] = r[1]!;
     HERO_RIM[2] = r[2]!;
+  }
+
+  /**
+   * An element's burning-away kill edge (canon D59, element-kit.ts FoeStatus.burn; Fire, round 3: the dissolve edge
+   * in the killer's colour cubed read as a raw-flesh coral); null: the edge in the killer's colour. Recompiles the
+   * species' programs (load time, on an element switch).
+   */
+  setBurn(burn: { hot: readonly number[]; mid: readonly number[]; deep: readonly number[]; char: number } | null): void {
+    if (burn !== null) {
+      HERD_LOOK.burnHot.value.set(burn.hot[0]!, burn.hot[1]!, burn.hot[2]!);
+      HERD_LOOK.burnMid.value.set(burn.mid[0]!, burn.mid[1]!, burn.mid[2]!);
+      HERD_LOOK.burnDeep.value.set(burn.deep[0]!, burn.deep[1]!, burn.deep[2]!);
+      HERD_LOOK.burnChar.value = burn.char;
+    }
+    this.burnOn = burn !== null;
+    for (const mesh of this.meshes) LabHerd.burnable(mesh.material as THREE.MeshStandardMaterial, this.burnOn);
+  }
+
+  /** Adds or removes LAB_BURN on a species' material (a recompile only when it changes). */
+  private static burnable(m: THREE.MeshStandardMaterial, on: boolean): void {
+    const d = (m.defines ??= {}) as Record<string, string>;
+    if (on === "LAB_BURN" in d) return;
+    if (on) d.LAB_BURN = "";
+    else delete d.LAB_BURN;
+    m.needsUpdate = true;
   }
 
   /** A one-frame white-cyan silhouette on a struck beast (the basic shot's and slot 1's target, round 3a P8). */

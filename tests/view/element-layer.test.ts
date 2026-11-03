@@ -923,6 +923,35 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     }
   });
 
+  it("strikes and burns beasts in fire's own colours: an amber-gold hit, a kill burning away gold to orange, never coral or pink", () => {
+    const fire = elementById("fire")!;
+    const hueOf = (c: readonly number[]): { h: number; s: number } => {
+      const hsl = { h: 0, s: 0, l: 0 };
+      // Linear HDR: its hue and saturation in display terms (normalised to its brightest channel).
+      const m = Math.max(c[0]!, c[1]!, c[2]!, 1e-6);
+      new THREE.Color().setRGB(c[0]! / m, c[1]! / m, c[2]! / m).getHSL(hsl, THREE.SRGBColorSpace);
+      return { h: hsl.h * 360, s: hsl.s };
+    };
+    const hex = (n: number): number[] => [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+    const foe = fire.foe!;
+    // The hit silhouette: amber-gold (saturated), not white-pink.
+    expect(hueOf(foe.flash!).h).toBeGreaterThan(25);
+    expect(hueOf(foe.flash!).h).toBeLessThan(50);
+    expect(hueOf(foe.flash!).s).toBeGreaterThan(0.8);
+    // The kill's burning edge: white-gold, amber, orange (never under ~18°: coral and raw flesh live at 0–15°), char behind.
+    for (const c of [foe.burn!.hot, foe.burn!.mid, foe.burn!.deep]) expect(hueOf(c).h).toBeGreaterThan(18);
+    expect(foe.burn!.char).toBeGreaterThan(0.5);
+    // What the struck beast is tinted with (river hits, key 1's blows): amber, not the coral-prone vermilion.
+    for (const n of [fire.stream.hitRgb, fire.palette({} as never, "k1").flashHex]) {
+      const h = { h: 0, s: 0, l: 0 };
+      new THREE.Color().setRGB(...(hex(n) as [number, number, number]), THREE.SRGBColorSpace).getHSL(h, THREE.SRGBColorSpace);
+      expect(h.h * 360).toBeGreaterThan(28);
+      expect(h.s).toBeGreaterThan(0.8);
+    }
+    // Metal keeps its own (no flash or burn: the host's white-cyan and edge).
+    expect(METAL.foe).toBeNull();
+  });
+
   it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {
     const pool = new FlipbookPool("burst", "rgba", 3, 12, new THREE.Texture());
     pool.attach({ id: "burst", url: "", cols: 4, rows: 4, frames: 16, fps: 24, loop: false, mode: "rgba", aspect: 1, pivot: [0.5, 0.5], start: 0, heading: 0 }, new THREE.Texture());

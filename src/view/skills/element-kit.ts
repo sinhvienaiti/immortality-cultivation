@@ -112,6 +112,17 @@ export interface FoeStatus {
   readonly seconds: number;
   /** Its colour on the foe (0xRRGGBB, the rim's tint). */
   readonly rgb: number;
+  /**
+   * The struck foe's one-frame hit silhouette light (linear HDR; VFX_STANDARD §3: a hit carries the attacker's colour).
+   * Absent: the host's own (the lab: Metal's white-cyan, else the stream's core × 2.2).
+   */
+  readonly flash?: Rgb;
+  /**
+   * A kill by this element burns the foe away (the host's dissolve edge): hot at the very edge, then mid, then deep
+   * (linear HDR, falling off over the edge's width), the body charred behind it by `char` (0–1). Absent: the host's
+   * edge in the killer's colour.
+   */
+  readonly burn?: { readonly hot: Rgb; readonly mid: Rgb; readonly deep: Rgb; readonly char: number };
 }
 
 /**
