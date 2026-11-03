@@ -496,6 +496,45 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(pool.mesh.visible).toBe(false);
   });
 
+  it("never cuts a live ember short when the pool is full: the new one is dropped (03/11 recheck: key 7 overwrote 1,020 live embers)", () => {
+    const pool = new EmberPool(4);
+    const p0 = (pool.mesh.geometry.getAttribute("iP0").array as Float32Array).slice();
+    for (let i = 0; i < 4; i += 1) {
+      const s = pool.reset();
+      s.x = i + 1;
+      s.life = 1;
+      expect(pool.emit()).toBe(true);
+    }
+    pool.update(1 / 60);
+    const before = (pool.mesh.geometry.getAttribute("iP0").array as Float32Array).slice();
+    expect(before).not.toEqual(p0);
+    const s = pool.reset();
+    s.x = 9;
+    s.life = 1;
+    expect(pool.emit()).toBe(false);
+    expect(pool.dropped).toBe(1);
+    expect(pool.mesh.geometry.getAttribute("iP0").array as Float32Array).toEqual(before);
+    // Once one has died its slot takes the next ember.
+    const short = new EmberPool(2);
+    short.reset().life = 0.1;
+    short.emit();
+    short.reset().life = 2;
+    short.emit();
+    for (let i = 0; i < 12; i += 1) short.update(1 / 60);
+    short.reset().x = 5;
+    expect(short.emit()).toBe(true);
+    expect((short.mesh.geometry.getAttribute("iP0").array as Float32Array)[0]).toBe(5);
+    expect(short.dropped).toBe(0);
+    // Fire's pool holds key 7's busiest moment.
+    const stage = stageFor(new THREE.Group(), camera(), sheets(), []);
+    stage.hooksOf(elementById("fire")!);
+    let cap = 0;
+    stage.layer.traverse((o) => {
+      if (o.name === "fx-embers") cap = (o as THREE.Mesh<THREE.InstancedBufferGeometry>).geometry.getAttribute("iP0").count;
+    });
+    expect(cap).toBeGreaterThanOrEqual(2048);
+  });
+
   it("Fire's blows throw embers into its ember pool, not the heat-field ember atlas", () => {
     const kitLayer = new THREE.Group();
     const cam = camera();

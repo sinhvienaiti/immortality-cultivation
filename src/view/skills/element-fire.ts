@@ -199,7 +199,8 @@ class FireLayers {
     stage.layer.add(this.flameSlash.mesh);
     this.groundRings = stage.heatRings(16, "ground", 6);
     this.groundRings.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
-    this.embers = stage.embers(1024, 13);
+    // Sized for key 7's busiest moment (~1,850 live at once on High, 03/11 recheck): a full pool drops new embers.
+    this.embers = stage.embers(2560, 13);
     this.embers.setRamp(EMBER_HOT, AMBER, EMBER_ORANGE, EMBER_DIM);
   }
 

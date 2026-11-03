@@ -8,7 +8,7 @@
  *
  * GPU-analytic: each spawn writes its slot once (start, velocity, drag, buoyancy, sway, life); the vertex shader
  * moves it on the stage's clock (exact damping, so any frame rate draws the same path, and a hit-stop holds it).
- * One draw call, hidden while nothing burns. No allocation per frame or per spawn.
+ * One draw call, hidden while nothing burns. No allocation per frame or per spawn. A live ember is never overwritten.
  */
 import * as THREE from "three";
 import type { Rgb } from "./weapons";
@@ -126,6 +126,10 @@ export class EmberPool {
   /** The pool's clock when its last ember dies (hidden after it). */
   private until = 0;
   private dirty = false;
+  /** Slots looked at for a free one before an ember is dropped. */
+  private static readonly SCAN = 64;
+  /** Embers dropped since the last clear because the pool was full of live ones (size the pool so it stays 0). */
+  dropped = 0;
 
   constructor(
     readonly capacity: number,
@@ -201,11 +205,26 @@ export class EmberPool {
     return s;
   }
 
-  /** One ember from `spec` (the oldest slot is reused when the pool is full). */
-  emit(): void {
+  /**
+   * One ember from `spec` in a free slot. A live ember is never cut short (it would vanish in one frame: a pop): when
+   * the next SCAN slots from the cursor all hold live embers, the new one is dropped (counted in `dropped`).
+   */
+  emit(): boolean {
     const s = this.spec;
-    const i = this.cursor;
-    this.cursor = (this.cursor + 1) % this.capacity;
+    let i = -1;
+    for (let k = 0, j = this.cursor; k < Math.min(EmberPool.SCAN, this.capacity); k += 1) {
+      const life = this.v0[j * 4 + 3]!;
+      if (life <= 0 || this.time >= this.p0[j * 4 + 3]! + life) {
+        i = j;
+        break;
+      }
+      j = (j + 1) % this.capacity;
+    }
+    if (i < 0) {
+      this.dropped += 1;
+      return false;
+    }
+    this.cursor = (i + 1) % this.capacity;
     this.used = Math.max(this.used, i + 1);
     const o = i * 4;
     const t0 = this.time + Math.max(0, s.delay);
@@ -228,6 +247,7 @@ export class EmberPool {
     this.b[o + 3] = Math.max(0, s.stretch);
     this.until = Math.max(this.until, t0 + this.v0[o + 3]!);
     this.dirty = true;
+    return true;
   }
 
   /** Moves the clock (embers move in the shader) and uploads this frame's spawns. */
@@ -250,6 +270,7 @@ export class EmberPool {
     this.cursor = 0;
     this.used = 0;
     this.seed = 0;
+    this.dropped = 0;
     this.dirty = true;
     this.mesh.visible = false;
     this.mesh.geometry.instanceCount = 0;
