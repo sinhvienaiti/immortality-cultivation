@@ -53,7 +53,7 @@
  * allocation per frame.
  */
 import * as THREE from "three";
-import { BladeSet, loadSwordModels } from "./blades";
+import { BladeSet, loadSwordModels, profileMax } from "./blades";
 import type { ElementKit, StreamGlintArgs, StreamHooks, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs } from "./element-kit";
 import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
@@ -61,7 +61,7 @@ import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
 import { QiSlash } from "./qi-slash";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
 import { applyBladeLook, FaceRoll } from "./sword-material";
-import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_MID, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
+import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_MID, AURA_STRIKE, AURA_WAIT, profileTexture, type SwordAura } from "./sword-aura";
 import { flameOf } from "./sword-skills";
 import type { TargetField } from "./targets";
 import type { WeaponDef } from "./weapons";
@@ -299,6 +299,8 @@ export class MyriadSwordsFx {
   /** The weapon's silk's deep edge (its tassel; null: none), and which lead blades trail the aura's SilkTail. */
   private silkDeep: readonly number[] | null = null;
   private readonly silk = new Uint8Array(HERO_N);
+  /** A far sword's trail colours with the aura on (Metal: the silk's; Fire: an ember's), set with the element. */
+  private readonly auraTrail = { core: [0.72, 0.86, 1.0].map((c) => c * 1.5), halo: [0.42, 0.52, 0.78] };
   private readonly aLead = { x: 0, z: 0 };
   /** Strikes and dives so far in this cast (the perceived-strikes check) and the lead blades' dives. */
   strikes = 0;
@@ -380,6 +382,9 @@ export class MyriadSwordsFx {
     const [models, atlas] = await Promise.all([loadSwordModels(def), loadSwordAtlas(def.impostor)]);
     this.blades.setModel(models.full, models.lod);
     this.far.setAtlas(atlas);
+    // The far swords' MantleHalo reads the same GLB's blade profile, and the bake's widths per roll.
+    const an = models.full.aura;
+    this.far.setAuraProfile(profileTexture(an), an.bladeFrom, profileMax(an), models.full.pommelY, atlas?.meta.rollWidth);
     this.silkDeep = def.motif !== undefined && def.motif.silk ? def.motif.silkDeep : null;
   }
 
@@ -426,6 +431,15 @@ export class MyriadSwordsFx {
     this.qi.setColours(sl.white, sl.body, sl.bodyLit, sl.deep);
     applyBladeLook(kit.blade);
     this.ribbons.setFlame(flameOf(kit, stage));
+    // A far sword's trail in the mantle's matter (with the aura on): Metal a pale silk core in a silk-blue rim, Fire a
+    // dim ember core in a deep vermilion rim (no flame card on the river's 64).
+    const fire = kit.swordAura.mode === "flame";
+    const core = fire ? kit.swordAura.ramp.edge : [0.72, 0.86, 1.0];
+    const halo = fire ? (kit.swordAura.deep ?? kit.swordAura.ramp.body) : [0.42, 0.52, 0.78];
+    for (let k = 0; k < 3; k += 1) {
+      this.auraTrail.core[k] = core[k]! * (fire ? 1.15 : 1.5);
+      this.auraTrail.halo[k] = halo[k]! * (fire ? 0.8 : 1);
+    }
     this.trailK = kit.trail.flame !== undefined ? kit.trail.widthM / TRAIL_M : 1;
   }
 
@@ -1758,6 +1772,9 @@ export class MyriadSwordsFx {
     const F = this.far;
     this.host.camera.getWorldPosition(this.camW);
     F.begin();
+    // The far swords' MantleHalo program only while the aura is on (their own program, unchanged, otherwise).
+    F.setHalo(this.auraOn);
+    if (this.auraOn) F.auraTime = this.swordAura!.time;
     for (let i = 0; i < this.cap; i += 1) {
       const s = this.st[i] === S_OFF ? 0 : this.sc[i]!;
       const cls = this.cls(i);
@@ -1780,7 +1797,7 @@ export class MyriadSwordsFx {
       const dissolve = Math.min(1, 1 - s + fading * s);
       const auraOn = this.auraOn;
       if (cls === SWORD_FAR) {
-        F.push(x - dx * h, y - dy * h, z - dz * h, x + dx * h, y + dy * h, z + dz * h, 1 - dissolve, 0.12 + 0.12 * Math.sin(this.t * 1.3 + i), 0.35 + 0.65 * b, 0);
+        F.push(x - dx * h, y - dy * h, z - dz * h, x + dx * h, y + dy * h, z + dz * h, 1 - dissolve, 0.12 + 0.12 * Math.sin(this.t * 1.3 + i), 0.35 + 0.65 * b, 0, auraOn ? this.swordAura!.weight("MantleHalo") : 0);
       } else {
         B.setWhole(i, x, y, z, dx, dy, dz, len, this.faces.of(this.camW, x, y, z, dx, dy, dz));
         const lead = cls === SWORD_LEAD;
@@ -1823,14 +1840,15 @@ export class MyriadSwordsFx {
         t.w0 = TRAIL_M * 1.3;
         t.w1 = TRAIL_M * 0.5;
         t.life = -1;
-        const tc = this.tone.trailCore;
-        const th = this.tone.halo;
-        t.cr = tc[0] * k;
-        t.cg = tc[1] * k;
-        t.cb = tc[2] * k;
-        t.hr = th[0] * 0.4 * k;
-        t.hg = th[1] * 0.4 * k;
-        t.hb = th[2] * 0.4 * k;
+        // With the aura on, a far sword's trail takes the mantle's colours (SWORD_AURA §4.6: the silk's, Fire's ember).
+        const tc = auraOn ? this.auraTrail.core : this.tone.trailCore;
+        const th = auraOn ? this.auraTrail.halo : this.tone.halo;
+        t.cr = tc[0]! * k;
+        t.cg = tc[1]! * k;
+        t.cb = tc[2]! * k;
+        t.hr = th[0]! * 0.4 * k;
+        t.hg = th[1]! * 0.4 * k;
+        t.hb = th[2]! * 0.4 * k;
         t.fadeBase = 0.04;
         t.fadeTip = 0.85;
         this.beams.emit();

@@ -17,7 +17,9 @@ cutting-edge field (|across| / half width, 0 at the spine, 1 at the edge, over t
 white-hot edge line, G the blade (guard to tip).
 
 Writes <id>-impostor.png, <id>-impostor-mask.png and <id>-impostor.json (the layout src/view/skills/real-swords.ts
-reads). Media: art-src/ is ignored by Git, never commit the output.
+reads; for the sword aura's MantleHalo, SWORD_AURA §5.2, also ringU / ringR, the jade ring's centre and outer radius
+along the cell, and rollWidth, the blade's drawn width per row over the broadside row's). Media: art-src/ is ignored by
+Git, never commit the output.
 """
 import argparse
 import json
@@ -116,7 +118,21 @@ def edge_field(obj):
         mid = (zmin[s] + zmax[s]) * 0.5
         e = min(1.0, abs(v.co.z - mid) / half) if half > 1e-6 else 0.0
         attr.data[i].color = (e * on, on, 0.0, 1.0)
-    return {"bladeFromU": (blade_x0 - x0) / (x1 - x0), "guardU": (g + 0.5) / n}
+    return {"bladeFromU": (blade_x0 - x0) / (x1 - x0), "guardU": (g + 0.5) / n, "ringR": span[g] * 0.5 / (x1 - x0)}
+
+
+def roll_widths(mask, ch, rows, u_from, u_to):
+    """The blade's drawn width per row (the mask's G, blade guard to tip) over the broadside row's: the median column
+    between u_from and u_to of the cell, mid-blade past the guard's decoration (SWORD_AURA §5.2: the MantleHalo's width
+    per roll)."""
+    w = mask.shape[1]
+    c0, c1 = int(u_from * w), int(u_to * w)
+    widths = []
+    for row in range(rows):
+        g = mask[row * ch:(row + 1) * ch, c0:c1, 1] > 0.5
+        widths.append(float(np.median(g.sum(axis=0))) if g.size else 0.0)
+    base = widths[0] if widths and widths[0] > 0 else 1.0
+    return [round(x / base, 4) for x in widths]
 
 
 def lookdev_world(scene, hdri, env):
@@ -289,6 +305,9 @@ def main():
         "lengthM": length,
         "guardU": args.margin + layout["guardU"] * (1 - 2 * args.margin),
         "bladeFromU": args.margin + layout["bladeFromU"] * (1 - 2 * args.margin),
+        "ringU": args.margin + layout["guardU"] * (1 - 2 * args.margin),
+        "ringR": layout["ringR"] * (1 - 2 * args.margin),
+        "rollWidth": roll_widths(np.flipud(mask), ch, len(rolls), 0.5, 0.75),
         "light": "lab lookdev (sun 1.4, key 0.35, rim 0.3, hemisphere 0.45, misty_pines 0.45), camera-relative",
     }
     with open(base + ".json", "w") as f:

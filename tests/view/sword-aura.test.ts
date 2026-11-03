@@ -7,6 +7,7 @@ import { elementKits } from "../../src/view/skills/elements";
 import { applySwordAuraLook, AURA_BODY_MAX, SWORD_AURA_LOOK } from "../../src/view/skills/sword-aura";
 import { applyBladeLook, SWORD_LOOK } from "../../src/view/skills/sword-material";
 import { RibbonPool } from "../../src/view/skills/fxkit";
+import { SwordImpostors } from "../../src/view/skills/real-swords";
 
 /** Hue (degrees, on sRGB) and saturation of a linear colour. */
 function hsl(c: { x: number; y: number; z: number } | readonly number[]): { h: number; s: number; l: number } {
@@ -132,5 +133,24 @@ describe("sword aura contract (SWORD_AURA §4.8)", () => {
     expect(pool.modedProgram).not.toBeNull();
     pool.setModed(false);
     expect(pool.mesh.material).toBe(light);
+  });
+
+  it("MantleHalo: far swords carry an aura weight; the halo program swaps in only while the aura is on", () => {
+    const far = new SwordImpostors(8, 12);
+    far.setAtlas({ lit: new THREE.Texture(), mask: new THREE.Texture(), meta: { cellW: 512, cellH: 128, rolls: [0, 30, 60, 90], u0: 0.035, u1: 0.965, bladeFromU: 0.389 } });
+    const own = far.mesh.material;
+    far.begin();
+    far.push(0, 1, 0, 2, 1, 0, 1, 0, 0.5, 0, 0.8);
+    far.push(0, 1, 1, 2, 1, 1, 1, 0, 0.5, 0);
+    far.end();
+    const fx = far.mesh.geometry.getAttribute("iFx");
+    expect(fx.itemSize).toBe(3);
+    expect(fx.getZ(0)).toBeCloseTo(0.8);
+    expect(fx.getZ(1)).toBe(0);
+    far.setHalo(true);
+    expect(far.mesh.material).not.toBe(own);
+    expect(far.haloProgram).not.toBeNull();
+    far.setHalo(false);
+    expect(far.mesh.material).toBe(own);
   });
 });

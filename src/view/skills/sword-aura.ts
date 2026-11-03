@@ -72,6 +72,38 @@ export function swordAuraLook(): SwordAuraLook | null {
   return current;
 }
 
+const profiles = new WeakMap<AuraAnchors, THREE.DataTexture>();
+
+/**
+ * The weapon's blade profile as a 96 × 1 texture (the anchors' half widths over their maximum, linear filtering): the
+ * aura's shaders read the blade's outline from it (SWORD_AURA §5.2). Cached per anchors; load time.
+ */
+export function profileTexture(anchors: AuraAnchors): THREE.DataTexture {
+  let t = profiles.get(anchors);
+  if (t === undefined) {
+    const p = anchors.profile;
+    let max = 0;
+    for (let i = 0; i < p.length; i += 1) max = Math.max(max, p[i]!);
+    const data = new Uint8Array(p.length * 4);
+    for (let i = 0; i < p.length; i += 1) {
+      const v = Math.round((255 * p[i]!) / Math.max(max, 1e-6));
+      data[i * 4] = v;
+      data[i * 4 + 1] = v;
+      data[i * 4 + 2] = v;
+      data[i * 4 + 3] = 255;
+    }
+    t = new THREE.DataTexture(data, p.length, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearFilter;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    profiles.set(anchors, t);
+  }
+  return t;
+}
+
 // ── The switch ───────────────────────────────────────────────────────────────
 
 /** The lab's switch (§5.1): `off` (today's look) or a direction's code; only the chosen direction has one. */
