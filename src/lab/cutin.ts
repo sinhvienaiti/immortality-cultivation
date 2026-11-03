@@ -351,11 +351,16 @@ export class CutIn {
       this.sealText.append(c);
     }
     this.root.style.display = "block";
-    // The name's settled width (letter-spacing 0.05em) once, at 100 px: the title is laid out from it.
-    this.name.style.fontSize = "100px";
-    this.name.style.letterSpacing = "0.05em";
-    const measured = this.name.offsetWidth;
-    if (measured > 0) this.nameEm = measured / 100;
+    this.measureName();
+    // Measured from the fallback face if the name's own (700) is not loaded yet: measure again once it is.
+    const face = '700 100px "Cormorant Garamond"';
+    if (!document.fonts.check(face, spec.name)) {
+      void document.fonts.load(face, spec.name).then(() => {
+        if (this.spec !== spec) return;
+        this.measureName();
+        this.titleKey = "";
+      });
+    }
     this.draw();
   }
 
@@ -381,8 +386,23 @@ export class CutIn {
    * (share of the height); it always covers the band's width and bottom, and its top fades into the band. Returns
    * her face on screen (px).
    */
-  private placeArt(el: HTMLDivElement, f: CutInFrame, push: number, rise: number, W: number, H: number, bandBot: number): [number, number] {
-    const [x, y, w, h] = artRect(f, push, rise, W, H, bandBot);
+  /** The English name's settled width (letter-spacing 0.05em) at 100 px, once per start: the title is laid out from it. */
+  private measureName(): void {
+    const size = this.name.style.fontSize;
+    const spacing = this.name.style.letterSpacing;
+    this.name.style.fontSize = "100px";
+    this.name.style.letterSpacing = "0.05em";
+    const measured = this.name.offsetWidth;
+    if (measured > 0) this.nameEm = measured / 100;
+    this.name.style.fontSize = size;
+    this.name.style.letterSpacing = spacing;
+  }
+
+  private placeArt(el: HTMLDivElement, f: CutInFrame, push: number, rise: number, W: number, H: number, bandBot: number, dx = 0, dy = 0): [number, number] {
+    const [x0, y0, w, h] = artRect(f, push, rise, W, H, bandBot);
+    // The shake moves the image inside its screen-sized box (the image overscans it), never the box itself.
+    const x = x0 + dx;
+    const y = y0 + dy;
     el.style.backgroundSize = `${w}px ${h}px`;
     el.style.backgroundPosition = `${x}px ${y}px`;
     const m = `linear-gradient(180deg,rgba(0,0,0,0) ${y}px,#000 ${y + 0.07 * H}px)`;
@@ -420,19 +440,30 @@ export class CutIn {
     }
     const slope = Math.abs(((TOP_R - TOP_L) * H) / W);
     const right = 0.975 * W;
+    // The largest size with no overlap; when none clears (a portrait screen), the one that covers her least.
     let fit: readonly [number, number, number] = [0, 0, 0];
+    let least = Infinity;
     for (let share = NAME_H; share >= NAME_MIN_H - 1e-9; share -= 0.002) {
       const nz = Math.round(share * H);
       const nameW = this.nameEm * nz;
       const nx = right - nameW - 1.34 * nz * SEAL_OF_NAME;
       // Low in the band: the seal's lowest corner (1.37 × the name's size under its top) on the band's 97 % line.
       const ny = yAtOpen((nx + nameW / 2) / W, 0.97) - 1.37 * nz;
-      fit = [nx, ny, nz];
-      if (nx < 0.02 * W) continue;
+      if (nx < 0.02 * W) {
+        // Too wide for the screen at this size: keep the smallest such try only if nothing fits at all.
+        if (least === Infinity) fit = [nx, ny, nz];
+        continue;
+      }
       const rise = (slope * (right - nx)) / 2;
       const top = ny - 1.08 * nz * HANZI_OF_NAME - rise;
       const bottom = ny + 1.37 * nz + rise;
-      if (keep.every((k) => right <= k[0] || nx >= k[2] || bottom <= k[1] || top >= k[3])) break;
+      let overlap = 0;
+      for (const k of keep) overlap += Math.max(0, Math.min(right, k[2]) - Math.max(nx, k[0])) * Math.max(0, Math.min(bottom, k[3]) - Math.max(top, k[1]));
+      if (overlap < least) {
+        least = overlap;
+        fit = [nx, ny, nz];
+      }
+      if (overlap === 0) break;
     }
     this.titleKey = key;
     this.titleFit = fit;
@@ -510,14 +541,12 @@ export class CutIn {
       // Gathering: a slow push and a rise with the wind. Shout: a punch-in that settles, then a slow push.
       const g = this.placeArt(this.artGather, art.gather, 1 + 0.025 * clamp01(t / shoutAt), 0.012 * clamp01(t / shoutAt), W, H, bandBot);
       const pushS = 1 + PUNCH * (1 - easeOut(since / PUNCH_S)) + 0.03 * clamp01(since / Math.max(0.01, T - shoutAt));
-      const s = this.placeArt(this.artShout, art.shout, pushS, 0, W, H, bandBot);
+      const s = this.placeArt(this.artShout, art.shout, pushS, 0, W, H, bandBot, shx, shy);
       const fadeIn = smooth((t - 0.04) / 0.1);
       this.artGather.style.opacity = since < 0 ? String(fadeIn) : "0";
       // The waiting shout frame shows at 0.4 % (invisible) so it is rasterised before the cut, not on the cut frame.
       this.artShout.style.opacity = since < 0 ? String(0.004 * fadeIn) : "1";
       this.titleShade.style.opacity = String(fadeIn);
-      const shk = `translate(${shx}px, ${shy}px)`;
-      for (const d of [this.artGather, this.artShout, this.artFlash]) d.style.transform = shk;
       // The flash sits at her face: full on its first frame, gone in FLASH_S.
       const fl = since >= 0 && since < FLASH_S ? Math.pow(1 - since / FLASH_S, 2) : 0;
       const [fx, fy] = since < 0 ? g : s;
@@ -581,7 +610,18 @@ export class CutIn {
     this.watermark.style.transform = `rotate(${angle}rad) translateX(${0.08 * W * (1 - easeOut(t / 0.35)) - 0.05 * W * clamp01(t / T)}px)`;
     this.watermark.style.opacity = String(0.13 * smooth((t - 0.08) / 0.2) * open);
     // Over a two-frame painting the title is laid out from its measured width, clear of her face and hands (fitTitle).
-    const [nx, ny, nz] = art ? this.fitTitle(art, W, H) : [0.46 * W, yAt(0.6, 0.6) - Math.round(NAME_H * H) * 0.5, Math.round(NAME_H * H)];
+    const fitted = art ? this.fitTitle(art, W, H) : null;
+    const nz = fitted ? fitted[2] : Math.round(NAME_H * H);
+    const nx = fitted ? fitted[0] : 0.46 * W;
+    let ny = fitted ? fitted[1] : yAt(0.6, 0.6) - nz * 0.5;
+    if (fitted) {
+      // Laid out on the open band; as the band closes the title rides it, like the rest of the band's contents.
+      const xs = (nx + 0.5 * this.nameEm * nz) / W;
+      const topOpen = (TOP_L + (TOP_R - TOP_L) * xs) * H;
+      const botOpen = (BOT_L + (BOT_R - BOT_L) * xs) * H;
+      const mid = ny + 0.5 * nz;
+      ny += yAt(xs, (mid - topOpen) / (botOpen - topOpen)) - mid;
+    }
     const track = 1 - smooth((t - 0.12) / 0.32);
     // The title layer slides in from the right (faster than the painting: parallax) and flashes white as it lands.
     const titleSlide = 0.1 * W * (1 - easeOut((t - 0.08) / 0.26));
@@ -617,7 +657,7 @@ export class CutIn {
     // Round 3b (item 6): the seal sits past the end of the English title on its row, never over it (it covered "WAY").
     const sz = Math.round(nz * SEAL_OF_NAME);
     // With a two-frame painting the seal slams with the shout, early enough to be seen before the band closes.
-    const st = (t - (art ? Math.min(shoutAt + 0.05, T - 0.4) : STAMP_AT)) / 0.12;
+    const st = (t - (art ? Math.min(shoutAt + 0.05, Math.max(shoutAt, T - 0.4)) : STAMP_AT)) / 0.12;
     // The settled width (measured once in start): no layout read per frame.
     const nameW = this.nameEm * nz;
     const sx = Math.min(W - sz * 0.62, nx + nameW + sz * 0.72);

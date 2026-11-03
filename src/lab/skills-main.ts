@@ -609,15 +609,17 @@ const van = new VanKiemFx(
  */
 const cutin = new CutIn(document.body);
 const ULT_HOLD = Number(params.get("cutin") ?? "1.7") || 1.7;
+/** Holds this short (scenarios pass ?cutin=0.05 to skip the cut-in) show no painting and no cut. */
+const ULT_ART = ULT_HOLD >= 0.6 ? CUTIN_ART.c : undefined;
 const ULT_CUTIN = {
   name: "MILKY-WAY SWORD RAIN",
   hanzi: "天河劍雨",
   seconds: ULT_HOLD,
-  art: CUTIN_ART.c,
+  ...(ULT_ART ? { art: ULT_ART } : {}),
   // A shorter hold (?cutin=, the old measurement scenarios pin 0.9) cuts to the shout earlier, never not at all.
   shoutAt: Math.min(1.08, 0.64 * ULT_HOLD),
 };
-cutin.preload(ULT_CUTIN.art);
+if (ULT_ART) cutin.preload(ULT_ART);
 const ultAim = { x: 0, z: -9 };
 function startUltimate(tx: number, tz: number): void {
   ultAim.x = tx;
@@ -1231,7 +1233,8 @@ void (async () => {
   // The cut-in's and the numbers' fonts, loaded before the first use (a capture never shows a fallback face).
   const fonts = Promise.all([
     document.fonts.load('400 120px "Ma Shan Zheng"', ULT_CUTIN.hanzi),
-    document.fonts.load('600 36px "Cormorant Garamond"', ULT_CUTIN.name),
+    // The cut-in's name is set in 700 (its title is laid out from the measured width).
+    document.fonts.load('700 36px "Cormorant Garamond"', ULT_CUTIN.name),
     document.fonts.load('italic 700 54px "Cormorant Garamond"', "0123456789.KM×"),
   ]).catch(() => undefined);
   await Promise.all([herd.load(), caster.load(), look.ready, equipped, fonts]);

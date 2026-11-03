@@ -80,6 +80,10 @@ export interface SoundTake {
   readonly rate: number;
   /** A duck of every bus to 8 % for this long (s): the hush before a finisher. */
   readonly duck?: number;
+  /** A voice-bus take (a callout): a later `stopVoices` cuts it, as reset() stops it live. */
+  readonly voice?: boolean;
+  /** reset() while recording: every voice take still sounding stops here. */
+  readonly stopVoices?: boolean;
 }
 
 export class LabSound {
@@ -214,10 +218,11 @@ export class LabSound {
     if (recording !== null) {
       // The same choices as live playback (round robin, ±5 % rate, the gap), on the lab clock.
       if (!this.enabled || list === undefined || list.length === 0) return false;
-      if (this.clock - (this.lastRecorded.get(id) ?? -Infinity) < gap) return false;
+      // A tolerance: the clock sums 1/60 steps, so three frames come out a hair under 0.05.
+      if (this.clock - (this.lastRecorded.get(id) ?? -Infinity) < gap - 1e-6) return false;
       this.lastRecorded.set(id, this.clock);
       const url = list[this.rr++ % list.length]!;
-      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate) });
+      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate), ...(bus === "voice" ? { voice: true } : {}) });
       this.played += 1;
       return true;
     }
@@ -336,7 +341,6 @@ export class LabSound {
 
   /** Closes the buckets that are due (real time). */
   update(dt: number): void {
-    this.clock += dt;
     for (const m of ["flesh", "stone", "spirit"] as const) {
       const b = this.impact[m];
       if (!b.open) continue;
@@ -355,6 +359,8 @@ export class LabSound {
         if (d.count >= 3) this.play("death", "combat", clamp(0.4 + 0.12 * Math.sqrt(d.count), 0.4, 1), this.pan(d.x / d.count), 0.92, 0.03);
       }
     }
+    // Last: the buckets closed above belong to this frame, stamped at its start like the frame's other sounds.
+    this.clock += dt;
   }
 
   /** Files found per id (checks). */
@@ -365,6 +371,7 @@ export class LabSound {
   }
 
   reset(): void {
+    if (this.recording !== null) this.recording.push({ at: this.clock, url: "", gain: 0, pan: 0, rate: 1, stopVoices: true });
     // A callout still sounding (up to 3 s) would shout over the next cut-in.
     for (const s of this.voices) {
       try {
