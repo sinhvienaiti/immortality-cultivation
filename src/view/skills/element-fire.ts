@@ -63,9 +63,10 @@ const SPARK_TINT = new THREE.Color().setRGB(1, 0.5, 0.12);
 /**
  * The seal, its rings and the pressure ring as matter (03/11 fixes: drawn as added light in the fire palette they read
  * pale pink-orange on light stone): vermilion strokes lit toward gold as they blaze, on a near-neutral charcoal
- * underlay (its fringe over pale stone must not tint it peach), a thin white-gold line down their middle.
+ * underlay (its fringe over pale stone must not tint it peach; a touch warm, so where the vermilion meets it on dark
+ * stone the edge never reads dark red), a thin white-gold line down their middle.
  */
-const SEAL_SOOT = lin("#141211");
+const SEAL_SOOT = lin("#17140F");
 const SEAL_BODY = lin("#E0561A");
 const SEAL_LIT = lin("#FFAE34");
 const SEAL_CORE: Rgb = [1, 0.72, 0.3];
