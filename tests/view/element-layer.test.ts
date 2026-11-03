@@ -804,6 +804,45 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(pool.mesh.material.uniforms.uStep!.value).toBe(0);
   });
 
+  it("holds and erodes a sharpened clip between its frames: each pixel's coverage switches at its own moment (round-3 recheck)", () => {
+    // A crossfaded coverage, sharpened, faded the parts leaving the clip see-through in one burst near the end of each
+    // frame: a ghost and a step every ~7 frames once the lotus was slowed (8.6 fps). The sharpened path switches the
+    // coverage per pixel at a noise-spread moment instead, in the frames' own colours.
+    const frag = new FlipbookPool("fire-burst", "rgba", 2, 12, new THREE.Texture()).mesh.material.fragmentShader;
+    const sharpened = frag.slice(frag.indexOf("if (uSharpen.y > 0.0)"));
+    expect(sharpened).toContain("float ws = smoothstep(-0.08, 0.08, w - mix(0.08, 0.92, 1.0 / (1.0 + exp(-8.0 * (n - 0.5)))));");
+    expect(sharpened.indexOf("a = mix(t0.a, t1.a, ws);")).toBeGreaterThan(0);
+    expect(sharpened.indexOf("pm = col * a;")).toBeGreaterThan(0);
+    // The same switch in numbers: every pixel shows this frame at w = 0 and the next at w = 1 (no jump where frames
+    // meet), switches within 0.16 of the interval; the moment rises smoothly with the noise (no contour bands), and the
+    // noise's usual range (0.3–0.7) spreads the moments over most of the interval (not one burst).
+    const ss = (e0: number, e1: number, x: number): number => {
+      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+      return t * t * (3 - 2 * t);
+    };
+    const moment = (n: number): number => 0.08 + 0.84 / (1 + Math.exp(-8 * (n - 0.5)));
+    const ws = (w: number, n: number): number => ss(-0.08, 0.08, w - moment(n));
+    let last = -1;
+    for (let n = 0; n <= 1.0001; n += 0.01) {
+      expect(ws(0, n)).toBe(0);
+      expect(ws(1, n)).toBe(1);
+      let lo = 1;
+      let hi = 0;
+      for (let w = 0; w <= 1.0001; w += 0.005) {
+        const v = ws(w, n);
+        if (v > 0.02) lo = Math.min(lo, w);
+        if (v < 0.98) hi = Math.max(hi, w);
+      }
+      expect(hi - lo).toBeLessThanOrEqual(0.17);
+      expect(moment(n)).toBeGreaterThan(last);
+      expect(moment(n) - Math.max(last, moment(0))).toBeLessThan(0.03);
+      last = moment(n);
+    }
+    expect(moment(0.7) - moment(0.3)).toBeGreaterThan(0.55);
+    // Without a sharpen (Metal's clips, Fire's other pools) the crossfade is as before.
+    expect(frag).toContain("vec3 pm = mix(t0.rgb * t0.a, t1.rgb * t1.a, w);");
+  });
+
   it("keeps the key-1 impact saturated on pale stone: the lotus's white-hot base turns gold matter, a cut is a matte crescent", () => {
     const kitLayer = new THREE.Group();
     const cam = camera();

@@ -1,4 +1,4 @@
-// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; a full pool drops a new sprite instead of cutting a live one short; a two-rate time map (an attack at one rate, then a slower linger) and a per-pool alpha sharpen that keeps a slowed crossfade solid; vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
+// Source: games/dragon-hold/src/view/flipbook.ts @62f2f8c (adapted: id-agnostic clips per element folder and a lenient manifest; modes "fire" (its premultiplied fire-on-black blend with ground occlusion, kept), "smoke" (density), a new "rgba" (straight-alpha clips with real alpha, crossfaded premultiplied, eroded instead of faded) and a new "heat" (a clip's light read as heat and coloured through a soot-rimmed ramp); its test A/B/C modes, the mask output and the burn-lift dropped; a full pool drops a new sprite instead of cutting a live one short; a two-rate time map (an attack at one rate, then a slower linger) and a per-pool alpha sharpen that keeps a slowed clip solid (between frames each pixel's coverage switches at its own moment, colours crossfading); vxNoise/vxSoftGround copied from its vfx-layers.ts @c2a6f9b)
 /**
  * Flipbook sprites for the element layer (canon D59, ELEMENT_LAYER §3 "FlipbookPlayer"): Fire, Thunder and Wind
  * clips, and RGBA clips with real alpha of every element, cut from Adobe Firefly Video into atlases. Media stays
@@ -27,7 +27,8 @@
  *   over 0.8 the white-gold core (× 2.2, the only part that blooms). The ramp is the pool's (`setHeatRamp`); a pool's
  *   `taper` cools the clip from its head (cell right, the way `dir` points) to its tail (a trail behind a blade).
  * The material: frames blended in time (a crossfade between neighbouring frames, so a clip slowed down never steps;
- * a pool's `sharpen` keeps that crossfade solid: two half-shown frames never add up to a see-through veil), a pivot, billboards that turn to follow a world direction on screen (a
+ * a pool's `sharpen` keeps it solid: between frames each pixel's coverage switches at its own moment, hold and erode,
+ * so the parts leaving the clip never fade see-through), a pivot, billboards that turn to follow a world direction on screen (a
  * flame along a flight), analytic soft particles against the ground, and an exact depth lift.
  */
 import * as THREE from "three";
@@ -316,8 +317,17 @@ void main() {
     vec3 pm = mix(t0.rgb * t0.a, t1.rgb * t1.a, w);
     float a = mix(t0.a, t1.a, w);
     if (uSharpen.y > 0.0) {
-      // Sharpened coverage: a crossfade's half-shown parts (and a soft clip's thin haze) are remapped through a
-      // threshold, broken by noise, so they stay matter or go (erosion), never a see-through veil over pale stone.
+      // Between two frames each pixel's coverage switches from this frame to the next at its own moment (hold and
+      // erode: the clip's noise through a logistic spreads the moments over the interval, eating the leaving parts from
+      // their low-noise blobs in), in the frames' own colours. A crossfaded coverage, sharpened, faded every part leaving
+      // the clip see-through in one burst near the end of each frame: a ghost and a step every ~7 frames once the lotus
+      // was slowed (round-3 recheck, 03/11).
+      vec3 col = a > 1e-4 ? pm / a : mix(t0.rgb, t1.rgb, w);
+      float ws = smoothstep(-0.08, 0.08, w - mix(0.08, 0.92, 1.0 / (1.0 + exp(-8.0 * (n - 0.5)))));
+      a = mix(t0.a, t1.a, ws);
+      pm = col * a;
+      // Sharpened coverage: a soft clip's thin haze is remapped through a threshold, broken by noise, so it stays
+      // matter or goes (erosion), never a see-through veil over pale stone.
       // Its root's soft fade into the ground erodes the same way (a see-through band along the ground otherwise).
       float g = vxSoftGround(vWorld, vGround, uSoftM);
       float sa = smoothstep(uSharpen.x, uSharpen.y, a * g + (n - 0.5) * 0.12);
