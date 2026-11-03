@@ -89,8 +89,8 @@ export interface StreamTone {
 
 /** What a blow leaves on the ground (GroundDecalPool.spawn), when the kit's aftermath draws a decal. */
 export interface GroundAftermath {
-  /** Texture name the host resolves (ElementStage.texture): A = coverage, R = detail. */
-  readonly texture: string;
+  /** Texture name the host resolves (ElementStage.texture): A = coverage, R = detail; null: the pool's procedural char. */
+  readonly texture: string | null;
   /** Seconds it lies there; share of its life it grows in over, and the share at which it starts to erode away. */
   readonly life: number;
   readonly growIn: number;

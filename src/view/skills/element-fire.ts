@@ -49,7 +49,8 @@ const AMBER = lin("#FFB703");
 const ORANGE = lin("#FF8A2A");
 const VERMILION = lin("#D93800");
 const SOOT = lin("#240715");
-const CHAR = lin("#1C120E");
+/** Burnt stone: a warm char (hue ~32°, never a red-black), lighter at the char's edge (ground-decals.ts). */
+const CHAR = lin("#2E2010");
 /** Embers cool through amber and orange into a dim orange glow (its green ≥ 0.2 of its red: never dark red). */
 const EMBER_HOT = lin("#FFD884");
 const EMBER_ORANGE = lin("#FA8A26");
@@ -79,8 +80,12 @@ export const FIRE_STREAM: StreamTone = {
   slash: { white: [1.0, 0.7, 0.32], body: [0.72, 0.13, 0.008], bodyLit: [0.95, 0.34, 0.035], deep: [0.03, 0.005, 0.002] },
 };
 
-/** The scorch a blow leaves: dark char, an ember edge that cools, eroding away (never fading). */
-const SCORCH: GroundAftermath = { texture: "scorch_01", life: 3.4, growIn: 0.05, erodeFrom: 0.55, body: CHAR, alpha: 0.85, heat: [2.4, 0.8, 0.12], cool: 1.3 };
+/**
+ * The burnt ground a blow leaves (03/11 fixes: Kenney's black spiky scorch star read as an ink splat on pale stone):
+ * the decal pool's procedural char, a soft irregular burn graded out into browned stone, ember cracks and a rim that
+ * cool from gold to orange, eroding away (never fading).
+ */
+const SCORCH: GroundAftermath = { texture: null, life: 3.4, growIn: 0.06, erodeFrom: 0.5, body: CHAR, alpha: 0.6, heat: [1.6, 0.62, 0.12], cool: 0.85 };
 const SCORCH_LINE: GroundAftermath = { ...SCORCH, life: 4.2, erodeFrom: 0.6, cool: 0.9 };
 
 // ── The layers ───────────────────────────────────────────────────────────────
@@ -150,7 +155,8 @@ class FireLayers {
     this.ground = P.pool(FOLDER, "fire-ground", { mode: "rgba", capacity: 32, renderOrder: 11 });
     this.sheath = P.pool(FOLDER, "dragonhold-flame-trail", { mode: "heat", capacity: 200, renderOrder: 11 });
     this.line = P.pool(FOLDER, "fire-trail", { mode: "rgba", capacity: 24, renderOrder: 11 });
-    for (const p of [this.burst, this.charge, this.ground, this.line]) p.setSoot(SOOT[0] * 1.6, SOOT[1] * 1.6, SOOT[2] * 1.6);
+    // Flames burn out toward warm char, not violet soot: a dying orange mixed toward violet passed through maroon.
+    for (const p of [this.burst, this.charge, this.ground, this.line]) p.setSoot(CHAR[0] * 1.3, CHAR[1] * 1.3, CHAR[2] * 1.3);
     this.sheath.setHeatRamp(VERMILION, AMBER, WHITE_GOLD);
     this.sheath.setSoot(SOOT[0], SOOT[1], SOOT[2]);
     // The sheath cools from the blade toward its tail (a soot tail behind the sword), its band read soft.
@@ -325,7 +331,7 @@ class FireLayers {
   /** The aftermath on the ground at (x, z): scorch, a low ground fire dying into embers, smoke wisps, rising embers. */
   private burnGround(x: number, z: number, r: number, life: number, rate: number, big: boolean): void {
     const R = this.stage.rand;
-    this.scorch.spawn(x, z, (big ? 2.6 : 2.0) * r, SCORCH, R.range(0, 6.28), R.range(0.85, 1.2));
+    this.scorch.spawn(x, z, (big ? 2.4 : 1.9) * r, SCORCH, R.range(0, 6.28), R.range(0.85, 1.2));
     const o = flip();
     o.rate = 0.75;
     o.cool = 0.45;

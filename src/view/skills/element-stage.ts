@@ -147,12 +147,13 @@ export class ElementStage {
     return e;
   }
 
-  /** The ground decals drawn with texture `name` (one pool per texture, made on first use; load time). */
-  decals(name: string, capacity = 64, renderOrder = 4): GroundDecalPool {
-    let d = this.decalPools.get(name);
+  /** The ground decals drawn with texture `name` (null: the procedural char; one pool each, made on first use; load time). */
+  decals(name: string | null, capacity = 64, renderOrder = 4): GroundDecalPool {
+    const key = name ?? "";
+    let d = this.decalPools.get(key);
     if (d === undefined) {
-      d = new GroundDecalPool(capacity, this.resolve(name), renderOrder);
-      this.decalPools.set(name, d);
+      d = new GroundDecalPool(capacity, name === null ? null : this.resolve(name), renderOrder);
+      this.decalPools.set(key, d);
       this.layer.add(d.mesh);
     }
     return d;

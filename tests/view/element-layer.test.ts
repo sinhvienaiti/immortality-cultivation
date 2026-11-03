@@ -216,6 +216,21 @@ describe("ground decals", () => {
     expect(pool.live).toBe(0);
     expect(pool.mesh.visible).toBe(false);
   });
+
+  it("draw Fire's burnt ground as the procedural char (no star texture), in a warm char that never reads as dark red", () => {
+    const fire = elementById("fire")!;
+    expect(fire.ground!.texture).toBeNull();
+    const pool = new GroundDecalPool(4, null);
+    expect(pool.mesh.material.defines).toHaveProperty("PROCEDURAL");
+    expect(new GroundDecalPool(4, new THREE.Texture()).mesh.material.defines).not.toHaveProperty("PROCEDURAL");
+    const hsl = { h: 0, s: 0, l: 0 };
+    new THREE.Color().setRGB(fire.ground!.body[0], fire.ground!.body[1], fire.ground!.body[2]).getHSL(hsl, THREE.SRGBColorSpace);
+    expect(hsl.h * 360).toBeGreaterThan(20);
+    expect(hsl.h * 360).toBeLessThan(45);
+    // The ember glow it cools through stays orange (green ≥ a third of red).
+    expect(fire.ground!.heat[1] / fire.ground!.heat[0]).toBeGreaterThan(0.3);
+    expect(fire.ground!.alpha).toBeLessThan(0.75);
+  });
 });
 
 describe("sword skills through the element kit", () => {

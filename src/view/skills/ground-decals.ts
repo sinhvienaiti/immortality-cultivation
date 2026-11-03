@@ -5,6 +5,10 @@
  * from its thin parts (a rising threshold through its coverage, broken by noise): never a see-through fade, which
  * reads as a veil on pale stone (DRAGON_FIRE_DIAGNOSIS). An optional glowing edge cools over its life (Fire's
  * embers in the scorch), added in the same premultiplied pass. Texture: A = coverage, R = detail.
+ * With no texture (null) the pool draws a procedural char instead (03/11 fixes: Kenney's black spiky scorch star read
+ * as an ink splat on pale stone): a soft irregular burn (a domain-warped heart, its edge broken by noise, never a
+ * star), denser at the heart and graded out into browned stone, with ember cracks and specks inside and a glowing rim
+ * at its edge that cool with the decal's heat, eroding away from its thin parts at the end.
  * View only; no allocation per decal.
  */
 import * as THREE from "three";
@@ -48,9 +52,36 @@ float gdNoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(gdHash(i), gdHash(i + vec2(1.0, 0.0)), u.x), mix(gdHash(i + vec2(0.0, 1.0)), gdHash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
+#ifdef PROCEDURAL
+/** Voronoi cell walls (F2 − F1) at p: the ember cracks of the char. */
+float gdCells(vec2 p) {
+  vec2 ip = floor(p);
+  vec2 fp = fract(p);
+  float f1 = 8.0;
+  float f2 = 8.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = vec2(gdHash(ip + g), gdHash(ip + g + 17.3));
+      float d = length(g + o - fp);
+      if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+    }
+  }
+  return f2 - f1;
+}
+#endif
 void main() {
-  vec4 t = texture2D(map, vUv);
   float n = gdNoise(vUv * 7.0 + vSeed * 13.7) * 0.65 + gdNoise(vUv * 17.0 - vSeed * 5.3) * 0.35;
+#ifdef PROCEDURAL
+  // A soft irregular char: a warped heart (no rays), its edge broken by two octaves of noise; R = its grain.
+  vec2 p = vUv * 2.0 - 1.0;
+  vec2 warp = vec2(gdNoise(p * 2.2 + vSeed * 3.1), gdNoise(p * 2.2 - vSeed * 1.7 + 4.0)) - 0.5;
+  float rr = length(p + warp * 0.55);
+  float cover = 1.0 - smoothstep(0.2, 0.92, rr + (n - 0.5) * 0.3);
+  vec4 t = vec4(gdNoise(p * 11.0 + vSeed * 9.1), 0.0, 0.0, cover);
+#else
+  vec4 t = texture2D(map, vUv);
+#endif
   float heart = 1.0 - min(1.0, length(vUv - 0.5) * 2.0);
   // The order it appears and goes in: dense and central first, broken by noise.
   float field = t.a * 0.78 + heart * 0.14 + (t.r - 0.5) * 0.1 + (n - 0.5) * 0.18;
@@ -58,6 +89,28 @@ void main() {
   float grow = vAge.y > 0.0 ? smoothstep(0.0, vAge.y, k) : 1.0;
   float erode = smoothstep(vAge.z, 1.0, k);
   float thr = max(0.06 + (1.0 - grow) * 0.9, mix(0.06, 1.12, erode));
+#ifdef PROCEDURAL
+  // Graded, not stamped: dense at the heart, thinning out into browned stone (low contrast on pale ground).
+  float keep = smoothstep(thr, thr + 0.22, field);
+  float a = keep * vBody.a * mix(0.3, 1.0, smoothstep(0.15, 0.75, t.a));
+  if (a < 0.002) discard;
+  // The heart darker, the outskirts a lighter scorched brown.
+  vec3 body = vBody.rgb * mix(2.4, 0.85, smoothstep(0.2, 0.8, t.a)) * mix(0.8, 1.15, t.r);
+  // Ember cracks in the heart and a glowing rim at the char's edge, cooling with vHeat.a (gold while hot, then
+  // orange, then gone; never a dark red glow).
+  // The cracks: warped cell walls, thin, broken into separate runs by noise, only in the heart.
+  vec2 cp = p * 3.4 + warp * 1.2 + vSeed * 5.0;
+  float walls = 1.0 - smoothstep(0.0, 0.022 + 0.02 * n, gdCells(cp));
+  float runs = smoothstep(0.48, 0.62, gdNoise(p * 3.0 - vSeed * 2.3));
+  float cracks = walls * runs * smoothstep(0.5, 0.85, t.a);
+  float rim = (1.0 - smoothstep(0.0, 0.1, field - thr)) * smoothstep(0.1, 0.3, t.a);
+  float specks = smoothstep(0.84, 0.95, gdNoise(p * 26.0 + vSeed * 3.7)) * smoothstep(0.55, 0.95, t.a);
+  float h = vHeat.a;
+  vec3 hot = vHeat.rgb * mix(vec3(1.0, 0.8, 0.6), vec3(1.0, 1.25, 1.6), smoothstep(0.55, 1.0, h));
+  // Cooled embers go out (no dim lines left as a net on the char).
+  vec3 glow = hot * h * smoothstep(0.04, 0.25, h) * clamp(cracks * 0.9 + rim * 0.5 + specks * 0.7, 0.0, 1.0);
+  gl_FragColor = vec4(body * a + glow * keep, a);
+#else
   float a = smoothstep(thr, thr + 0.05, field) * smoothstep(0.02, 0.12, t.a) * vBody.a;
   if (a < 0.002) discard;
   vec3 body = vBody.rgb * mix(0.72, 1.12, t.r);
@@ -66,6 +119,7 @@ void main() {
   float specks = smoothstep(0.62, 0.86, t.r) * smoothstep(0.4, 0.9, n);
   vec3 glow = vHeat.rgb * vHeat.a * clamp(front * 0.85 + specks * 0.6, 0.0, 1.0);
   gl_FragColor = vec4(body * a + glow * a, a);
+#endif
 }`;
 
 const F = 19; // floats per decal state: x y z size, rot aspect seed, age life growIn erodeFrom cool, body rgb alpha, heat rgb
@@ -82,9 +136,10 @@ export class GroundDecalPool {
   private cursor = 0;
   live = 0;
 
+  /** `texture` null: the procedural char (no atlas). */
   constructor(
     readonly capacity: number,
-    texture: THREE.Texture,
+    texture: THREE.Texture | null,
     renderOrder = 4,
   ) {
     this.state = new Float32Array(capacity * F);
@@ -108,6 +163,7 @@ export class GroundDecalPool {
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
       uniforms: { map: { value: texture } },
+      defines: texture === null ? { PROCEDURAL: "" } : {},
       transparent: true,
       depthWrite: false,
       depthTest: true,
