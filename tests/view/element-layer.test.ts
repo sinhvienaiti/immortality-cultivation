@@ -379,6 +379,39 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect(fire.accents.length).toBeGreaterThan(0);
   });
 
+  it("roots every flame lotus: one lit in the air fades its root at its own height (no straight cut at the cell's edge)", () => {
+    const spawns: { y: number; ground: number | undefined }[] = [];
+    const spy = vi.spyOn(FlipbookPool.prototype, "spawn").mockImplementation(function (this: FlipbookPool, at, _size, o) {
+      if (this.id === "fire-burst") spawns.push({ y: at.y, ground: o?.ground });
+    });
+    try {
+      const cam = camera();
+      const tex = sheets();
+      const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
+      const stage = stageFor(new THREE.Group(), cam, tex, []);
+      fx.setElement(elementById("fire")!, stage);
+      const step = (): void => {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+      };
+      // The word typed past each blade's threshold (its ignition behind the shoulders), then the cast and its launches.
+      for (const p of [0.2, 0.5, 0.8, 1]) {
+        fx.setCharge("k1", p, 0, -6);
+        step();
+      }
+      fx.cast("k1", 0, -6);
+      for (let i = 0; i < 90; i += 1) step();
+    } finally {
+      spy.mockRestore();
+    }
+    const air = spawns.filter((s) => s.y > 0.05);
+    // Three blades ignite at their places, the second and third flare as they leave.
+    expect(air.length).toBeGreaterThanOrEqual(5);
+    for (const s of air) expect(s.ground).toBeCloseTo(s.y, 5);
+    for (const s of spawns.filter((x) => x.y <= 0.05)) expect(s.ground).toBe(0);
+  });
+
   it("draws key 7 in fire: flame ribbons on the lead blades, their sheaths, the river's trails in the fire tone", () => {
     const kitLayer = new THREE.Group();
     const cam = camera();

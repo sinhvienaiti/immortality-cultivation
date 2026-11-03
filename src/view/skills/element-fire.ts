@@ -357,6 +357,9 @@ class FireLayers {
       o.frame = 1;
       o.cool = 0.5;
       o.lift = 0.2;
+      // In the air the lotus has no ground to hide its root: fade the root out softly (the cell's bottom edge cut
+      // its white-hot root in a straight line, 03/11 check).
+      o.ground = p.y - 0.55;
       this.burst.spawn(v.set(p.x, p.y - 0.55, p.z), 1.05, o);
       this.dot(p.x, p.y, p.z, 0.7, 0.3, 0.1, CORE, 3);
       this.sparkRays(p.x, p.y, p.z, 0.9, 1.1);
@@ -466,6 +469,8 @@ class FireLayers {
     o.frame = 2;
     o.cool = 0.5;
     o.lift = 0.2;
+    // Its root fades softly in the air (no straight cut at the cell's edge).
+    o.ground = p.y - 0.5;
     this.burst.spawn(v.set(p.x, p.y - 0.5, p.z), 1.0, o);
     this.dot(p.x, p.y, p.z, 0.75, 0.35, 0.09, WHITE_GOLD, 3.6);
     this.sparkRays(p.x, p.y, p.z, 1.0, 1.2);
