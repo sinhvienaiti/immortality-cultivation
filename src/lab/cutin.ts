@@ -287,7 +287,9 @@ export class CutIn {
     const push = 1 + 0.08 * clamp01(t / T);
     const bgW = 1.15 * pw * push;
     const bgH = (bgW * IMG_H) / IMG_W;
-    const bx = pw * 0.5 - FACE_X * bgW;
+    // Parallax (round 3b, item 6): the painting slides in from the left and keeps drifting right, slower than the
+    // title layer slides left; the watermark drifts left faster behind both.
+    const bx = pw * 0.5 - FACE_X * bgW - 0.06 * W * (1 - easeOut(t / 0.3)) + 0.015 * W * clamp01(t / T);
     const by = 0.43 * H - FACE_Y * bgH - 0.04 * H * clamp01(t / T);
     this.portrait.style.backgroundSize = `${bgW}px ${bgH}px`;
     this.portrait.style.backgroundPosition = `${bx}px ${by}px`;
@@ -345,17 +347,22 @@ export class CutIn {
     this.watermark.style.fontSize = `${wz}px`;
     this.watermark.style.left = `${0.5 * W}px`;
     this.watermark.style.top = `${yAt(0.5, 0.5) - wz * 0.55}px`;
-    this.watermark.style.transform = `rotate(${angle}rad) translateX(${-2 * W * 0.01 * clamp01(t / T)}px)`;
+    this.watermark.style.transform = `rotate(${angle}rad) translateX(${0.08 * W * (1 - easeOut(t / 0.35)) - 0.05 * W * clamp01(t / T)}px)`;
     this.watermark.style.opacity = String(0.13 * smooth((t - 0.08) / 0.2) * open);
     const nx = 0.46 * W;
     const nz = Math.round(0.062 * H);
     const ny = yAt(0.6, 0.6) - nz * 0.5;
     const track = 1 - smooth((t - 0.12) / 0.32);
+    // The title layer slides in from the right (faster than the painting: parallax) and flashes white as it lands.
+    const titleSlide = 0.1 * W * (1 - easeOut((t - 0.08) / 0.26));
+    const fl = (t - 0.3) / 0.16;
+    const flash = fl > 0 && fl < 1 ? (fl < 0.15 ? fl / 0.15 : 1 - (fl - 0.15) / 0.85) : 0;
+    this.name.style.filter = flash > 0.001 ? `brightness(${1 + 1.6 * flash}) drop-shadow(0 0 ${Math.round(14 * flash)}px rgba(255,250,235,${0.9 * flash}))` : "none";
     this.name.style.fontSize = `${nz}px`;
     this.name.style.letterSpacing = `${0.05 + 0.3 * track}em`;
     this.name.style.left = `${nx}px`;
     this.name.style.top = `${ny}px`;
-    this.name.style.transform = `rotate(${angle}rad) translateX(${30 * track}px)`;
+    this.name.style.transform = `rotate(${angle}rad) translateX(${30 * track + titleSlide}px)`;
     this.name.style.opacity = String(smooth((t - 0.1) / 0.12) * open);
     this.name.style.backgroundPosition = `${100 - 120 * clamp01((t - 0.15) / 0.6)}% 0`;
     const hz = Math.round(0.058 * H);
@@ -364,7 +371,7 @@ export class CutIn {
     this.hanzi.style.top = `${ny - hz * 1.08}px`;
     const rv = smooth((t - 0.16) / 0.28);
     this.hanzi.style.clipPath = `inset(-20% ${(1 - rv) * 100}% -20% -5%)`;
-    this.hanzi.style.transform = `rotate(${angle}rad) scale(${1.06 - 0.06 * rv})`;
+    this.hanzi.style.transform = `rotate(${angle}rad) translateX(${titleSlide * 0.8}px) scale(${1.06 - 0.06 * rv})`;
     this.hanzi.style.opacity = String(0.92 * open);
     const rw = 0.44 * W * easeOut((t - 0.22) / 0.25);
     this.rule.style.width = `${rw}px`;
@@ -374,13 +381,15 @@ export class CutIn {
     this.rule.style.opacity = String(open);
     // The seal slams down at STAMP_AT after the hanzi (it signs the calligraphy): big and turned, then home with an
     // overshoot.
-    const sz = Math.round(0.1 * H);
+    // Round 3b (item 6): the seal sits past the end of the English title on its row, never over it (it covered "WAY").
+    const sz = Math.round(0.082 * H);
     const st = (t - STAMP_AT) / 0.12;
-    const sx = nx + 0.01 * W + hz * 4.5 + sz * 0.5;
+    const nameW = this.name.offsetWidth || 0.42 * W;
+    const sx = Math.min(W - sz * 0.62, nx + nameW + sz * 0.72);
     this.seal.style.width = `${sz}px`;
     this.seal.style.height = `${sz}px`;
     this.seal.style.left = `${sx - sz / 2}px`;
-    this.seal.style.top = `${ny - hz * 1.08 + hz * 0.5 + (sx - nx) * Math.tan(angle) - sz / 2}px`;
+    this.seal.style.top = `${ny + nz * 0.55 + (sx - nx) * Math.tan(angle) - sz / 2}px`;
     this.sealText.style.fontSize = `${Math.round(sz * 0.36)}px`;
     if (st <= 0) this.seal.style.opacity = "0";
     else {
