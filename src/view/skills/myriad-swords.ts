@@ -63,25 +63,25 @@ const SWORD_LEAD = 0;
 const SWORD_MID = 1;
 const SWORD_FAR = 2;
 
-export type VanKiemRole = "primary" | "secondary" | "finisher";
-export type VanKiemPhase = "open" | "hunt" | "gather" | "hush" | "climax" | "close" | "end";
+export type MyriadSwordsRole = "primary" | "secondary" | "finisher";
+export type MyriadSwordsPhase = "open" | "hunt" | "gather" | "hush" | "climax" | "close" | "end";
 
-export interface VanKiemHost {
+export interface MyriadSwordsHost {
   readonly layer: THREE.Object3D;
   readonly camera: THREE.Camera;
   readonly targets: TargetField;
   caster(out: { x: number; z: number; fx: number; fz: number }): void;
   hand(out: THREE.Vector3): void;
   /** A sword struck `target` from (dx, dz); `killed` as the field said; `power` ≥ 0.9 a lead blade or the cut. */
-  struck(target: number, dx: number, dz: number, power: number, role: VanKiemRole, killed: boolean): void;
+  struck(target: number, dx: number, dz: number, power: number, role: MyriadSwordsRole, killed: boolean): void;
   /** The skill's timeline: the host answers with screen effects and sound on this frame. */
-  phase(p: VanKiemPhase): void;
+  phase(p: MyriadSwordsPhase): void;
   /** A sword passing near the hero (the 8–12 nearest get fly-by sounds). */
   flyby(x: number, y: number, z: number, speed: number): void;
   flash(at: THREE.Vector3, colour: string, intensity: number): void;
 }
 
-/** A sword's pose as drawn (VanKiemFx.poseOf): middle (m), unit direction, length (m), class 0 lead, 1 mid, 2 far. */
+/** A sword's pose as drawn (MyriadSwordsFx.poseOf): middle (m), unit direction, length (m), class 0 lead, 1 mid, 2 far. */
 export interface SwordPose {
   x: number;
   y: number;
@@ -93,7 +93,7 @@ export interface SwordPose {
   cls: number;
 }
 
-export interface VanKiemTextures {
+export interface MyriadSwordsTextures {
   readonly glow: THREE.Texture;
   readonly slash: THREE.Texture;
   readonly star: THREE.Texture;
@@ -110,7 +110,7 @@ export interface VanKiemTextures {
  * River size per tier: mid swords (the textured LOD) and far swords (impostors). 03/11: with the ribbon body gone,
  * the swords themselves carry the river's mass, so there are twice round 3b's (12 + 36 on High).
  */
-export const VAN_KIEM_SWORDS = { low: { mid: 10, far: 24 }, medium: { mid: 16, far: 40 }, high: { mid: 24, far: 64 }, ultra: { mid: 32, far: 80 } } as const;
+export const MYRIAD_SWORDS_PER_TIER = { low: { mid: 10, far: 24 }, medium: { mid: 16, far: 40 }, high: { mid: 24, far: 64 }, ultra: { mid: 32, far: 80 } } as const;
 const HERO_N = 6;
 const SEEDS = 20;
 /** Lengths pommel to tip (m): a mid sword, a far sword, the lead blades leaving the hand and the lead blades in the river. */
@@ -187,13 +187,13 @@ const S_LEAD = 11;
 const CYAN = [0.04, 0.55, 0.95] as const;
 const CORE = [1, 1, 1] as const;
 /** The number tint and flash colour hosts read (linear cyan, sRGB hex). */
-export const VAN_KIEM_COLOUR = [0.2, 0.72, 1.0] as const;
-export const VAN_KIEM_FLASH = "#d6f3ff";
+export const MYRIAD_SWORDS_COLOUR = [0.2, 0.72, 1.0] as const;
+export const MYRIAD_SWORDS_FLASH = "#d6f3ff";
 /** The beast hit tint of a river sword and of the cut (0xRRGGBB). */
 const HIT_RGB = 0x8fdcff;
 const CUT_RGB = 0xc4ecff;
 
-export class VanKiemFx {
+export class MyriadSwordsFx {
   /** The lead blades (the full model) and the mid swords (its LOD), one instanced draw each (blades.ts). */
   private readonly blades: BladeSet;
   /** The far swords: impostors of the same model (real-swords.ts). */
@@ -284,8 +284,8 @@ export class VanKiemFx {
   leadDives = 0;
 
   constructor(
-    private readonly host: VanKiemHost,
-    tex: VanKiemTextures,
+    private readonly host: MyriadSwordsHost,
+    tex: MyriadSwordsTextures,
     counts: { readonly mid: number; readonly far: number },
   ) {
     this.mid = Math.max(8, Math.min(64, Math.floor(counts.mid)));
@@ -1106,7 +1106,7 @@ export class VanKiemFx {
   }
 
   /** Sword i reaches beast t: the blow, its slash and star, a lit pool, the wound. */
-  private strike(i: number, t: number, role: VanKiemRole): void {
+  private strike(i: number, t: number, role: MyriadSwordsRole): void {
     const T = this.host.targets;
     this.reserved[t] = Math.max(0, this.reserved[t]! - 1);
     let dx = T.x(t) - this.ax[i]!;
@@ -1127,7 +1127,7 @@ export class VanKiemFx {
     this.tgt[i] = -1;
     if (lead) {
       this.v.set(T.x(t), T.midY(t), T.z(t));
-      this.host.flash(this.v, VAN_KIEM_FLASH, big ? 5 : 3);
+      this.host.flash(this.v, MYRIAD_SWORDS_FLASH, big ? 5 : 3);
       if (big) this.leadImpact(T.x(t), T.z(t));
     }
   }

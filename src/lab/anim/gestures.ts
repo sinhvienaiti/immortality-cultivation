@@ -242,7 +242,7 @@ export const GESTURES: Record<GestureId, Gesture> = {
 };
 
 /**
- * Which gesture each lab slot acts, with the skill's own rhythm (beats on its hit ticks, kiem.ts). The redesigned
+ * Which gesture each lab slot acts, with the skill's own rhythm (beats on its hit ticks, sword-skills.ts). The redesigned
  * catalog remaps slots here (or through `setSlotGesture`).
  */
 export const SLOT_GESTURES: Record<string, SlotGesture> = {

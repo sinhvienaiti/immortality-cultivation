@@ -622,7 +622,7 @@ export class Animator {
     return this.state === "strike" ? this.strikeAge : Infinity;
   }
 
-  /** The dash: a glide a hand above the ground along kiem.ts's path (the shown root eases in), then a landing. */
+  /** The dash: a glide a hand above the ground along sword-skills.ts's path (the shown root eases in), then a landing. */
   dash(): void {
     if (this.keyPoses.active) this.keyPoses.cancel();
     this.state = "dash";
@@ -685,7 +685,7 @@ export class Animator {
     this.toIdle(HALFLIFE.toIdle);
   }
 
-  /** The skill code moves the caster (kiem.ts's dash). */
+  /** The skill code moves the caster (sword-skills.ts's dash). */
   external(x: number, z: number): void {
     this.loco.external(x, z);
   }

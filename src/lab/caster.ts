@@ -73,7 +73,7 @@ export const SLOT_CLIP: Record<string, CasterClip> = { auto: "attack", k1: "atta
 function slotClip(slot: string): CasterClip {
   return SLOT_CLIP[slot] ?? "attack";
 }
-/** A strike clip asked for by the skill code without a typed word (KiemHost.play): the move it acts. */
+/** A strike clip asked for by the skill code without a typed word (SwordSkillHost.play): the move it acts. */
 const CLIP_MOVE: Partial<Record<CasterClip, MoveId>> = { attack: "auto", thrust: "k4", skill1: "k2", skill2: "guard", ult: "k5" };
 
 /**
@@ -303,7 +303,7 @@ export class LabCaster {
   }
 
   /**
-   * The skill code asks for a clip (KiemHost.play): a release the lab made this frame is that strike (kept, whatever
+   * The skill code asks for a clip (SwordSkillHost.play): a release the lab made this frame is that strike (kept, whatever
    * clip the skill names: K4 asks for Skill2 but acts on its own `thrust`); a dash starts the dash; a strike cast
    * from code without a typed word releases now.
    */
@@ -332,7 +332,7 @@ export class LabCaster {
   /** The last key: the strike runs on from its release, aimed at (tx, tz) (the VFX read the hand after `update`). */
   release(slot: string, tx?: number, tz?: number): void {
     this.primed = null;
-    if (slot === "dash") return; // the dash starts on KiemHost.play("dash")
+    if (slot === "dash") return; // the dash starts on SwordSkillHost.play("dash")
     const has = tx !== undefined && tz !== undefined;
     this.anim?.release(slot, slotClip(slot), has ? tx : this.x + this.fx * 6, has ? tz : this.z + this.fz * 6, has);
   }
@@ -369,7 +369,7 @@ export class LabCaster {
     this.ring?.start();
   }
 
-  /** KiemHost.moveCaster: the dash path (the shown root eases into it). */
+  /** SwordSkillHost.moveCaster: the dash path (the shown root eases into it). */
   moveTo(x: number, z: number): void {
     this.anim?.external(x, z);
   }

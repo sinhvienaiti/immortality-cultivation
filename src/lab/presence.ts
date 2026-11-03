@@ -18,7 +18,7 @@
  */
 import * as THREE from "three";
 import { approach, GroundSigil, SpritePool, smooth01 } from "../view/skills/fxkit";
-import type { KiemFx } from "../view/skills/kiem";
+import type { SwordSkillFx } from "../view/skills/sword-skills";
 
 /** The rim term (view space): (1 − N·V)³, stronger on the upper edges (the key from above). */
 const RIM_GLSL = [
@@ -54,7 +54,7 @@ export class CasterPresence {
   private readonly col = new THREE.Color();
   private readonly core = new THREE.Color();
 
-  /** `glow`: a soft disc sheet; `ring`: a thick ring sheet (visible radius 0.36 of the sprite, kiem.ts R_SHOCK). */
+  /** `glow`: a soft disc sheet; `ring`: a thick ring sheet (visible radius 0.36 of the sprite, sword-skills.ts R_SHOCK). */
   constructor(layer: THREE.Object3D, glow: THREE.Texture, ring: THREE.Texture) {
     this.presenceRing = new GroundSigil("presence", 1.6, 1.6, "#9fb2cc", "#ffffff");
     this.presenceRing.mesh.renderOrder = 4;
@@ -96,7 +96,7 @@ export class CasterPresence {
   }
 
   /** One frame: `dt` world seconds (the hit-stop slows presence with the world); the caster stands at (x, z). */
-  update(dt: number, realDt: number, x: number, z: number, fx: KiemFx): void {
+  update(dt: number, realDt: number, x: number, z: number, fx: SwordSkillFx): void {
     this.time += dt;
     const p = fx.presence;
     // Action: each new release swells the presence, which settles over ~0.25 s. A counter that went back

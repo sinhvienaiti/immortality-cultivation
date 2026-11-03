@@ -3,15 +3,15 @@
  * frames f5 (the impact frame: a gate of swords over the field, light columns, a colossal sword) and f6 (the
  * aftermath: planted swords with lit bases, a wide glowing rift). Round 3a's flat ground spiral read as a floor decal
  * at the 55° play camera; this composition lives in vertical space. The drawing only; the timeline, targets and
- * strikes stay in KiemFx (kiem.ts). Pieces:
+ * strikes stay in SwordSkillFx (sword-skills.ts). Pieces:
  * - SkyGate: a camera-facing ellipse high over the far field, a dark aperture with a white-hot rim and a torn
  *   corona, drawn analytically in one quad; its ring of swords pointing out is the real sword (03/11/2026:
- *   impostors of the Clear Wind model, real-swords.ts, placed by KiemFx at `swordAt`), never a drawn silhouette;
+ *   impostors of the Clear Wind model, real-swords.ts, placed by SwordSkillFx at `swordAt`), never a drawn silhouette;
  * - LightStrips: screen-space strips from a base to a top (columns linking sky and ground, landing pillars), a thin
  *   HDR core in a cyan body with travelling bright segments, one instanced draw;
  * - GroundMarks: ground decals, a star of jagged cracks where a blade lands and the wide rift of the climax (a white
  *   seam, a cyan glow, scorched ink edges, branches), one instanced draw;
- * - the falling, planted and heaven swords are the real textured model (blades.ts BladeSet in KiemFx).
+ * - the falling, planted and heaven swords are the real textured model (blades.ts BladeSet in SwordSkillFx).
  * White, cyan and deep navy only; bodies premultiplied, only thin cores reach the bloom. No allocation per frame.
  */
 import * as THREE from "three";

@@ -7,11 +7,11 @@
  *
  * The pale-jade core glows through the weapon's glow: a soft emissive on the
  * jade only (a hue mask on the colour map, ≤ 0.9 a channel, never blooms)
- * that breathes at rest and rises with the typing (KiemFx.presence), and a
+ * that breathes at rest and rises with the typing (SwordSkillFx.presence), and a
  * thin HDR line down the blade's ridge (3–6, the only part that blooms) while
  * a word is typed and at each release (bloom rules, VFX_STANDARD §3.5).
  *
- * While the weapon itself is out (KiemFx.handAway: Phi Kiếm throws it, Nhất
+ * While the weapon itself is out (SwordSkillFx.handAway: Phi Kiếm throws it, Nhất
  * Tuyến drives it down its line) it melts into light from the tip (a noisy
  * dissolve with an HDR edge, shadow included) and the tassel draws in; it
  * re-forms from the pommel when it comes back. Lam's clips are unarmed, so
@@ -20,7 +20,7 @@
  */
 import * as THREE from "three";
 import { loadWeaponModel } from "../view/skills/blades";
-import type { KiemFx } from "../view/skills/kiem";
+import type { SwordSkillFx } from "../view/skills/sword-skills";
 import type { WeaponDef, WeaponHold } from "../view/skills/weapons";
 import { Tassel } from "./tassel";
 import type { BodyProxy } from "./body-proxy";
@@ -557,7 +557,7 @@ export class HandSword {
    * After the caster's update and the skills' (handAway is this frame's):
    * `dt` world seconds (a hit-stop shrinks them), `realDt` the frame's.
    */
-  update(dt: number, realDt: number, fx: KiemFx, camera: THREE.Camera): void {
+  update(dt: number, realDt: number, fx: SwordSkillFx, camera: THREE.Camera): void {
     const mesh = this.mesh;
     this.pivot.visible = this.enabled && mesh !== null;
     if (mesh === null) return;

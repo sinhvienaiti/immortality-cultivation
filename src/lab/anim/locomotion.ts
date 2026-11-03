@@ -10,7 +10,7 @@
  * added by the Animator after `update`; the logical position never moves.)
  *
  * Logical vs shown: `x, z` is where the skill code puts the caster (the
- * dash's eased path from kiem.ts arrives through `external`); the shown
+ * dash's eased path from sword-skills.ts arrives through `external`); the shown
  * root follows it on a warped clock during a dash (a 60 ms ease-in, then
  * the same curve 30 ms later), so the body starts from rest instead of
  * covering 1.15 m in its first frame. No allocation per frame.

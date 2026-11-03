@@ -7,7 +7,7 @@
  * bright fresnel rim in the hero's colour, fading out over its life. They
  * spawn every SPAWN_S while the dash glides fast, so a 0.2 s glide leaves a
  * trail of 4–6 poses. Additive, no depth write; the glow stays ≤ 0.9 (only thin
- * HDR cores may bloom, kiem.ts style rule). The copies are built on the first
+ * HDR cores may bloom, sword-skills.ts style rule). The copies are built on the first
  * dash (geometry shared with the body). No allocation per frame after that.
  */
 import * as THREE from "three";

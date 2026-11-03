@@ -4,8 +4,8 @@
  * the same frame, called in turn with no setTimeout: the body (the caster
  * already acted), the VFX, the screen effects (camera, hit-stop), the damage
  * numbers and the sound. In the game the sim emits these on its ticks; here
- * the lab's stand-ins do (skills-main.ts, kiem.ts through KiemHost.struck,
- * van-kiem.ts). Each kind has one event object, reused: a listener reads it
+ * the lab's stand-ins do (skills-main.ts, sword-skills.ts through SwordSkillHost.struck,
+ * myriad-swords.ts). Each kind has one event object, reused: a listener reads it
  * during the call and keeps nothing (key 7 lands hundreds of blows).
  */
 import type { ScreenTier, ImpactRole } from "../view/screen-fx";

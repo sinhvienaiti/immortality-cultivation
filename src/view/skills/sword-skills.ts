@@ -48,9 +48,9 @@ import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate, GATE_SWORDS } 
 import type { TargetField } from "./targets";
 import { DEFAULT_WEAPON, glowOf, rimOf, weaponById, type Rgb, type WeaponDef, type WeaponGlow, type WeaponId } from "./weapons";
 
-export type KiemSlot = "auto" | "k1" | "k2" | "guard" | "dash" | "k4" | "k5";
+export type SwordSlot = "auto" | "k1" | "k2" | "guard" | "dash" | "k4" | "k5";
 
-export interface KiemTextures {
+export interface SwordSkillTextures {
   readonly glow: THREE.Texture; // soft round light
   readonly flare: THREE.Texture; // bright lens flare
   readonly star: THREE.Texture; // four-point star
@@ -67,7 +67,7 @@ export interface KiemTextures {
   readonly twirl: THREE.Texture; // swirling crescent (spinning guard)
 }
 
-export interface KiemHost {
+export interface SwordSkillHost {
   readonly layer: THREE.Object3D;
   readonly camera: THREE.Camera;
   readonly targets: TargetField;
@@ -94,15 +94,15 @@ export interface KiemHost {
 }
 
 /** Construction options: `k5Blades` overrides the tier's swarm size (lab measurements; at most K5_MAX). */
-export interface KiemOptions {
+export interface SwordSkillOptions {
   readonly k5Blades?: number;
 }
 
 /** What the caster's presence layer reads each frame (src/lab/presence.ts): typing level, which skill, releases so far. */
-export interface KiemPresence {
+export interface SwordSkillPresence {
   /** Typing progress shown (0..1), 0 when idle. */
   charge: number;
-  slot: KiemSlot;
+  slot: SwordSlot;
   /** Releases so far (a counter: a change is a new release) and the last one's tier. */
   releases: number;
   tier: number;
@@ -205,7 +205,7 @@ const SEAL_IN_S = 0.22;
 /** Qi motes spiralling in while a word is typed (pool size). */
 const QI_MOTES = 72;
 /** Slots whose word draws a ground sigil. */
-const SIGIL_SLOTS: readonly KiemSlot[] = ["k2", "guard", "dash", "k4", "k5"];
+const SIGIL_SLOTS: readonly SwordSlot[] = ["k2", "guard", "dash", "k4", "k5"];
 /** Inverse of smoothstep on [0, 1]: the share x with smooth01(x) = y. */
 const invSmooth01 = (y: number): number => {
   const v = y <= 0 ? 0 : y >= 1 ? 1 : y;
@@ -336,7 +336,7 @@ interface SlotTone {
   readonly deep: number;
   readonly hue: number;
 }
-const SLOT_TONE: Readonly<Record<KiemSlot, SlotTone>> = {
+const SLOT_TONE: Readonly<Record<SwordSlot, SlotTone>> = {
   auto: { acc: 0.15, light: 0, deep: 1.1, hue: 0 },
   k1: { acc: 0, light: 0, deep: 1.45, hue: -4 },
   k2: { acc: 0, light: 0, deep: 1.8, hue: -16 },
@@ -346,7 +346,7 @@ const SLOT_TONE: Readonly<Record<KiemSlot, SlotTone>> = {
   k5: { acc: 0, light: 0, deep: 2.6, hue: 18 },
 };
 /** The seal glyph each slot draws under the caster (fxkit SEAL_SHAPE). */
-const SLOT_SHAPE: Readonly<Record<KiemSlot, number>> = {
+const SLOT_SHAPE: Readonly<Record<SwordSlot, number>> = {
   // Round 3a (P8): the basic shot takes the Sword glyph too, so its seal flares under the caster on the release.
   auto: SEAL_SHAPE.k1,
   k1: SEAL_SHAPE.k1,
@@ -356,7 +356,7 @@ const SLOT_SHAPE: Readonly<Record<KiemSlot, number>> = {
   k4: SEAL_SHAPE.k4,
   k5: SEAL_SHAPE.k5,
 };
-const SLOTS: readonly KiemSlot[] = ["auto", "k1", "k2", "guard", "dash", "k4", "k5"];
+const SLOTS: readonly SwordSlot[] = ["auto", "k1", "k2", "guard", "dash", "k4", "k5"];
 
 const HSL = { h: 0, s: 0, l: 0 };
 /** Unit-max linear colour of an sRGB hex. Load time only (allocates). */
@@ -374,7 +374,7 @@ function renorm(u: [number, number, number]): [number, number, number] {
  * violet"; the sword is jade, cyan and silver with a little gold): each slot's accent and rim (sRGB). Jade stays
  * near hue 150 and cyan near 195, both apart from the typing colour (#7FF5E0, hue 170); no violet.
  */
-const CLEAR_WIND_TONE: Readonly<Record<KiemSlot, readonly [accent: string, rim: string]>> = {
+const CLEAR_WIND_TONE: Readonly<Record<SwordSlot, readonly [accent: string, rim: string]>> = {
   // Round 3a (P8): the basic shot and slot 1 in the school's white and cyan (slot 1 was jade: "a green smudge").
   auto: ["#bfeeff", "#2aaeea"],
   k1: ["#a6e4ff", "#1f9ee8"],
@@ -386,7 +386,7 @@ const CLEAR_WIND_TONE: Readonly<Record<KiemSlot, readonly [accent: string, rim: 
 };
 
 /** The slot's VFX colours from the weapon (SLOT_TONE), through glowOf, so the bloom and white-core rules hold. Load time only. */
-export function skillGlow(def: WeaponDef, slot: KiemSlot): WeaponGlow {
+export function skillGlow(def: WeaponDef, slot: SwordSlot): WeaponGlow {
   if (def.id === "clear-wind") {
     const [accent, rim] = CLEAR_WIND_TONE[slot];
     return glowOf(accent, 1, rimOf(rim, 1.2));
@@ -448,7 +448,7 @@ interface Flight {
   ldy: number;
   ldz: number;
   /** The skill that flew it (its colours). */
-  slot: KiemSlot;
+  slot: SwordSlot;
 }
 
 /** A lingering aftermath: spirit motes rising off the ground for a while. */
@@ -462,7 +462,7 @@ interface Emitter {
   life: number;
   rate: number;
   acc: number;
-  slot: KiemSlot;
+  slot: SwordSlot;
 }
 
 type Rgbish = { r: number; g: number; b: number };
@@ -481,7 +481,7 @@ interface CrackState {
   ink: number;
 }
 
-export class KiemFx {
+export class SwordSkillFx {
   readonly blades: BladeSet;
   private readonly glow: SpritePool;
   private readonly flare: SpritePool;
@@ -535,9 +535,9 @@ export class KiemFx {
   private pal: WeaponGlow;
   private weaponSeq = 0;
   /** Each skill's colours inside the weapon's palette (skillGlow); `use(slot)` points `pal` at one. */
-  private skillPal: Record<KiemSlot, WeaponGlow>;
+  private skillPal: Record<SwordSlot, WeaponGlow>;
   /** The slot `pal` points at (use). */
-  private palSlot: KiemSlot = "auto";
+  private palSlot: SwordSlot = "auto";
   /** Fade-in (s) the shared emit helpers give their sprites and beams: 0 (flashes, full at once) or SOFT_RISE_S. */
   private riseS = 0;
   /** Blade roll round its axis (rad) on top of the face roll (show's `roll`): Ngự Kiếm's waiting blades rock slowly. */
@@ -549,14 +549,14 @@ export class KiemFx {
   /** Per sword: its dissolve into light (0 whole … 1 gone; the rain's swords appear and melt with it). */
   private readonly bDis = new Float32Array(BLADE_CAP);
   /** Read by the caster's presence layer (src/lab/presence.ts). */
-  readonly presence: KiemPresence = { charge: 0, slot: "auto", releases: 0, tier: 0 };
+  readonly presence: SwordSkillPresence = { charge: 0, slot: "auto", releases: 0, tier: 0 };
   /** The weapon in the hand is out (updateHand): Nhất Tuyến's blade or a Phi Kiếm blade is on screen. */
   private handOut = false;
   /** The seal's glyph: shown, wanted next, its share (it crossfades), the slot it colours from, its colours as drawn. */
   private sealShape = 0;
   private sealNext = 0;
   private glyphK = 0;
-  private sealSlot: KiemSlot = "auto";
+  private sealSlot: SwordSlot = "auto";
   private readonly sealCol = new THREE.Color();
   private readonly sealCore = new THREE.Color();
   private readonly tmpCol = new THREE.Color();
@@ -576,12 +576,12 @@ export class KiemFx {
   private readonly crackS: CrackState = { t: -1, life: 0, x: 0, z: 0, reveal: 0, goal: 0, heat: 0, peak: 0, ash: 0, ink: 0 };
 
   // Charge state per slot (typing progress 0..1, -1 idle).
-  private charge: Record<KiemSlot, number> = { auto: -1, k1: -1, k2: -1, guard: -1, dash: -1, k4: -1, k5: -1 };
-  private chargeShown: Record<KiemSlot, number> = { auto: 0, k1: 0, k2: 0, guard: 0, dash: 0, k4: 0, k5: 0 };
+  private charge: Record<SwordSlot, number> = { auto: -1, k1: -1, k2: -1, guard: -1, dash: -1, k4: -1, k5: -1 };
+  private chargeShown: Record<SwordSlot, number> = { auto: 0, k1: 0, k2: 0, guard: 0, dash: 0, k4: 0, k5: 0 };
   /** Typing progress as drawn: eases toward `charge` (REVEAL_HALF_S), so sigils grow smoothly instead of one step a key. */
-  private reveal: Record<KiemSlot, number> = { auto: 0, k1: 0, k2: 0, guard: 0, dash: 0, k4: 0, k5: 0 };
+  private reveal: Record<SwordSlot, number> = { auto: 0, k1: 0, k2: 0, guard: 0, dash: 0, k4: 0, k5: 0 };
   /** Seconds since each word's first key: its sigil (ink base included) fades in over SIGIL_IN_S instead of appearing whole. */
-  private chargeAge: Record<KiemSlot, number> = { auto: 0, k1: 0, k2: 0, guard: 0, dash: 0, k4: 0, k5: 0 };
+  private chargeAge: Record<SwordSlot, number> = { auto: 0, k1: 0, k2: 0, guard: 0, dash: 0, k4: 0, k5: 0 };
 
   // Blades: every pose goes through show(); settleBlades() eases each blade's presence in and out once a frame.
   /** Presence 0..1 (scale × smoothstep(presence)). */
@@ -675,10 +675,10 @@ export class KiemFx {
   private rainEmberAcc = 0;
 
   constructor(
-    private readonly host: KiemHost,
-    tex: KiemTextures,
+    private readonly host: SwordSkillHost,
+    tex: SwordSkillTextures,
     quality: "low" | "medium" | "high" | "ultra",
-    opts: KiemOptions = {},
+    opts: SwordSkillOptions = {},
   ) {
     const tierN = quality === "low" ? 150 : quality === "medium" ? 225 : 300;
     this.poolN = Math.max(1, Math.min(K5_MAX, Math.round(opts.k5Blades ?? tierN)));
@@ -753,35 +753,35 @@ export class KiemFx {
     // The signature sword's colours until setWeapon; the swords stay the stand-in jian until a GLB loads.
     this.weaponDef = weaponById(DEFAULT_WEAPON)!;
     this.pal = this.weaponDef.glow;
-    this.skillPal = KiemFx.skillPals(this.weaponDef);
+    this.skillPal = SwordSkillFx.skillPals(this.weaponDef);
     this.applyColours(this.weaponDef);
   }
 
   /** Every slot's colours for a weapon (load time). */
-  private static skillPals(def: WeaponDef): Record<KiemSlot, WeaponGlow> {
-    const out = {} as Record<KiemSlot, WeaponGlow>;
+  private static skillPals(def: WeaponDef): Record<SwordSlot, WeaponGlow> {
+    const out = {} as Record<SwordSlot, WeaponGlow>;
     for (const s of SLOTS) out[s] = skillGlow(def, s);
     return out;
   }
 
   /** The colours of `slot` with the equipped weapon (the presence layer and the lab read them). */
-  paletteOf(slot: KiemSlot): WeaponGlow {
+  paletteOf(slot: SwordSlot): WeaponGlow {
     return this.skillPal[slot];
   }
 
-  /** The slot whose colours the emit helpers use now: the one striking when KiemHost.hitStop or shake is called. */
-  get striking(): KiemSlot {
+  /** The slot whose colours the emit helpers use now: the one striking when SwordSkillHost.hitStop or shake is called. */
+  get striking(): SwordSlot {
     return this.palSlot;
   }
 
   /** Points the emit helpers at a slot's colours. */
-  private use(slot: KiemSlot): void {
+  private use(slot: SwordSlot): void {
     this.pal = this.skillPal[slot];
     this.palSlot = slot;
   }
 
   /** Which skill a blade slot belongs to (its colours). */
-  private bladeSlot(i: number): KiemSlot {
+  private bladeSlot(i: number): SwordSlot {
     if (i < HERO.k2) return "k1";
     if (i < HERO.guard) return "k2";
     if (i < HERO.k4) return "guard";
@@ -822,7 +822,7 @@ export class KiemFx {
    */
   setWeapon(def: WeaponDef): Promise<boolean> {
     if (def.family !== "sword") {
-      console.warn(`[kiem] ${def.name} is a ${def.family}: the Kiếm skills take swords only (the ${def.family} skills are not built yet).`);
+      console.warn(`[sword-skills] ${def.name} is a ${def.family}: the Kiếm skills take swords only (the ${def.family} skills are not built yet).`);
       return Promise.resolve(false);
     }
     const seq = (this.weaponSeq += 1);
@@ -833,7 +833,7 @@ export class KiemFx {
       this.gateSwords.setAtlas(atlas);
       this.weaponDef = def;
       this.ringGuard = def.motif?.ring === true;
-      this.skillPal = KiemFx.skillPals(def);
+      this.skillPal = SwordSkillFx.skillPals(def);
       this.use("auto");
       this.applyColours(def);
       return true;
@@ -865,13 +865,13 @@ export class KiemFx {
    * A sigil's light (≤ 0.64 × the shader's 1.4 cap) and HDR line colours from a slot's palette: the lines take
    * the skill's own rim with a quarter of white (≤ 30 %), so a seal reads in its skill's colour, not white.
    */
-  private sigilColours(sig: GroundSigil, slot: KiemSlot): void {
+  private sigilColours(sig: GroundSigil, slot: SwordSlot): void {
     sig.uniforms.uColor.value.copy(this.tmpSigil(slot, false));
     sig.uniforms.uCore.value.copy(this.tmpSigil(slot, true));
   }
 
   /** A slot's sigil light (`core` false: ≤ 0.64 a channel) or HDR line colour (true), into tmpCol (no allocation). */
-  private tmpSigil(slot: KiemSlot, core: boolean): THREE.Color {
+  private tmpSigil(slot: SwordSlot, core: boolean): THREE.Color {
     const g = this.skillPal[slot];
     const m = Math.max(g.rim[0], g.rim[1], g.rim[2], 1e-3);
     if (core) return this.tmpCol.setRGB(0.25 + 0.75 * (g.rim[0] / m), 0.25 + 0.75 * (g.rim[1] / m), 0.25 + 0.75 * (g.rim[2] / m));
@@ -916,7 +916,7 @@ export class KiemFx {
     this.k2.blade = HERO.k2 + 1;
     this.k4.set = 0;
     this.k4Old.t = -1;
-    for (const k of Object.keys(this.charge) as KiemSlot[]) {
+    for (const k of Object.keys(this.charge) as SwordSlot[]) {
       this.charge[k] = -1;
       this.chargeShown[k] = 0;
       this.reveal[k] = 0;
@@ -1025,7 +1025,7 @@ export class KiemFx {
   // ── Typing → charge ──────────────────────────────────────────────────────
 
   /** Typing progress of the word on `slot` (0 first key … 1 last key); −1 cancels. `tx, tz`: where it will land. */
-  setCharge(slot: KiemSlot, progress: number, tx = 0, tz = -8): void {
+  setCharge(slot: SwordSlot, progress: number, tx = 0, tz = -8): void {
     const before = this.charge[slot];
     // A new word starts its sigil from nothing (the drawn progress then eases toward the keys); while the
     // slot's last cast still runs, that cast keeps the sigil (sigilFree) and this word takes it over at its cast.
@@ -1040,7 +1040,7 @@ export class KiemFx {
   }
 
   /** One key on a word: a glint, a star and a ground pulse that grow with progress (T0, VFX_STANDARD §3.3). */
-  private keyBeat(slot: KiemSlot, p: number): void {
+  private keyBeat(slot: SwordSlot, p: number): void {
     this.host.hand(this.v);
     this.host.caster(this.c);
     this.use(slot);
@@ -1093,7 +1093,7 @@ export class KiemFx {
   // ── Release ───────────────────────────────────────────────────────────────
 
   /** The word's last key: release now (≤ 50 ms), toward (tx, tz). */
-  cast(slot: KiemSlot, tx: number, tz: number): void {
+  cast(slot: SwordSlot, tx: number, tz: number): void {
     this.castTyped = this.charge[slot] >= 0;
     // Cast with no word typed (lab API): its sigil fades and draws in from the release, or, if it is still on
     // screen from a cast that runs, carries on from the fade and reveal it shows (it dropped to 0 in one frame).
@@ -1130,7 +1130,7 @@ export class KiemFx {
   }
 
   /** The ground sigil a slot's word draws (null: none). */
-  private sigilOf(slot: KiemSlot): GroundSigil | null {
+  private sigilOf(slot: SwordSlot): GroundSigil | null {
     switch (slot) {
       case "k2":
         return this.sigLine;
@@ -1872,7 +1872,7 @@ export class KiemFx {
     this.ribbons.push(r, x - dx * back + sx * f + ux * v, y - dy * back + uy * v, z - dz * back + sz * f + uz * v);
   }
 
-  private launch(blade: number, fx: number, fy: number, fz: number, target: number, dur: number, power: number, arc: number, pierce: number, width: number, big: boolean, slot: KiemSlot): void {
+  private launch(blade: number, fx: number, fy: number, fz: number, target: number, dur: number, power: number, arc: number, pierce: number, width: number, big: boolean, slot: SwordSlot): void {
     let f: Flight | null = null;
     for (const q of this.flights) {
       if (!q.active) {
@@ -2561,12 +2561,12 @@ export class KiemFx {
   }
 
   /** True while the slot's last cast still runs (the lab frames the whole field while K5 plays). */
-  isRunning(slot: KiemSlot): boolean {
+  isRunning(slot: SwordSlot): boolean {
     return this.running(slot);
   }
 
   /** True while the slot's last cast still runs (and owns its sigil). */
-  private running(slot: KiemSlot): boolean {
+  private running(slot: SwordSlot): boolean {
     switch (slot) {
       case "k2":
         return this.k2.active;
@@ -2589,7 +2589,7 @@ export class KiemFx {
    * first key and the K5 zone draw two dark discs). Taking it over from a
    * hidden state (the cast ended mid-word), it fades in from nothing.
    */
-  private sigilFree(slot: KiemSlot, sig: GroundSigil): boolean {
+  private sigilFree(slot: SwordSlot, sig: GroundSigil): boolean {
     if (this.running(slot)) return false;
     if (!sig.mesh.visible) {
       this.chargeAge[slot] = 0;
@@ -2599,7 +2599,7 @@ export class KiemFx {
   }
 
   /** After the release a skill's sigil finishes drawing fast but not in one frame (the last key's share eases in). */
-  private revealAfterCast(slot: KiemSlot, dt: number): number {
+  private revealAfterCast(slot: SwordSlot, dt: number): number {
     const v = approach(this.reveal[slot], 1, REVEAL_HALF_S * 0.5, dt);
     this.reveal[slot] = v;
     return v;
@@ -2609,7 +2609,7 @@ export class KiemFx {
     this.drawQiMotes(dt);
     let p = -1;
     let big = 0;
-    let slot: KiemSlot = this.sealSlot;
+    let slot: SwordSlot = this.sealSlot;
     const ch = this.charge;
     if (ch.k1 > p) {
       p = ch.k1;
@@ -2809,7 +2809,7 @@ export class KiemFx {
    * A release burst at the caster for a skill cast outside this class (key 7, round 3b item 5): the release column
    * behind the body, the ground ring and shock, and the seal's blaze, in `slot`'s palette at `tier`.
    */
-  burst(slot: KiemSlot, tier: number): void {
+  burst(slot: SwordSlot, tier: number): void {
     this.host.caster(this.c);
     this.use(slot);
     this.releaseFlash(1.1, 3, 3.4, tier);

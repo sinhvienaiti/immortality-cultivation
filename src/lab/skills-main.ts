@@ -30,7 +30,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import type { Quality } from "../content/types";
 import { CameraZoom } from "../view/camera-zoom";
 import { createRenderer, placeCamera } from "../view/renderer";
-import { K5_MAX, KiemFx, type KiemHost, type KiemSlot, type KiemTextures } from "../view/skills/kiem";
+import { K5_MAX, SwordSkillFx, type SwordSkillHost, type SwordSlot, type SwordSkillTextures } from "../view/skills/sword-skills";
 import { loadSwordModels, loadWeaponModel, standInModel, type BladeSet } from "../view/skills/blades";
 import { SpritePool } from "../view/skills/fxkit";
 import { DEFAULT_WEAPON, weaponById, weaponsOf, type WeaponId } from "../view/skills/weapons";
@@ -48,7 +48,7 @@ import { LabSound, type SoundTake } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
-import { VAN_KIEM_COLOUR, VAN_KIEM_SWORDS, VanKiemFx, type SwordPose, type VanKiemPhase } from "../view/skills/van-kiem";
+import { MYRIAD_SWORDS_COLOUR, MYRIAD_SWORDS_PER_TIER, MyriadSwordsFx, type SwordPose, type MyriadSwordsPhase } from "../view/skills/myriad-swords";
 import { CasterPresence } from "./presence";
 import { SWORD_LIGHT } from "../view/skills/sword-material";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
@@ -144,7 +144,7 @@ function tex(name: string): THREE.Texture {
   }
   return t;
 }
-const textures: KiemTextures = {
+const textures: SwordSkillTextures = {
   glow: tex("circle_05"),
   flare: tex("star_09"),
   star: tex("star_07"),
@@ -252,7 +252,7 @@ function tierOf(slot: string): ScreenTier {
 let frameNo = 0;
 const lastImpact = { frame: -1, slot: "" };
 /**
- * KiemFx asks for a hit-stop and a shake per strike (its old per-skill numbers); the tier table decides now.
+ * SwordSkillFx asks for a hit-stop and a shake per strike (its old per-skill numbers); the tier table decides now.
  * The stop's length tells the role: Lạc Kiếm Trận's 50 ms beats are secondary hits, Nhất Tuyến's lone cut and
  * Thiên Hà's last wave (83 ms) are finishers.
  */
@@ -333,7 +333,7 @@ function materialOf(beastTier: number): Material {
   return beastTier >= 2 ? "stone" : "flesh";
 }
 /**
- * A blow landed (KiemHost.struck, or a key-7 sword): one impact event (screen, numbers, sound), and a death
+ * A blow landed (SwordSkillHost.struck, or a key-7 sword): one impact event (screen, numbers, sound), and a death
  * event when it killed. The basic blow's hit-stop is local: its beast holds still for 14 ms.
  */
 function emitImpact(slot: string, target: number, dx: number, dz: number, power: number, role: ImpactRole, killed: boolean, rgb: number): void {
@@ -375,7 +375,7 @@ const KICK_M_PER_PX = 0.02;
 view.stage.impactLight.removeFromParent();
 const lights = new FlashLights(view.layers.fx, quality === "low" ? 1 : quality === "medium" ? 2 : 3);
 
-const hostApi: KiemHost = {
+const hostApi: SwordSkillHost = {
   layer: view.layers.fx,
   camera: view.camera,
   targets: herd,
@@ -418,7 +418,7 @@ const hostApi: KiemHost = {
   },
 };
 const k5n = Number(params.get("k5n") ?? "");
-const fx = new KiemFx(hostApi, { ...textures }, quality, Number.isFinite(k5n) && k5n > 0 ? { k5Blades: Math.min(K5_MAX, k5n) } : {});
+const fx = new SwordSkillFx(hostApi, { ...textures }, quality, Number.isFinite(k5n) && k5n > 0 ? { k5Blades: Math.min(K5_MAX, k5n) } : {});
 // ?trim=0: every blade slot drawn, hidden ones too (how BladeSet drew before 02/11; measurement only).
 fx.blades.drawAll = params.get("trim") === "0";
 /** The weapon in the caster's hand (after load: it hangs off Lam's hand bone) and the body it keeps out of. */
@@ -460,9 +460,9 @@ const numberRgb: Record<string, number> = {};
 let numberRgbWeapon = "";
 const tmpColour = new THREE.Color();
 /** Key 7's number tint (linear): Clear Wind's jade-cyan. */
-const VAN_KIEM_TINT = VAN_KIEM_COLOUR;
+const MYRIAD_TINT = MYRIAD_SWORDS_COLOUR;
 /** The clock key 7's sweep starts (s, F192). */
-const VAN_SWEEP_AT = 192 / 60;
+const MYRIAD_SWEEP_AT = 192 / 60;
 function skillRgb(slot: string): number {
   if (numberRgbWeapon !== fx.weapon) {
     for (const k of Object.keys(numberRgb)) delete numberRgb[k];
@@ -470,7 +470,7 @@ function skillRgb(slot: string): number {
   }
   let v = numberRgb[slot];
   if (v === undefined) {
-    const h = slot === "k7" ? VAN_KIEM_TINT : fx.paletteOf(slot as KiemSlot).halo;
+    const h = slot === "k7" ? MYRIAD_TINT : fx.paletteOf(slot as SwordSlot).halo;
     v = tmpColour.setRGB(h[0], h[1], h[2]).getHex(THREE.SRGBColorSpace);
     numberRgb[slot] = v;
   }
@@ -533,7 +533,7 @@ function worldEvent(slot: string, phase: "open" | "hush" | "climax" | "close"): 
   w.phase = phase;
   bus.emit(w);
 }
-const van = new VanKiemFx(
+const myriad = new MyriadSwordsFx(
   {
     layer: view.layers.fx,
     camera: view.camera,
@@ -549,19 +549,19 @@ const van = new VanKiemFx(
     },
     struck(target, dx, dz, power, role, killed) {
       // The first of the eight blades is the volley's primary blow (one stop); the others land as secondary hits.
-      if (role === "primary" && !vanFirstHit) {
-        vanFirstHit = true;
+      if (role === "primary" && !myriadFirstHit) {
+        myriadFirstHit = true;
         screen.impact("skill", "primary");
       } else if (role === "primary") screen.impact("skill", "secondary");
       // The hunt's hundreds of blows hold a low rumble under the shake (never stacking into a constant jolt).
-      else if (role === "secondary" && van.clock < VAN_SWEEP_AT) screen.rumble(2.6, 0.14);
+      else if (role === "secondary" && myriad.clock < MYRIAD_SWEEP_AT) screen.rumble(2.6, 0.14);
       // The finisher's cut flashes each body white on its blow (round 3b, item 4).
-      if (van.clock >= VAN_SWEEP_AT) herd.silhouette(target);
+      if (myriad.clock >= MYRIAD_SWEEP_AT) herd.silhouette(target);
       inkDeath = true;
       emitImpact("k7", target, dx, dz, power, role, killed, skillRgb("k7"));
       inkDeath = false;
     },
-    phase(p: VanKiemPhase) {
+    phase(p: MyriadSwordsPhase) {
       if (p === "open") {
         // The sky darkens and the world's colour drains while the river runs (the ultimate's held level).
         screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
@@ -599,7 +599,7 @@ const van = new VanKiemFx(
     },
   },
   { glow: textures.glow, slash: textures.slash, star: textures.star, ring: textures.ring, scorch: textures.scorch, noise: ribbonNoise, slashMask: slashCrescent },
-  VAN_KIEM_SWORDS[quality],
+  MYRIAD_SWORDS_PER_TIER[quality],
 );
 /**
  * The ultimate's cut-in (canon D58 (4)): Thiên Hà's last key starts it; the world and the typing timer hold while it
@@ -650,8 +650,8 @@ function fireUltimate(): void {
   queueCast("k5", ultAim.x, ultAim.z);
 }
 /** Key 7 waits for the caster's update (its blades leave from the hand as drawn), like the other casts. */
-let pendingVan = false;
-let vanFirstHit = false;
+let pendingMyriad = false;
+let myriadFirstHit = false;
 // The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
 const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
 
@@ -666,7 +666,7 @@ async function setWeapon(id: string): Promise<boolean> {
   }
   const ok = await fx.setWeapon(def);
   if (ok) {
-    await van.setWeapon(def);
+    await myriad.setWeapon(def);
     // The pinned swords of the hero victims: the same real sword (its full model).
     victims.setSword((await loadSwordModels(def)).full);
     for (const f of weaponListeners) f(def.id);
@@ -745,7 +745,7 @@ function emitBolt(k: number): void {
 
 // Typing simulation: letters at the chosen WPM (5 letters a word), the charge follows them.
 interface Typing {
-  slot: KiemSlot;
+  slot: SwordSlot;
   letters: number;
   typed: number;
   next: number;
@@ -753,8 +753,8 @@ interface Typing {
   tz: number;
 }
 let typing: Typing | null = null;
-const WORD_LEN: Record<KiemSlot, number> = { auto: 0, k1: 5, k2: 6, guard: 5, dash: 4, k4: 6, k5: 8 };
-const TARGET: Record<KiemSlot, [number, number]> = { auto: [0, -8], k1: [0, -8], k2: [0.2, -12], guard: [0, 3], dash: [5, 3], k4: [-5, -7], k5: [0, -9] };
+const WORD_LEN: Record<SwordSlot, number> = { auto: 0, k1: 5, k2: 6, guard: 5, dash: 4, k4: 6, k5: 8 };
+const TARGET: Record<SwordSlot, [number, number]> = { auto: [0, -8], k1: [0, -8], k2: [0.2, -12], guard: [0, 3], dash: [5, 3], k4: [-5, -7], k5: [0, -9] };
 
 /**
  * Instant cast (canon D58 (1), the default): a skill key IS the word's last correct keystroke, so the release
@@ -764,7 +764,7 @@ const TARGET: Record<KiemSlot, [number, number]> = { auto: [0, -8], k1: [0, -8],
 let typedMode = params.get("typed") === "1";
 
 /** A lab key's skill: the seven Kiếm slots, and key 7's field-wide prototype (always cast at once). */
-type LabSlot = KiemSlot | "k7";
+type LabSlot = SwordSlot | "k7";
 
 function type(slot: LabSlot): void {
   // Keys wait while the cut-in holds the world (the typing timer is stopped too).
@@ -783,8 +783,8 @@ function type(slot: LabSlot): void {
     caster.release("k7", 0, -8);
     emitRelease("k7", 0, -8);
     bigSkillBeat();
-    pendingVan = true;
-    vanFirstHit = false;
+    pendingMyriad = true;
+    myriadFirstHit = false;
     // A tide's toughness while key 7 runs: its ~400 dives spread over the herd and the cut still has beasts to cut.
     herd.toughness = 1.4;
     return;
@@ -813,8 +813,8 @@ function type(slot: LabSlot): void {
 }
 
 // Keys and casts reach the VFX after the caster's update, so they leave from the hand as drawn (MOTION_PLAN step 2.3).
-const pending = { charge: false, cast: false, slot: "auto" as KiemSlot, castSlot: "auto" as KiemSlot, p: 0, tx: 0, tz: 0, cx: 0, cz: 0 };
-function queueCast(slot: KiemSlot, tx: number, tz: number): void {
+const pending = { charge: false, cast: false, slot: "auto" as SwordSlot, castSlot: "auto" as SwordSlot, p: 0, tx: 0, tz: 0, cx: 0, cz: 0 };
+function queueCast(slot: SwordSlot, tx: number, tz: number): void {
   pending.cast = true;
   pending.castSlot = slot;
   pending.cx = tx;
@@ -829,9 +829,9 @@ function flushTyping(): void {
     pending.cast = false;
     fx.cast(pending.castSlot, pending.cx, pending.cz);
   }
-  if (pendingVan) {
-    pendingVan = false;
-    van.cast();
+  if (pendingMyriad) {
+    pendingMyriad = false;
+    myriad.cast();
     // The release at the caster (round 3b, item 5): a burst column behind the body and a ground ring, on this frame.
     fx.burst("k1", 3);
     // The first visible action of key 7 (its eight blades leave now): the probe's VFX release.
@@ -885,12 +885,12 @@ function reset(): void {
   victims.reset();
   compiler.reset();
   numbers.clear();
-  van.reset();
+  myriad.reset();
   cutin.stop();
   ultDark = false;
   ultDarkEnd = -1;
   sound.reset();
-  pendingVan = false;
+  pendingMyriad = false;
   herd.toughness = 1;
   lights.reset();
   probe.reset();
@@ -1015,7 +1015,7 @@ function frame(dt: number): void {
   if (ultDark && ultDarkEnd >= 0 && labTime >= ultDarkEnd) {
     ultDark = false;
     ultDarkEnd = -1;
-    if (!van.running) screen.holdDark(0);
+    if (!myriad.running) screen.holdDark(0);
   } else if (ultDark) screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
   updateTyping(world);
   updateBolt(world);
@@ -1024,7 +1024,7 @@ function frame(dt: number): void {
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   fx.update(world, dt);
-  van.update(world);
+  myriad.update(world);
   // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
   handSword?.update(world, dt, fx, view.camera);
   presence.update(world, dt, caster.x, caster.z, fx);
@@ -1040,7 +1040,7 @@ function frame(dt: number): void {
   // refits too). On real time: zooming stays smooth through a hit-stop.
   // Big skills never leave the frame (power pass round 2): while key 7, the ultimate's cut-in or the ultimate
   // plays, the view eases out to the whole field (0.25 s) and holds; then back to the player's zoom.
-  zoom.holdWide(cutin.active || van.running || fx.isRunning("k5"));
+  zoom.holdWide(cutin.active || myriad.running || fx.isRunning("k5"));
   if (!customCamera && !followShown) {
     zoom.update(view.camera, view.fit, 0, caster.x, caster.z, dt);
     camBase.copy(view.camera.position);
@@ -1108,8 +1108,8 @@ declare global {
   interface Window {
     __lab?: {
       ready: boolean;
-      type(slot: KiemSlot | "k7"): void;
-      cast(slot: KiemSlot, tx: number, tz: number): void;
+      type(slot: SwordSlot | "k7"): void;
+      cast(slot: SwordSlot, tx: number, tz: number): void;
       enemyShot(): void;
       /** Steps `frames` frames of `dt` seconds (default 1/60). */
       step(frames: number, dt?: number): void;
@@ -1206,8 +1206,8 @@ declare global {
       victims(): Record<string, unknown>;
       /** Beast i on screen now (CSS px of its middle), its height in the air (m), alive, a hero victim. */
       beast(i: number): { x: number; y: number; air: number; alive: boolean; hero: boolean };
-      /** Key 7's state: its clock (s, −1 idle), swords drawn, strikes so far. */
-      van(): { clock: number; shown: number; strikes: number; dives: number };
+      /** Key 7's (Myriad Swords) state: its clock (s, −1 idle), swords drawn, strikes so far. The short name stays for the capture scenarios. */
+      van():{ clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
       cutin(): number;
       /** Drawn length (CSS px) of the visible flying blades this frame, Kiếm skills and key 7: count, p10, median. */
@@ -1280,7 +1280,7 @@ void (async () => {
   window.__lab = {
     ready: true,
     type,
-    // The caster acts the slot first: KiemHost.play names only a clip (K4 asks for Skill2 like the guard, K1 for Attack
+    // The caster acts the slot first: SwordSkillHost.play names only a clip (K4 asks for Skill2 like the guard, K1 for Attack
     // like Phi Kiếm), so a cast left to play() acted the wrong skill (review fix).
     cast: (slot, tx, tz) => {
       screen.cut();
@@ -1524,8 +1524,8 @@ void (async () => {
       const pose: SwordPose = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, len: 0, cls: 0 };
       const cores: number[][] = [[], [], []];
       const pv = new THREE.Vector3();
-      for (let i = 0; i < van.swordCount; i += 1) {
-        if (!van.poseOf(i, pose)) continue;
+      for (let i = 0; i < myriad.swordCount; i += 1) {
+        if (!myriad.poseOf(i, pose)) continue;
         let peak = 0;
         for (let k = 0; k < 7; k += 1) {
           const t = -0.45 + (k / 6) * 0.85;
@@ -1582,7 +1582,7 @@ void (async () => {
       screenV.set(herd.x(i), herd.midY(i) + herd.airY(i), herd.z(i)).project(view.camera);
       return { x: Math.round((screenV.x * 0.5 + 0.5) * innerWidth), y: Math.round((-screenV.y * 0.5 + 0.5) * innerHeight), air: +herd.airY(i).toFixed(2), alive: herd.alive(i), hero: herd.isHero(i) };
     },
-    van: () => ({ clock: van.clock, shown: van.shownCount(), strikes: van.strikes, dives: van.dives }),
+    van: () => ({ clock: myriad.clock, shown: myriad.shownCount(), strikes: myriad.strikes, dives: myriad.dives }),
     cutin: () => cutin.time,
     bladePx() {
       const out: Record<string, number> = {};
@@ -1612,8 +1612,8 @@ void (async () => {
       // Key 7 by class (round 3a: lead, mid, far), base to tip as drawn.
       const pose: SwordPose = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, len: 0, cls: 0 };
       const byCls: number[][] = [[], [], []];
-      for (let i = 0; i < van.swordCount; i += 1) {
-        if (!van.poseOf(i, pose)) continue;
+      for (let i = 0; i < myriad.swordCount; i += 1) {
+        if (!myriad.poseOf(i, pose)) continue;
         const h = pose.len * 0.5;
         ga.set(pose.x - pose.dx * h, pose.y - pose.dy * h, pose.z - pose.dz * h);
         gb.set(pose.x + pose.dx * h, pose.y + pose.dy * h, pose.z + pose.dz * h);
