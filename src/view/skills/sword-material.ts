@@ -87,6 +87,14 @@ const EMIT = /* glsl */ `
   totalEmissiveRadiance += uSwEdge * swDe * 0.7;
 `;
 
+/**
+ * The light gain undoes the darkening of the world's lights (sun, hemisphere, key, rims, image-based light); the
+ * point lights (the impact flashes) are never dimmed, so they enter at 1 / gain and leave at their own strength
+ * (with the gain on them, an impact flash lit the swords 1.8–3.3× brighter than the beasts beside them during key 7
+ * and K5).
+ */
+const POINT_LIGHT = "getPointLightInfo( pointLight, geometryPosition, directLight );";
+
 /** The lit colour takes the light gain; the jade fills only the headroom under luminance 0.95 (no bloom). */
 const OUTGOING = /* glsl */ `
   vec3 outgoingLight = (totalDiffuse + totalSpecular) * uSwLight + totalEmissiveRadiance;
@@ -117,8 +125,10 @@ export function patchSwordMaterial(material: THREE.MeshStandardMaterial, opts: S
       .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\n" + DISSOLVE)
       .replace("#include <color_fragment>", "#include <color_fragment>\n" + JADE)
       .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n" + EMIT)
+      .replace("#include <lights_fragment_begin>", THREE.ShaderChunk.lights_fragment_begin.replace(POINT_LIGHT, POINT_LIGHT + "\n\t\tdirectLight.color /= uSwLight;"))
       .replace("vec3 outgoingLight = totalDiffuse + totalSpecular + totalEmissiveRadiance;", OUTGOING);
     if (!frag.includes("uSwLight + totalEmissiveRadiance")) throw new Error("[sword-material] three's physical shader changed: the light gain hook is missing");
+    if (!frag.includes("directLight.color /= uSwLight;")) throw new Error("[sword-material] three's light chunk changed: the point lights' gain hook is missing");
     shader.fragmentShader = PARS_FRAGMENT + frag;
   };
   material.customProgramCacheKey = () => "real-sword";

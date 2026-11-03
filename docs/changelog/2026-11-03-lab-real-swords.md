@@ -86,6 +86,20 @@ Không vào Git, nằm trong `tmp/shots/real-swords/`:
 - Các vũ khí chưa có GLB vẫn hiện thanh jian thay thế bằng thép trơn. Chỉ Clear Wind có model.
 - `media.md5` chưa ghi tệp LOD mới và các atlas. Claude không chạy `pnpm media:push`.
 
+## Kiểm tra lại (03/11/2026, khoảng 10:10)
+
+Một lượt kiểm tra độc lập trên server riêng không HMR (cổng 3061), High, 1920×1080, DPR ghim 1:
+- Ở camera chơi, cận cảnh và camera đặt sát từng vùng chiêu, mọi thanh kiếm đều là Clear Wind thật: K0, K1, K2, Hộ thân, K4, vầng kiếm khi gõ K5 (gõ thật ở 45 WPM), vòng kiếm quanh cổng trời, mưa kiếm, kiếm chủ cắm đất, thiên kiếm, phím 7 (kiếm chủ, kiếm giữa, kiếm xa). Không còn ống sáng, thanh tô phẳng hay dải thay cho kiếm. Lướt (phím 4) không có kiếm. Bản Low và Medium cũng vẽ kiếm thật, không lỗi.
+- Sửa một lỗi (`sword-material.ts`): hệ số `SWORD_LIGHT` bù phần đèn thế giới bị làm tối, nhưng cũng nhân cả các đèn điểm của cú đánh, mà các đèn này không bao giờ bị làm tối. Trong phím 7 và K5, mỗi cú đánh vì thế chiếu lên kiếm sáng gấp 1,8–3,3 lần so với lên thú bên cạnh. Giờ đèn điểm vào shader ở 1 / hệ số, ra đúng cường độ của nó. Cận cảnh phím 7 F90: phần điểm ảnh HDR trên 1 giảm từ 4,5 % xuống 4,2 %.
+- Số đo sau khi sửa (5 lượt, trung vị p95): phím 7 lúc săn 10,2 ms, nhát kết 10,9 ms, K5 (180 khung) 10,2 ms; ngân sách ≤ 11,5. Giá trị max 140–650 ms ở mỗi lượt là công việc GPU còn xếp hàng từ các khung `step()` trước đó, đổ vào lần đọc điểm ảnh đầu tiên của `perf()`, không phải giật thật. Lần tung chiêu đầu tiên trên trang mới mở: khung chậm nhất 46 ms (phím 0), không khung nào quá 50 ms.
+- Từ phím tới lúc tung chiêu: VFX 0 ms, thân 33 ms ở mọi chiêu (lướt không có mốc release).
+- Không có NaN hay Inf trong bộ đệm sáng của bloom: 2.680 khung lấy mẫu, mọi chiêu, High và Ultra, camera chơi và cận cảnh.
+- Còn mở, không sửa:
+  - Impostor nhân với `SWORD_LIGHT` dù ảnh nướng không bị làm tối. Khi màn tối lại, kiếm xa và vòng kiếm cổng trời sáng gấp 1/k so với ảnh nướng, trong khi kiếm lưới giữ nguyên. Hệ số gain 1 được chỉnh bằng mắt dưới đúng độ tối đó, nên cần đo trước khi đổi.
+  - Ở cận cảnh phím 7, đường mép và lớp thép của kiếm chủ bloom thành vầng trắng; bản Low (không bloom) cho thấy rõ lõi ngọc và hoa văn. Đây là việc chỉnh hướng mỹ thuật cho anh quyết.
+  - Vòng ngọc của model Tripo hiện ra màu bạc như crôm, còn ảnh đã duyệt là ngọc trắng viền vàng.
+- Video cho anh xem: `tmp/shots/real-swords/owner-2026-11-03-play-60fps.mp4` (camera chơi, phím 0–5, 7, 6) và `owner-2026-11-03-close-60fps.mp4` (cận cảnh phím 1, 7, 6). Sheet so với ảnh đã duyệt: `tmp/shots/real-swords/stills-2026-11-03-sword-vs-art.jpg`.
+
 ## Dựng lại media
 
 ```bash
