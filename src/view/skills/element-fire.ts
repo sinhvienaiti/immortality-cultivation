@@ -71,6 +71,9 @@ const SEAL_BODY = lin("#E0561A");
 // Lit gold held at 0.9 a channel (SigilLook: halos and rings never reach the bloom; #FFAE34 itself is 1.0 in red).
 const SEAL_LIT = k3(lin("#FFAE34"), 0.9);
 const SEAL_CORE: Rgb = [1, 0.72, 0.3];
+/** The lotus's hot base as matter (linear, ≤ 0.9: a gold-amber, hue ~38°) and a cut's molten body. */
+const LOTUS_GOLD: Rgb = [0.9, 0.5, 0.09];
+const CUT_BODY: Rgb = [0.86, 0.3, 0.025];
 /** The flame slash's deep body: a vermilion kept off red (hue ~21°). */
 const SLASH_DEEP = lin("#E8560E");
 
@@ -175,8 +178,9 @@ class FireLayers {
   private readonly motes: SpritePool;
   /** The release's pressure ring (matter on soot, a thin hot line). */
   private readonly rings: HeatRingPool;
-  /** A cut's thin hot crescent. */
+  /** A cut: a molten crescent as matter (amber-vermilion, normal blend) with a thin added white-gold core. */
   private readonly slash: SpritePool;
+  private readonly slashBody: SpritePool;
   /** Dark smoke wisps and ash flakes (normal blend). */
   private readonly smoke: SpritePool;
   private readonly ash: SpritePool;
@@ -219,7 +223,11 @@ class FireLayers {
     // A lingering clip crossfades slowly between its frames: its coverage stays matter or erodes (never two half-shown
     // frames adding up to a see-through veil on pale stone).
     this.burst.setSharpen(0.06, 0.4);
+    // Its broad white-hot base was half its pale share on light stone (03/11 recheck, k1c-008): gold matter, with only
+    // a thin white-hot heart.
+    this.burst.setGrade(LOTUS_GOLD, 0.9);
     this.ground.setSharpen(0.06, 0.4);
+    this.ground.setGrade(LOTUS_GOLD, 0.9);
     this.line.softM = 0.2;
     const T = stage.textures;
     this.groundInk = stage.pool(8, T.glow, "ink", "ground", 3, { crop: 0.64 });
@@ -229,7 +237,9 @@ class FireLayers {
     this.ash = stage.pool(1024, T.splash, "ink", "camera", 9);
     this.rings = stage.heatRings(24, "camera", 14);
     this.rings.setLook(SEAL_SOOT, 0.8, SEAL_BODY, SEAL_LIT, SEAL_CORE);
-    this.slash = stage.pool(32, T.slash, "add", "camera", 12);
+    this.slashBody = stage.pool(32, T.slash, "ink", "camera", 12, { matte: [0.3, 0.42] });
+    // Its core: the crescent's thin middle (the sheet's densest line), added.
+    this.slash = stage.pool(32, T.slash, "add", "camera", 12, { matte: [0.62, 0.8] });
     this.motes = stage.pool(900, T.glow, "add", "camera", 13, { crop: 0.6 });
     this.seams = stage.beams(24, 13);
     this.flameSlash = new FlameSlash(15);
@@ -434,7 +444,8 @@ class FireLayers {
   private groundFire(x: number, z: number, size: number, delay: number): void {
     const o = flip();
     o.rate = 0.75;
-    o.frame = 2;
+    // From its dome of tongues (its first frames are a flat bright yellow cap).
+    o.frame = 3;
     o.slowFrom = GROUND_PEAK;
     o.slowRate = this.ground.live > 12 ? 0.5 : 0.32;
     o.cool = 0.55;
@@ -660,7 +671,8 @@ class FireLayers {
     const s = a.scale * (a.big ? 1.3 : 1);
     // Pinpoint, then the lotus opens at the beast (in front of it: the beast burns), sparks and embers fly.
     this.dot(p.x, p.y, p.z, 1.15 * s, 0.6 * s, 0.08, WHITE_GOLD, 4.5);
-    this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 1, 0.7, 0.5);
+    // It starts from a denser frame (frame 1 is a thin fringe), at the same rate.
+    this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 2, 0.7, 0.48);
     this.sparkRays(p.x, p.y, p.z, 1.5 * s, 1.35);
     this.emberBurst(p.x, p.y, p.z, 1.1 * s, 1.0);
     const n = this.stage.n(8 + Math.round(6 * a.power));
@@ -670,18 +682,33 @@ class FireLayers {
   }
 
   cut(a: CutArgs): boolean {
-    // The blade's cut stays a cut: one thin molten crescent across the blow.
+    // The blade's cut stays a cut: one molten crescent across the blow, matter (it stays amber on pale stone, where
+    // added light read as a pale arc: 03/11 recheck) with a thin white-gold core inside it.
+    const b = this.slashBody.spec.reset();
+    b.x = a.at.x;
+    b.y = a.at.y;
+    b.z = a.at.z;
+    b.rot = a.rot;
+    b.life = 0.16;
+    b.size0 = a.size * 1.35;
+    b.size1 = a.size * 1.85;
+    b.r = CUT_BODY[0];
+    b.g = CUT_BODY[1];
+    b.b = CUT_BODY[2];
+    b.a = 0.95;
+    this.slashBody.emit();
     const s = this.slash.spec.reset();
     s.x = a.at.x;
     s.y = a.at.y;
     s.z = a.at.z;
     s.rot = a.rot;
-    s.life = 0.13;
+    s.life = 0.12;
     s.size0 = a.size * 1.35;
     s.size1 = a.size * 1.85;
-    s.r = CORE[0] * 1.5;
-    s.g = CORE[1] * 1.5;
-    s.b = CORE[2] * 1.5;
+    // Gold, just under the bloom: a white-hot line bloomed into a pale arc on light stone.
+    s.r = 0.72;
+    s.g = 0.4;
+    s.b = 0.1;
     this.slash.emit();
     return true;
   }

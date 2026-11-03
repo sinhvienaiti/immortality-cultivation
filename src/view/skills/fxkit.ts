@@ -128,6 +128,9 @@ uniform sampler2D map;
 uniform float uCrop;
 uniform float uCropFade;
 uniform float uGroundFade;
+#ifdef MATTE
+uniform vec2 uMatte;
+#endif
 varying vec2 vUv;
 varying vec4 vCol;
 #ifdef GROUND_FADE
@@ -135,6 +138,10 @@ varying float vWorldY;
 #endif
 void main() {
   vec4 t = texture2D(map, vUv);
+#ifdef MATTE
+  // A crisp matte cut from a soft texture (matter, never a see-through glow over pale ground).
+  t.a = smoothstep(uMatte.x, uMatte.y, t.a);
+#endif
   float a = t.a * vCol.a;
 #ifdef CROP
   // Fade to nothing at the circle inscribed in the cropped window: no square edge, corners discarded.
@@ -261,6 +268,12 @@ export interface SpritePoolOptions {
    * Off by default so the Kiếm skills keep what was reviewed until their redesign (SKILL_CATALOG_V2).
    */
   twoSided?: boolean;
+  /**
+   * "ink" matter cut crisp from a soft texture: its alpha through smoothstep(lo, hi) (an element's matter drawn with a
+   * glow sheet, never a see-through haze over pale stone). Absent: the texture's alpha (Metal's pools; their program
+   * is unchanged).
+   */
+  matte?: readonly [number, number];
 }
 
 export class SpritePool {
@@ -315,6 +328,7 @@ export class SpritePool {
     if (facing === "ground") defines.GROUND = "";
     if (crop < 1) defines.CROP = "";
     if (groundFade > 0) defines.GROUND_FADE = "";
+    if (opts.matte !== undefined) defines.MATTE = "";
     const material = new THREE.ShaderMaterial({
       vertexShader: SPRITE_VERTEX,
       fragmentShader: SPRITE_FRAGMENT,
@@ -324,6 +338,7 @@ export class SpritePool {
         uCrop: { value: crop },
         uCropFade: { value: cropFade },
         uGroundFade: { value: groundFade },
+        uMatte: { value: new THREE.Vector2(opts.matte?.[0] ?? 0, opts.matte?.[1] ?? 1) },
       },
       defines,
       transparent: true,

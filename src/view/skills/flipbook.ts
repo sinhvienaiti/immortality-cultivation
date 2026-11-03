@@ -277,6 +277,7 @@ uniform vec3 uHeatCore;
 uniform float uTaper;
 uniform float uBlur;
 uniform vec2 uSharpen;
+uniform vec4 uGrade;
 varying vec2 vUv;
 varying float vFrame;
 varying float vAlpha;
@@ -317,9 +318,22 @@ void main() {
     if (uSharpen.y > 0.0) {
       // Sharpened coverage: a crossfade's half-shown parts (and a soft clip's thin haze) are remapped through a
       // threshold, broken by noise, so they stay matter or go (erosion), never a see-through veil over pale stone.
-      float sa = smoothstep(uSharpen.x, uSharpen.y, a + (n - 0.5) * 0.12);
+      // Its root's soft fade into the ground erodes the same way (a see-through band along the ground otherwise).
+      float g = vxSoftGround(vWorld, vGround, uSoftM);
+      float sa = smoothstep(uSharpen.x, uSharpen.y, a * g + (n - 0.5) * 0.12);
       pm *= a > 1e-4 ? sa / a : 0.0;
       a = sa;
+      soft = border * vAlpha;
+    }
+    if (uGrade.w > 0.0 && a > 1e-4) {
+      // Thin cores only: the clip's broad white-hot parts turn to gold matter (saturated on pale stone); only its
+      // whitest, brightest heart stays white (and alone reaches the bloom).
+      vec3 c = pm / a;
+      float mxc = max(c.r, max(c.g, c.b));
+      float wht = min(c.r, min(c.g, c.b)) / max(mxc, 1e-4);
+      float heart = smoothstep(uGrade.w, 1.0, wht) * smoothstep(0.93, 1.0, mxc);
+      c = mix(c, uGrade.rgb * mix(0.8, 1.0, mxc), smoothstep(0.1, 0.5, wht) * (1.0 - heart));
+      pm = c * a;
     }
     if (vAge.w > 0.0) {
       // Eased in (or held part-shown) by erosion, thin parts first: its alpha keeps its matte, never see-through.
@@ -533,6 +547,7 @@ export class FlipbookPool {
         uTaper: { value: 0 },
         uBlur: { value: 0 },
         uSharpen: { value: new THREE.Vector2(0, 0) },
+        uGrade: { value: new THREE.Vector4(0, 0, 0, 0) },
         uPivot: { value: new THREE.Vector2(0.5, 0.5) },
         uAspect: { value: 1 },
         uHeading: { value: 0 },
@@ -618,6 +633,16 @@ export class FlipbookPool {
    */
   setSharpen(lo: number, hi: number): void {
     (this.mesh.material.uniforms.uSharpen!.value as THREE.Vector2).set(lo, hi);
+  }
+
+  /**
+   * Mode "rgba": the clip's broad white-hot parts drawn in `gold` (linear, ≤ 0.9 a channel) and only its whitest
+   * heart (whiteness, min ÷ max channel, over `heart`) kept white; null: the clip's own colours.
+   */
+  setGrade(gold: readonly number[] | null, heart = 0.9): void {
+    const g = this.mesh.material.uniforms.uGrade!.value as THREE.Vector4;
+    if (gold === null) g.set(0, 0, 0, 0);
+    else g.set(gold[0]!, gold[1]!, gold[2]!, Math.min(0.999, Math.max(0.01, heart)));
   }
 
   /** Mode "heat": 0 the clip as it is … 1 it cools from its head (cell right) to soot at its tail (a trail). */

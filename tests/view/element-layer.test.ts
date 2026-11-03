@@ -767,11 +767,11 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     } finally {
       spy.mockRestore();
     }
-    // The impact lotus (rooted at the beast, rate 1.25 from frame 1): its attack unchanged, its whole life 1.0–1.3 s.
+    // The impact lotus (rooted at the beast, rate 1.25 from frame 2): its attack's rate unchanged, its whole life 1.0–1.3 s.
     const lotus = spawns.filter((s) => s.id === "fire-burst" && s.o.rate === 1.25);
     expect(lotus.length).toBeGreaterThan(0);
     for (const s of lotus) {
-      expect(s.o.frame).toBe(1);
+      expect(s.o.frame).toBe(2);
       expect(s.o.slowRate!).toBeLessThan(s.o.rate!);
       const life = playLife(burst, s.o);
       expect(life).toBeGreaterThanOrEqual(1.0);
@@ -793,6 +793,43 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     pool.setSharpen(0.06, 0.4);
     expect((pool.mesh.material.uniforms.uSharpen!.value as THREE.Vector2).toArray()).toEqual([0.06, 0.4]);
     expect(pool.mesh.material.uniforms.uStep!.value).toBe(0);
+  });
+
+  it("keeps the key-1 impact saturated on pale stone: the lotus's white-hot base turns gold matter, a cut is a matte crescent", () => {
+    const kitLayer = new THREE.Group();
+    const cam = camera();
+    const stage = stageFor(kitLayer, cam, sheets(), []);
+    stage.hooksOf(elementById("fire")!);
+    let grade: THREE.Vector4 | null = null;
+    let sharpen: THREE.Vector2 | null = null;
+    const mattes: string[] = [];
+    kitLayer.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
+      if (o.name === "flipbook-fire-burst" && m) {
+        grade = m.uniforms.uGrade!.value as THREE.Vector4;
+        sharpen = m.uniforms.uSharpen!.value as THREE.Vector2;
+      }
+      if (m?.defines && "MATTE" in m.defines) mattes.push(m.defines.INK !== undefined ? "ink" : "add");
+    });
+    expect(grade).not.toBeNull();
+    const g = grade! as THREE.Vector4;
+    // Gold matter (≤ 0.9 a channel, warm), only the whitest heart kept white.
+    expect(Math.max(g.x, g.y, g.z)).toBeLessThanOrEqual(0.9);
+    expect(g.y / g.x).toBeLessThan(0.7);
+    expect(g.w).toBeGreaterThan(0.8);
+    expect((sharpen! as THREE.Vector2).y).toBeGreaterThan(0);
+    // The cut's body is ink matter cut crisp from the soft sheet, its core a thin added line.
+    expect(mattes).toContain("ink");
+    expect(mattes).toContain("add");
+    // Metal's sword pools never take the matte (their program is unchanged).
+    const metalLayer = new THREE.Group();
+    new SwordSkillFx(swordHost(field(3), metalLayer, cam), sheets(), "high");
+    let metalMatte = 0;
+    metalLayer.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
+      if (m?.defines && "MATTE" in m.defines) metalMatte += 1;
+    });
+    expect(metalMatte).toBe(0);
   });
 
   it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {
