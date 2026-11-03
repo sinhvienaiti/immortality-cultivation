@@ -558,13 +558,13 @@ void main() {
   float f = mod(floor(uTime * uFps), uFrames);
   vec2 cell = vec2(mod(f, uGrid.x), uGrid.y - 1.0 - floor(f / uGrid.x));
   // Stretched along the trail and read soft (a mip bias): the band's cells become flame streaks, not a crust.
-  vec2 cuv = vec2(clamp(fract(vT * 0.45 - uTime * 1.1), 0.004, 0.996), 0.5 + (vSide - 0.5) * 0.7);
-  vec4 t = texture2D(map, (cell + cuv) / uGrid, 0.8);
+  vec2 cuv = vec2(clamp(fract(vT * 0.6 - uTime * 1.1), 0.004, 0.996), 0.5 + (vSide - 0.5) * 0.7);
+  vec4 t = texture2D(map, (cell + cuv) / uGrid, 0.4);
   float lum = pow(clamp(max(t.r, max(t.g, t.b)), 0.0, 1.0), 0.4545);
   // Hot along the middle near the head; down the tail it cools and breaks into tongues that erode away (a soot
   // rim only at its edges, never a dark band left lying across the field).
-  float prof = smoothstep(0.0, 0.75, s) * (1.0 - smoothstep(0.3, 1.0, vT));
-  float heat = prof * (0.3 + 0.9 * lum) * vCol.a;
+  float prof = smoothstep(0.0, 0.75, s) * (1.0 - smoothstep(0.15, 0.9, vT));
+  float heat = prof * (0.15 + 1.0 * lum) * vCol.a;
   float edge = 0.14 + 0.16 * vT + (0.5 - lum) * 0.12;
   float a = smoothstep(edge, edge + 0.04, heat);
   if (a <= 0.002) discard;

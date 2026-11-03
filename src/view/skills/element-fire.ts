@@ -449,7 +449,7 @@ class FireLayers {
     const c = a.caster;
     this.lotus(c.x + (camF.x / fl) * 0.55, c.z + (camF.z / fl) * 0.55, 2.3 * s, 1.3, 2, 0);
     this.sparkRays(p.x, p.y, p.z, 1.7 * s, 1.4);
-    this.emberBurst(p.x, p.y, p.z, 1.9 * s, 1.05, 1.7);
+    this.emberBurst(p.x, p.y, p.z, 1.8 * s, 0.9, 1.7);
     const n = this.stage.n(big ? 16 : 10);
     for (let i = 0; i < n; i += 1) this.ember(p.x, p.y, p.z, c.fx, c.fz, 6, Math.PI);
     if (big) {
@@ -508,7 +508,7 @@ class FireLayers {
     this.dot(p.x, p.y, p.z, 1.15 * s, 0.6 * s, 0.08, WHITE_GOLD, 4.5);
     this.lotus(p.x + a.dx * 0.15, p.z + a.dz * 0.15, 2.0 * s, 1.25, 1, 0.7);
     this.sparkRays(p.x, p.y, p.z, 1.5 * s, 1.35);
-    this.emberBurst(p.x, p.y, p.z, 1.7 * s, 1.0, 1.9);
+    this.emberBurst(p.x, p.y, p.z, 1.6 * s, 0.85, 1.9);
     const n = this.stage.n(8 + Math.round(6 * a.power));
     for (let i = 0; i < n; i += 1) this.ember(p.x, p.y, p.z, a.dx, a.dz, 7, 1.0);
     if (a.big) this.stage.accent(p.x, p.y, p.z, 0.3);
@@ -550,7 +550,7 @@ class FireLayers {
     o.ground = 0;
     o.lift = 0.5;
     this.burst.spawn(v.set(p.x, 0, p.z), r * 3.4, o);
-    this.emberBurst(p.x, p.y, p.z, r * 2.6, 0.78, 1.6);
+    this.emberBurst(p.x, p.y, p.z, r * 2.6, 0.66, 1.6);
     const n = this.stage.n(10);
     for (let i = 0; i < n; i += 1) {
       const s = this.ash.spec.reset();
@@ -623,7 +623,7 @@ class FireLayers {
       this.dot(a.x, a.y, a.z, 1.0 * k, 0.5 * k, 0.08, WHITE_GOLD, 4.2);
       this.lotus(a.x + a.dx * 0.15, a.z + a.dz * 0.15, 1.45 * k, 1.3, 1, 0.6);
       this.sparkRays(a.x, a.y, a.z, 1.1 * k, 1.3);
-      this.emberBurst(a.x, a.y, a.z, 1.2 * k, 1.0, 1.9);
+      this.emberBurst(a.x, a.y, a.z, 1.1 * k, 0.85, 1.9);
       if (k >= 2) this.stage.accent(a.x, a.y, a.z, 0.22);
       return true;
     }
@@ -637,7 +637,7 @@ class FireLayers {
   leadStrike(a: { x: number; z: number }): boolean {
     this.lotus(a.x, a.z, 2.9, 1.15, 1, 0.3);
     this.burnGround(a.x, a.z, 1.3, 1.4, 16, true);
-    this.emberBurst(a.x, 0.6, a.z, 2.6, 1.05, 1.5);
+    this.emberBurst(a.x, 0.6, a.z, 2.0, 0.8, 1.5);
     return true;
   }
 
@@ -731,9 +731,9 @@ class FireLayers {
     s.life = R.range(0.3, 0.5);
     s.size0 = R.range(0.2, 0.32);
     s.size1 = 0.04;
-    const hot = R.next() < 0.55;
+    const hot = R.next() < 0.3;
     const c = hot ? CORE : AMBER;
-    const k = hot ? 2.6 : 2.2;
+    const k = hot ? 2.2 : 2.0;
     s.r = c[0] * k;
     s.g = c[1] * k;
     s.b = c[2] * k;
@@ -776,7 +776,7 @@ export const FIRE: ElementKit = {
   ramp: { core: CORE, edge: lin("#FFB13C"), body: lin("#FF7A2A"), soot: lin("#2B1D18") },
   palette: firePalette,
   stream: FIRE_STREAM,
-  trail: { widthM: 0.19, core: k3(CORE, 2), rimK: 0.8, silk: false, flame: { clip: "dragonhold-flame-trail", soot: SOOT, deep: VERMILION, amber: AMBER, core: WHITE_GOLD } },
+  trail: { widthM: 0.16, core: k3(CORE, 2), rimK: 0.8, silk: false, flame: { clip: "dragonhold-flame-trail", soot: SOOT, deep: VERMILION, amber: AMBER, core: WHITE_GOLD } },
   blade: { mode: "furnace", edge: [3.4, 2.3, 0.95], heat: [0.9, 0.3, 0.03], char: 0.12 },
   textures: {},
   flipbooks: {
