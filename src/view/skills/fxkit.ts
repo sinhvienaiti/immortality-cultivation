@@ -1279,6 +1279,37 @@ float cloudCurl(vec2 q, float s, float w) {
 }
 
 #ifdef SEAL
+// A regular octagon of apothem r, flat sides facing the axes and diagonals (iq).
+float sdOct(vec2 p, float r) {
+  const vec3 k = vec3(-0.9238795325, 0.3826834323, 0.4142135623);
+  p = abs(p);
+  p -= 2.0 * min(dot(vec2(k.x, k.y), p), 0.0) * vec2(k.x, k.y);
+  p -= 2.0 * min(dot(vec2(-k.x, k.y), p), 0.0) * vec2(-k.x, k.y);
+  p -= vec2(clamp(p.x, -k.z * r, k.z * r), r);
+  return length(p) * sign(p.y);
+}
+// The eight trigrams in the Fu Xi order (bit i = bar i from the inside: 1 whole, 0 broken).
+float trigramCode(float k) {
+  return k < 0.5 ? 7.0 : k < 1.5 ? 6.0 : k < 2.5 ? 5.0 : k < 3.5 ? 4.0 : k < 4.5 ? 0.0 : k < 5.5 ? 1.0 : k < 6.5 ? 2.0 : 3.0;
+}
+// The bagua round the seal (round 3b, item 5; it replaces the band of tick-like rune dashes): three bars per
+// sector along the octagon's side, broken bars split in the middle.
+float trigrams(vec2 p) {
+  float ang = atan(p.y, p.x);
+  float k = mod(floor((ang + PI) / (PI / 4.0) + 0.5), 8.0);
+  vec2 q = rot2(p, -(k * PI / 4.0 - PI));
+  float code = trigramCode(k);
+  float g = 0.0;
+  for (int i = 0; i < 3; i++) {
+    float rr = 0.655 + float(i) * 0.062;
+    float half_ = 0.1 + float(i) * 0.016;
+    float whole = mod(floor(code / pow(2.0, float(i))), 2.0);
+    float bar = band(q.x - rr, 0.017) * (1.0 - smoothstep(half_ - 0.012, half_, abs(q.y)));
+    float gap = (1.0 - whole) * (1.0 - smoothstep(0.02, 0.03, abs(q.y)));
+    g += bar * (1.0 - gap);
+  }
+  return g;
+}
 // The seal's skill glyph (SEAL_SHAPE): thin strokes in the seal's light, +x along the facing.
 float glyph(vec2 p, float r, float ang, float shape, float t) {
   float g = 0.0;
@@ -1458,15 +1489,18 @@ void main() {
   // The caster's seal: two rings drawn round with the word, a band of runes, a hexagram of two
   // counter-turning triangles, a soft heart; a dark disc under it so it glows on pale stone.
   float t0 = uTime * 0.7;
-  float ringO = band(r - 0.9, 0.022);
-  float ringO2 = band(r - 0.84, 0.01);
-  float ringI = band(r - 0.6, 0.014);
-  float rune = runes(ang, r, 0.72, 0.045, 36.0, uTime * 0.35);
+  // Round 3b (item 5): a bagua formation, not a HUD dial: a thin outer circle, an octagon frame turning slowly,
+  // the eight trigrams between it and an inner octagon; the trigrams flare (HDR core) as the word fills.
+  float ringO = band(r - 0.95, 0.016);
+  vec2 pb = rot2(p, uTime * 0.12);
+  float ringO2 = band(sdOct(pb, 0.855), 0.013);
+  float ringI = band(sdOct(pb, 0.585), 0.011);
+  float rune = trigrams(pb);
   // The skill's own glyph (the same white hexagram under every skill read as one skill, round 2).
   float gl = glyph(p, r, ang, uShape, t0) * uGlyph;
   float heart = (1.0 - smoothstep(0.0, 0.3, r)) * (uShape > 5.5 ? 0.25 : 1.0);
   light = (ringO + ringO2 * 0.7 + ringI * 0.8 + rune * 0.9) * revealArc + gl * 0.8 * uReveal + heart * 0.35 * uReveal;
-  core = ringO * revealArc * 0.6 + gl * 0.5 * uReveal;
+  core = ringO * revealArc * 0.6 + gl * 0.5 * uReveal + rune * revealArc * 0.45 + ringO2 * revealArc * 0.3;
   ink = (1.0 - smoothstep(0.85, 1.0, r)) * 0.4 + (uShape > 5.5 ? (1.0 - smoothstep(0.0, 0.16, r)) * 0.5 * uGlyph : 0.0);
   if (uMotif > 0.5) {
     // Four jade rings ride the outer ring between the skill's glyph and the runes (the glyph stays the skill's).

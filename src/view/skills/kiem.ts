@@ -186,6 +186,8 @@ const FLARE_MIN_S = 0.14;
 const SIGIL_IN_S = 0.15;
 /** The caster's seal fades in no faster than over this time (s; drawn through smoothstep, so ≤ ~11 % a frame at 60 Hz). */
 const SEAL_IN_S = 0.22;
+/** Qi motes spiralling in while a word is typed (pool size). */
+const QI_MOTES = 72;
 /** Slots whose word draws a ground sigil. */
 const SIGIL_SLOTS: readonly KiemSlot[] = ["k2", "guard", "dash", "k4", "k5"];
 /** Inverse of smoothstep on [0, 1]: the share x with smooth01(x) = y. */
@@ -709,6 +711,19 @@ export class KiemFx {
   private moteAcc = 0;
   private gatherAcc = 0;
   private zoneAcc = 0;
+  /**
+   * Qi motes spiralling in to the hand while a word is typed (round 3b, item 5): start angle, radius and height,
+   * age, life (0.32–0.48 s of gather) and spin, drawn as one-frame streaks along their spiral.
+   */
+  private readonly qmA = new Float32Array(QI_MOTES);
+  private readonly qmR = new Float32Array(QI_MOTES);
+  private readonly qmY = new Float32Array(QI_MOTES);
+  private readonly qmAge = new Float32Array(QI_MOTES);
+  private readonly qmLife = new Float32Array(QI_MOTES);
+  private readonly qmSpin = new Float32Array(QI_MOTES);
+  private readonly qmOn = new Uint8Array(QI_MOTES);
+  private qmNext = 0;
+  private readonly qmP = new THREE.Vector3();
 
   // Running skills.
   private k1 = { active: false, t: 0, launched: 0, tx: 0, tz: 0 };
@@ -1015,6 +1030,7 @@ export class KiemFx {
     this.castTyped = false;
     this.sealFade = 0;
     this.auraP = this.auraBig = this.blaze = this.blazeGoal = 0;
+    this.qmOn.fill(0);
     this.moteAcc = this.gatherAcc = this.zoneAcc = this.lightAcc = 0;
     this.k2.heat = this.k2.ash = this.k2.embers = this.k2.wisps = 0;
     this.crack.t = this.crackS.t = -1;
@@ -2772,6 +2788,7 @@ export class KiemFx {
   }
 
   private updateAura(dt: number): void {
+    this.drawQiMotes(dt);
     let p = -1;
     let big = 0;
     let slot: KiemSlot = this.sealSlot;
@@ -2908,30 +2925,76 @@ export class KiemFx {
       this.moteAcc -= 1;
       this.riseMote(x, 0.1, z, 1.5 * scale, 0.07 + 0.05 * a);
     }
-    this.host.hand(this.v);
-    this.gatherAcc += (8 + 34 * a) * scale * this.dens * dt;
+    // Qi motes spiral in to the hand (round 3b, item 5: straight streaks read as a HUD's lines).
+    this.gatherAcc += (12 + 40 * a) * scale * this.dens * dt;
     while (this.gatherAcc >= 1) {
       this.gatherAcc -= 1;
-      const ang = this.rand.range(0, Math.PI * 2);
-      const d = this.rand.range(2.0, 3.2) * scale;
-      const sx = this.v.x + Math.cos(ang) * d;
-      const sy = this.v.y + this.rand.range(-0.7, 1.6);
-      const sz = this.v.z + Math.sin(ang) * d;
-      const life = this.rand.range(0.2, 0.3);
+      const k = this.qmNext;
+      this.qmNext = (k + 1) % QI_MOTES;
+      this.qmOn[k] = 1;
+      this.qmA[k] = this.rand.range(0, Math.PI * 2);
+      this.qmR[k] = this.rand.range(1.5, 2.7) * scale;
+      this.qmY[k] = this.rand.range(0.1, 1.9);
+      this.qmAge[k] = 0;
+      this.qmLife[k] = this.rand.range(0.32, 0.48);
+      this.qmSpin[k] = this.rand.range(2.2, 3.2);
+    }
+  }
+
+  /** Mote k's place after share e (0–1) of its life, round the hand at `h`. */
+  private qiMoteAt(k: number, e: number, h: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
+    const r = this.qmR[k]! * Math.pow(1 - e, 1.4);
+    const ang = this.qmA[k]! + this.qmSpin[k]! * (1 - (1 - e) * (1 - e));
+    const y = this.qmY[k]! + (h.y - this.qmY[k]!) * smooth01(e);
+    return out.set(h.x + Math.cos(ang) * r, y, h.z + Math.sin(ang) * r * 0.8);
+  }
+
+  /** The spiralling qi motes: each a short streak along its path, brightening as it reaches the hand. */
+  private drawQiMotes(dt: number): void {
+    let any = false;
+    for (let k = 0; k < QI_MOTES; k += 1) if (this.qmOn[k] === 1) any = true;
+    if (!any) return;
+    this.host.hand(this.v);
+    const h = this.v;
+    for (let k = 0; k < QI_MOTES; k += 1) {
+      if (this.qmOn[k] !== 1) continue;
+      this.qmAge[k] = this.qmAge[k]! + dt;
+      const life = this.qmLife[k]!;
+      const e = this.qmAge[k]! / life;
+      if (e >= 1) {
+        this.qmOn[k] = 0;
+        continue;
+      }
+      const p = this.qiMoteAt(k, e, h, this.qmP);
+      const x = p.x;
+      const y = p.y;
+      const z = p.z;
+      const q = this.qiMoteAt(k, Math.max(0, e - 0.04), h, this.qmP);
+      const inv = 1 / (0.04 * life);
       const s = this.spark.spec.reset();
-      s.x = sx;
-      s.y = Math.max(0.1, sy);
-      s.z = sz;
-      s.vx = (this.v.x - sx) / life;
-      s.vy = (this.v.y - s.y) / life;
-      s.vz = (this.v.z - sz) / life;
-      s.life = life;
-      s.size0 = 0.07;
-      s.size1 = 0.1;
-      s.stretch = 0.035;
-      this.col(s, this.pal.core, 0.6);
+      s.x = x;
+      s.y = Math.max(0.08, y);
+      s.z = z;
+      s.vx = (x - q.x) * inv;
+      s.vy = (y - q.y) * inv;
+      s.vz = (z - q.z) * inv;
+      s.life = 0;
+      s.size0 = s.size1 = 0.06 + 0.06 * e;
+      s.stretch = 0.03;
+      this.col(s, this.pal.core, 0.45 + 0.9 * e);
+      s.a = smooth01(e / 0.18);
       this.spark.emit();
     }
+  }
+
+  /**
+   * A release burst at the caster for a skill cast outside this class (key 7, round 3b item 5): the release column
+   * behind the body, the ground ring and shock, and the seal's blaze, in `slot`'s palette at `tier`.
+   */
+  burst(slot: KiemSlot, tier: number): void {
+    this.host.caster(this.c);
+    this.use(slot);
+    this.releaseFlash(1.1, 3, 3.4, tier);
   }
 
   /**

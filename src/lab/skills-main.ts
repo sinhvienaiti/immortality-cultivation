@@ -814,6 +814,8 @@ function flushTyping(): void {
   if (pendingVan) {
     pendingVan = false;
     van.cast();
+    // The release at the caster (round 3b, item 5): a burst column behind the body and a ground ring, on this frame.
+    fx.burst("k1", 3);
     // The first visible action of key 7 (its eight blades leave now): the probe's VFX release.
     probe.flash();
   }

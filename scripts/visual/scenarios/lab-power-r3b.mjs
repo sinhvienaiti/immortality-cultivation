@@ -1,6 +1,6 @@
 // Power pass round 3b (03/11/2026) on the dev-only skills lab, fixed 60 Hz clock, play camera, DPR 1.
 // MODE picks the run:
-//   seq     SKILL types one skill (k1, k7, k5) and shoots the frames in FRAMES (after the key; "c" frames count from
+//   seq     SKILL types one skill (k1, k7, k5; TYPED=1 letter by letter) and shoots the frames in FRAMES (after the key; "c" frames count from
 //           its climax: c-1, c0, c+4 …); VIEW=close shoots it in the close view (zoom 1). JSON: screen state per shot.
 //   totals  key 7 and K5 one after the other: the running headline total of each cast (stand-in numbers).
 // Output: OUT_DIR/raw-<PHASE>/… and OUT_DIR/<mode>-<PHASE>.json. Montage and prune the raw folder afterwards.
@@ -13,7 +13,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const AT_CLIMAX = "(() => { const s = window.__lab.screen(); return s.impactStep === 0 && s.impactLocal === 0; })()";
 
 async function open(page, base) {
-  await page.goto(`${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind`, { settle: 1500 });
+  // TYPED=1: words are typed letter by letter (the charge at the caster shows), at WPM (default 45).
+  const typed = process.env.TYPED === "1" ? `&typed=1&wpm=${process.env.WPM ?? "45"}` : "";
+  await page.goto(`${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind${typed}`, { settle: 1500 });
   for (let i = 0; i < 240; i += 1) {
     if (await page.eval("!!(window.__lab && window.__lab.ready)")) return;
     await sleep(250);
