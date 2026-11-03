@@ -401,6 +401,42 @@ export interface StreamSeamArgs {
   target: number;
   ux: number;
   uz: number;
+  /** The seam across its body as Metal draws it: its start, unit direction and length (m). */
+  x: number;
+  y: number;
+  z: number;
+  dx: number;
+  dy: number;
+  dz: number;
+  len: number;
+}
+
+/** The finisher's slash this frame (myriad-swords.ts drawSlash, qi-slash.ts QiSlash.set's arguments). */
+export interface StreamSlashArgs {
+  /** Its two ends in the world, its half width (px at 1080p). */
+  ax: number;
+  ay: number;
+  az: number;
+  bx: number;
+  by: number;
+  bz: number;
+  halfPx: number;
+  /** The head's run origin → tip (0–1), its fade (0: gone) and erosion (0–1), seconds since it struck. */
+  head: number;
+  fade: number;
+  erode: number;
+  t: number;
+  dt: number;
+  /** The authored crescent (null: the computed taper). */
+  mask: THREE.Texture | null;
+}
+
+/** A hero victim pinned to the ground by a lead sword (the lab's victims.ts): where, and the blow's ground direction. */
+export interface StreamPlantArgs {
+  x: number;
+  z: number;
+  dx: number;
+  dz: number;
 }
 
 /** Phase hooks of myriad-swords.ts (key 7). Its release is sword-skills' `release` with skill "k7". */
@@ -419,6 +455,13 @@ export interface StreamHooks {
   slashSpark?(a: StreamSparkArgs): boolean;
   /** Impact: a big beast's slice seam (cutReact). */
   cutSeam?(a: StreamSeamArgs): boolean;
+  /**
+   * Impact and aftermath: the finisher's slash, every frame while it shows and once more with fade 0 when it goes
+   * (drawSlash; replaces QiSlash).
+   */
+  slash?(a: StreamSlashArgs): boolean;
+  /** Impact: a hero victim pinned by a lead sword (the host's plant: contact star, ground ring, scorch; the sword stays the shape's). */
+  plant?(a: StreamPlantArgs): boolean;
   frame?(dt: number): void;
   reset?(): void;
 }

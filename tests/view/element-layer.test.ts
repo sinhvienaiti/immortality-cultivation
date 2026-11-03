@@ -609,6 +609,64 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     expect((pool.mesh.geometry.getAttribute("iAge").array as Float32Array)[3]).toBeCloseTo(0.6, 5);
   });
 
+  it("replaces key 7's recoloured Metal layers: the finisher is a flame slash, big beasts' seams burn, plants are fire", () => {
+    const fire = elementById("fire")!;
+    const kitLayer = new THREE.Group();
+    const cam = camera();
+    const stage = stageFor(kitLayer, cam, sheets(), []);
+    const hooks = stage.hooksOf(fire).stream!;
+    expect(typeof hooks.slash).toBe("function");
+    expect(typeof hooks.cutSeam).toBe("function");
+    expect(typeof hooks.plant).toBe("function");
+    const host = {
+      layer: new THREE.Group(),
+      camera: cam,
+      targets: field(12),
+      caster(out: { x: number; z: number; fx: number; fz: number }) {
+        out.x = 0;
+        out.z = 3;
+        out.fx = 0;
+        out.fz = -1;
+      },
+      hand(out: THREE.Vector3) {
+        out.set(0.3, 1.2, 2.8);
+      },
+      struck() {},
+      phase() {},
+      flyby() {},
+      flash() {},
+    };
+    const tex = { glow: new THREE.Texture(), slash: new THREE.Texture(), star: new THREE.Texture(), ring: new THREE.Texture(), scorch: new THREE.Texture(), noise: new THREE.Texture() };
+    const fx = new MyriadSwordsFx(host, tex, { mid: 16, far: 24 });
+    const seams = vi.fn(hooks.cutSeam!);
+    fx.setElement(fire, stage);
+    (fx as unknown as { hooks: Record<string, unknown> }).hooks = { ...hooks, cutSeam: seams };
+    const qi = (fx as unknown as { qi: { mesh: THREE.Mesh } }).qi.mesh;
+    let qiShown = 0;
+    let flame = 0;
+    fx.cast();
+    for (let i = 0; i < 330; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+      if (qi.visible) qiShown += 1;
+      kitLayer.traverse((o) => {
+        if (o.name === "fx-flame-slash" && o.visible) flame += 1;
+      });
+    }
+    expect(qiShown).toBe(0);
+    expect(flame).toBeGreaterThan(10);
+    // A big beast (tier 2) cut by the finisher: its seam is the kit's, along the stroke with a length.
+    expect(seams).toHaveBeenCalled();
+    expect(seams.mock.calls[0]![0].len).toBeGreaterThan(0);
+    // When the slash is gone the kit's flame slash is hidden too.
+    let shown = false;
+    kitLayer.traverse((o) => {
+      if (o.name === "fx-flame-slash" && o.visible) shown = true;
+    });
+    expect(shown).toBe(false);
+  });
+
   it("a ribbon pool swaps to the flame look and back without touching its ribbons", () => {
     const pool = new RibbonPool(4, 8, new THREE.Texture());
     const light = pool.mesh.material;

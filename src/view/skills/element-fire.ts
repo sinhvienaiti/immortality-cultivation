@@ -25,7 +25,8 @@
  * DRAGON_FIRE_DIAGNOSIS); only thin cores are HDR. No allocation per frame.
  */
 import * as THREE from "three";
-import type { AftermathArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamSegmentArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, TravelArgs } from "./element-kit";
+import type { AftermathArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, TravelArgs } from "./element-kit";
+import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
 import type { EmberPool } from "./embers";
@@ -68,6 +69,8 @@ const SEAL_SOOT = lin("#141211");
 const SEAL_BODY = lin("#E0561A");
 const SEAL_LIT = lin("#FFAE34");
 const SEAL_CORE: Rgb = [1, 0.72, 0.3];
+/** The flame slash's deep body: a vermilion kept off red (hue ~21°). */
+const SLASH_DEEP = lin("#E8560E");
 
 /** Folder of the kit's clips (art-src/lab/vfx/fire/manifest.json). */
 const FOLDER = "fire";
@@ -152,6 +155,10 @@ class FireLayers {
   /** The stone darkening under the caster while the word is typed. */
   private readonly groundInk: SpritePool;
   private readonly seams: BeamPool;
+  /** Key 7's finisher as a flame (in place of the sword-qi slash) and the rings of fire round a pinned victim. */
+  private readonly flameSlash: FlameSlash;
+  private readonly groundRings: HeatRingPool;
+  private slashAcc = 0;
   private readonly scorch: GroundDecalPool;
   private readonly emitters: Emitter[] = Array.from({ length: 24 }, () => ({ on: false, x: 0, z: 0, r: 0, t: 0, life: 0, rate: 0, acc: 0 }));
   private chargeAcc = 0;
@@ -186,6 +193,11 @@ class FireLayers {
     this.slash = stage.pool(32, T.slash, "add", "camera", 12);
     this.motes = stage.pool(900, T.glow, "add", "camera", 13, { crop: 0.6 });
     this.seams = stage.beams(24, 13);
+    this.flameSlash = new FlameSlash(15);
+    this.flameSlash.setRamp(CHAR, SLASH_DEEP, AMBER, WHITE_GOLD);
+    stage.layer.add(this.flameSlash.mesh);
+    this.groundRings = stage.heatRings(16, "ground", 6);
+    this.groundRings.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
     this.embers = stage.embers(1024, 13);
     this.embers.setRamp(EMBER_HOT, AMBER, EMBER_ORANGE, EMBER_DIM);
   }
@@ -786,6 +798,101 @@ class FireLayers {
     return true;
   }
 
+  /**
+   * The finisher's slash as a flame (replaces the recoloured sword-qi slash): the same strip, shape and timing, drawn
+   * as heat with flame tongues; embers shed off it behind the head while it burns.
+   */
+  finisherSlash(a: StreamSlashArgs): boolean {
+    if (a.fade <= 0.003) {
+      this.flameSlash.hide();
+      this.slashAcc = 0;
+      return true;
+    }
+    this.flameSlash.set(a.ax, a.ay, a.az, a.bx, a.by, a.bz, a.halfPx * 1.3, a.head, a.fade, a.erode, a.mask, a.t);
+    this.slashAcc += 90 * a.dt * a.fade * (1 - a.erode) * this.stage.dens;
+    const R = this.stage.rand;
+    while (this.slashAcc >= 1) {
+      this.slashAcc -= 1;
+      const u = R.next() * a.head;
+      const s = this.embers.reset();
+      s.x = a.ax + (a.bx - a.ax) * u + R.range(-0.3, 0.3);
+      s.y = a.ay + (a.by - a.ay) * u + R.range(-0.2, 0.2);
+      s.z = a.az + (a.bz - a.az) * u + R.range(-0.3, 0.3);
+      s.vx = R.range(-1.2, 1.2);
+      s.vy = R.range(0.6, 2.2);
+      s.vz = R.range(-1.2, 1.2);
+      s.drag = 1.8;
+      s.rise = R.range(0.8, 1.4);
+      s.life = R.range(0.7, 1.3);
+      s.size = 0.08 + 0.14 * Math.pow(R.next(), 3);
+      s.heat = R.range(0.8, 1.05);
+      this.embers.emit();
+    }
+    return true;
+  }
+
+  /** A big beast's slice seam as a burning cut: a thin molten line, flame tongues licking along it, embers. */
+  cutSeam(a: StreamSeamArgs): boolean {
+    const b = this.seams.spec.reset();
+    b.x = a.x;
+    b.y = a.y;
+    b.z = a.z;
+    b.dx = a.dx;
+    b.dy = a.dy;
+    b.dz = a.dz;
+    b.len0 = 0.2;
+    b.len1 = a.len;
+    b.grow = 0.05;
+    b.w0 = 0.12;
+    b.w1 = 0.08;
+    b.life = 0.6;
+    b.cr = CORE[0] * 3.6;
+    b.cg = CORE[1] * 3.6;
+    b.cb = CORE[2] * 3.6;
+    b.hr = ORANGE[0] * 0.8;
+    b.hg = ORANGE[1] * 0.8;
+    b.hb = ORANGE[2] * 0.8;
+    b.fadeBase = 0.2;
+    b.fadeTip = 0.2;
+    this.seams.emit();
+    // Flame tongues along the cut (the heat-field band, cooling to its tail), burning out over ~0.5 s.
+    const o = flip();
+    o.life = 0.5;
+    o.rate = 1;
+    o.frame = this.stage.rand.range(0, 16);
+    o.dir = dir.set(a.dx, a.dy, a.dz);
+    o.span = a.len * 1.05;
+    o.intensity = 0.95;
+    o.lift = -0.2;
+    this.sheath.spawn(v.set(a.x + a.dx * a.len * 0.5, a.y + 0.1, a.z + a.dz * a.len * 0.5), 0.42, o);
+    this.emberBurst(a.x + a.dx * a.len * 0.5, a.y, a.z + a.dz * a.len * 0.5, 0.7, 0.95);
+    return true;
+  }
+
+  /** A hero victim pinned by a lead sword: a white-gold point, a ring of fire on the ground, flame, burnt ground, embers. */
+  plant(a: StreamPlantArgs): boolean {
+    this.dot(a.x, 0.35, a.z, 1.3, 0.7, 0.1, WHITE_GOLD, 3.2);
+    const r = this.groundRings.reset();
+    r.x = a.x;
+    r.y = 0.05;
+    r.z = a.z;
+    r.r0 = 0.2;
+    r.r1 = 1.4;
+    r.life = 0.42;
+    r.width = 0.11;
+    r.heat = 1;
+    this.groundRings.emit();
+    this.lotus(a.x - a.dx * 0.1, a.z - a.dz * 0.1, 1.5, 1.4, 1, 0.3);
+    this.scorch.spawn(a.x, a.z, 1.7, SCORCH, this.stage.rand.range(0, 6.28));
+    this.emberBurst(a.x, 0.3, a.z, 0.8, 1.0);
+    return true;
+  }
+
+  streamReset(): void {
+    this.flameSlash.hide();
+    this.slashAcc = 0;
+  }
+
   slashSpark(a: StreamSparkArgs): boolean {
     const R = this.stage.rand;
     const s = this.motes.spec.reset();
@@ -834,6 +941,10 @@ class FireLayers {
         glint: (a) => this.glint(a),
         finisher: (a) => this.finisher(a),
         slashSpark: (a) => this.slashSpark(a),
+        slash: (a) => this.finisherSlash(a),
+        cutSeam: (a) => this.cutSeam(a),
+        plant: (a) => this.plant(a),
+        reset: () => this.streamReset(),
       },
     };
   }
@@ -870,7 +981,7 @@ export const FIRE: ElementKit = {
       navy: [0.17, 0.07, 0.02],
       paper: [0.93, 0.38, 0.06],
       accent: [1.0, 0.62, 0.12],
-      roles: { rays: [0.62, 0.3, 0.04], strike: [1.0, 0.985, 0.93], lines: [0.15, 0.05, 0.015], strokes: [0.07, 0.025, 0.01], contour: [1.0, 0.8, 0.36] },
+      roles: { rays: [0.62, 0.3, 0.04], strike: [1.0, 0.985, 0.93], lines: [0.16, 0.065, 0.018], strokes: [0.08, 0.035, 0.012], contour: [1.0, 0.8, 0.36] },
     },
   },
   sound: "fire",

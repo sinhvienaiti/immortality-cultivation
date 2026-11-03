@@ -16,6 +16,7 @@
 import * as THREE from "three";
 import { BladeSet, type SwordModel } from "../view/skills/blades";
 import { SpritePool } from "../view/skills/fxkit";
+import type { StreamPlantArgs } from "../view/skills/element-kit";
 import { FaceRoll } from "../view/skills/sword-material";
 import type { ImpactEvent } from "./events";
 import type { LabHerd } from "./herd";
@@ -79,6 +80,9 @@ export class VictimDirector {
   private background = 0;
   private hopFrame = -1;
   private time = 0;
+  /** The element's plant (canon D59, replace never stack): it draws the star, ring and scorch in its own material. */
+  private plantHook: ((a: StreamPlantArgs) => boolean) | null = null;
+  private readonly aPlant: StreamPlantArgs = { x: 0, z: 0, dx: 0, dz: -1 };
   /** A held kill's blow colour and direction (the death burst plays after the pin). */
   private readonly deathRgb = new Int32Array(128);
   private readonly v = new THREE.Vector3();
@@ -183,6 +187,15 @@ export class VictimDirector {
     p.z = z;
     p.dx = dx;
     p.dz = dz;
+    const hook = this.plantHook;
+    if (hook !== null) {
+      const a = this.aPlant;
+      a.x = x;
+      a.z = z;
+      a.dx = dx;
+      a.dz = dz;
+      if (hook(a)) return;
+    }
     const s = this.stars.spec.reset();
     s.x = x;
     s.y = 0.35;
@@ -233,6 +246,11 @@ export class VictimDirector {
       PLANT_RING[k] = t.ring[k]!;
       PIN_RIM[k] = t.rim[k]!;
     }
+  }
+
+  /** The element's plant hook (its StreamHooks.plant; null: Metal's star, ring and ink scorch). Load time. */
+  setPlant(hook: ((a: StreamPlantArgs) => boolean) | null): void {
+    this.plantHook = hook;
   }
 
   /** World time: the planted swords slam, hold and fade; the heroes' screen motion is measured (real view size). */

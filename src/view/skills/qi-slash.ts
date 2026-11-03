@@ -9,7 +9,8 @@
 import * as THREE from "three";
 import { GRAMMAR } from "./sword-grammar";
 
-const VERTEX = /* glsl */ `
+/** The strip's vertex shader (screen-space, origin to tip): shared with an element's own slash (flame-slash.ts). */
+export const QI_SLASH_VERTEX = /* glsl */ `
 uniform vec3 uA;
 uniform vec3 uB;
 uniform float uHalf;
@@ -102,7 +103,7 @@ export class QiSlash {
       uNavy: { value: v3(GRAMMAR.navy) },
     };
     const m = new THREE.ShaderMaterial({
-      vertexShader: VERTEX,
+      vertexShader: QI_SLASH_VERTEX,
       fragmentShader: FRAGMENT,
       uniforms: this.u,
       transparent: true,

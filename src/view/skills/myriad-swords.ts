@@ -54,7 +54,7 @@
  */
 import * as THREE from "three";
 import { BladeSet, loadSwordModels } from "./blades";
-import type { ElementKit, StreamGlintArgs, StreamHooks, StreamSeamArgs, StreamSegmentArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs } from "./element-kit";
+import type { ElementKit, StreamGlintArgs, StreamHooks, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs } from "./element-kit";
 import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
 import { BeamPool, Rand, RibbonPool, smooth01, SpritePool } from "./fxkit";
@@ -287,7 +287,9 @@ export class MyriadSwordsFx {
   private readonly aGlint: StreamGlintArgs = { x: 0, y: 0, z: 0, k: 1, river: false };
   private readonly aSeg: StreamSegmentArgs = { ax: 0, az: 0, bx: 0, bz: 0 };
   private readonly aSpark: StreamSparkArgs = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
-  private readonly aSeam: StreamSeamArgs = { target: -1, ux: 1, uz: 0 };
+  private readonly aSeam: StreamSeamArgs = { target: -1, ux: 1, uz: 0, x: 0, y: 0, z: 0, dx: 1, dy: 0, dz: 0, len: 1 };
+  private readonly aSlash: StreamSlashArgs = { ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, halfPx: 0, head: 0, fade: 0, erode: 0, t: 0, dt: 0, mask: null };
+  private readonly slashMask: THREE.Texture | null;
   private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0 };
   /** The lead blades' trail width over Metal's (the element's trail width ÷ Metal's 0.14 m). */
   private trailK = 1;
@@ -317,6 +319,7 @@ export class MyriadSwordsFx {
     this.marks = new SpritePool(160, tex.ring, "add", "ground", 6, { twoSided: true });
     this.scar = new SpritePool(48, tex.scorch, "ink", "ground", 4, { fadeIn: 0.05, twoSided: true });
     this.qi = new QiSlash(tex.slashMask ?? null, 15);
+    this.slashMask = tex.slashMask ?? null;
     host.layer.add(this.scar.mesh, this.marks.mesh, this.ribbons.mesh, this.blades.mesh, this.far.mesh, this.beams.mesh, this.hits.mesh, this.stars.mesh, this.glitter.mesh, this.qi.mesh);
     const N = this.cap;
     this.st = new Uint8Array(N);
@@ -1496,6 +1499,7 @@ export class MyriadSwordsFx {
   private drawSlash(dt: number): void {
     if (this.slashT < 0) {
       this.qi.hide();
+      this.slashHook(dt);
       return;
     }
     this.slashT += dt;
@@ -1507,12 +1511,44 @@ export class MyriadSwordsFx {
     if (fade <= 0) {
       this.slashT = -1;
       this.qi.hide();
+      this.slashHook(dt);
       return;
     }
     const e = this.slashEnds();
     // Widest on its first frames (the blow), settling a little as it holds.
     const w = SLASH_HALF_PX * (1.12 - 0.12 * smooth01(t / 0.12));
+    const hook = this.hooks.slash;
+    if (hook !== undefined) {
+      const a = this.aSlash;
+      a.ax = e.ax;
+      a.ay = e.ay;
+      a.az = e.az;
+      a.bx = e.bx;
+      a.by = e.by;
+      a.bz = e.bz;
+      a.halfPx = w;
+      a.head = head;
+      a.fade = fade;
+      a.erode = er;
+      a.t = t;
+      a.dt = dt;
+      a.mask = this.slashMask;
+      if (hook(a)) {
+        this.qi.hide();
+        return;
+      }
+    }
     this.qi.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, w, head, fade, er);
+  }
+
+  /** The element's slash gone (or not showing): its hook hears fade 0 so it hides its own. */
+  private slashHook(dt: number): void {
+    const hook = this.hooks.slash;
+    if (hook === undefined) return;
+    const a = this.aSlash;
+    a.fade = 0;
+    a.dt = dt;
+    hook(a);
   }
 
   /** The head's place along the stroke (0 origin, 1 tip) after `t` s of the sweep (eased out, as drawn). */
@@ -1527,18 +1563,26 @@ export class MyriadSwordsFx {
    */
   private cutReact(i: number, ux: number, uz: number, tier: number): void {
     if (tier < 2) return;
+    const T = this.host.targets;
+    const R = T.radius(i) * 1.35 + 0.4;
     const hook = this.hooks.cutSeam;
     if (hook !== undefined) {
       const a = this.aSeam;
+      const ln = Math.hypot(ux, 0.22, uz);
       a.target = i;
       a.ux = ux;
       a.uz = uz;
+      a.x = T.x(i) - ux * R;
+      a.y = T.midY(i) + 0.45;
+      a.z = T.z(i) - uz * R;
+      a.dx = ux / ln;
+      a.dy = -0.22 / ln;
+      a.dz = uz / ln;
+      a.len = 2 * R;
       if (hook(a)) return;
     }
     const core = this.tone.core;
     const halo = this.tone.halo;
-    const T = this.host.targets;
-    const R = T.radius(i) * 1.35 + 0.4;
     const b = this.beams.spec.reset();
     b.x = T.x(i) - ux * R;
     b.y = T.midY(i) + 0.45;
