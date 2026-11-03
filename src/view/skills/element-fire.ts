@@ -5,21 +5,28 @@
  * - charge: while a word is typed, flames spiral in and tighten into a tiny white-gold point at the hand (the
  *   compression lives in the charge: fire-charge scrubbed by the typing level), embers are sucked in from round the
  *   caster, the stone darkens under the feet; a blade arriving at its place ignites there;
- * - release: on the last key's frame a white-gold pinpoint and a pressure ring at the hand, an anime flame lotus
- *   (fire-burst, real alpha) bursting behind the caster, spark rays and embers (key 7's release bigger, with a scorch);
+ * - release: on the last key's frame a point of fire (fire-points.ts) and a ring of fire at the hand (flame tongues
+ *   licking out of it, shedding embers), an anime flame lotus (fire-burst, real alpha) bursting behind the caster,
+ *   spark rays and embers (key 7's release bigger, with a scorch);
  * - travel: the real Clear Wind silhouette as a fire blade (sword-material.ts furnace: hot-iron body, molten
  *   white-gold edge, an orange heat band), wrapped in a flame sheath (Dragonhold's flame band in the heat-field mode,
  *   tapered to a soot tail) and trailing a flame ribbon (fxkit flame look), shedding embers;
- * - impact: a white-gold pinpoint, the fire-burst lotus at the beast (real alpha, solid on pale and dark stone),
- *   additive spark rays and heat-field embers; key 7's river strikes stay thin (pinpoint, sparks, embers) so the
- *   field-wide river never turns into flame soup, its lead blades take the lotus;
- * - aftermath: a scorch decal with a cooling ember edge, a low ground fire that burns out by erosion and dies into
- *   embers, a few dark smoke wisps (normal blend), embers rising for a while; key 7's finisher leaves a burning scar
- *   along its cut (scorch, a low flame line, ground fires, a molten seam);
- * - foe: the burn status (the beast's rim flickers amber, TargetField.status) and a white-gold hit silhouette (the
- *   lab's herd); death: an inner ignition, a collapsing flame, embers and ash;
+ * - impact: a point of fire (a small gold core in flame tongues, never a white ball), the fire-burst lotus at the
+ *   beast (real alpha, its white-hot base graded to gold matter: solid and saturated on pale and dark stone), spark
+ *   rays and loose embers, a cut as a molten crescent of matter; key 7's river strikes stay thin (a small point,
+ *   sparks, embers) so the field-wide river never turns into flame soup, its lead blades take the lotus;
+ * - aftermath: burnt ground with a crisp irregular edge and cooling ember cracks, a low ground fire that burns down
+ *   over ~3 s by erosion into embers and char, a few dark smoke wisps (normal blend), embers rising for a while; key
+ *   7's finisher leaves a burning scar along its cut (scorch, a low flame line, ground fires, a gold molten seam);
+ * - linger (round 3, the owner's 03/11 note): the attack is instant, then the peak holds and the fire burns down
+ *   slowly (a lotus ~1.0-1.2 s, a ground fire ~3 s, embers a third longer, the flame slash 1.2 s); a crowded field
+ *   (key 7) lingers less;
+ * - foe: the burn status (the beast's rim flickers amber, TargetField.status), an amber-gold hit silhouette and a kill
+ *   that burns away gold to orange with char behind its edge (FoeStatus.flash, burn: the lab's herd); death: a point
+ *   of fire, a collapsing flame, embers and ash;
  * - screen: a warm flash on big blows (ElementStage.accent → the host's screen-fx warm), the graphic impact frames
- *   in soot and amber; the shared heat-haze distortion pass is left for later (ELEMENT_LAYER §5 budget).
+ *   in soot and amber, their bursts flame tongues and ember sparks (never ink); the shared heat-haze distortion pass
+ *   is left for later (ELEMENT_LAYER §5 budget).
  * Colours (D54): white-gold → amber → vermilion-orange → dark soot; nothing uses the enemy's warning red #FF4A4A.
  * Fire bodies are real-alpha clips or heat-field shading with a soot edge (never brightness as alpha over the ground:
  * DRAGON_FIRE_DIAGNOSIS); only thin cores are HDR. No allocation per frame.

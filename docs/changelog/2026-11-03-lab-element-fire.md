@@ -4,7 +4,7 @@ Anh chốt sáng 03/11 (canon D59): người chơi chọn **hệ** riêng với 
 
 Thiết kế: `docs/games/tu-tien/skills/ELEMENT_LAYER.md` (repo cha). Luật cứng: **thay, không chồng**. Chọn Fire thì vẽ chính hình đó bằng bộ chất Fire; lớp Metal không vẽ bên dưới.
 
-Tệp này ghi theo phần. Phần 1 là nền mã (bước 0, 1, 3 và phần mã của bước 4 trong brief), phần 2 là Fire trên phím 1 và phím 7, phần 3 là lượt kiểm đối kháng, phần 4 là các sửa sau lượt kiểm.
+Tệp này ghi theo phần. Phần 1 là nền mã (bước 0, 1, 3 và phần mã của bước 4 trong brief), phần 2 là Fire trên phím 1 và phím 7, phần 3 là lượt kiểm đối kháng, phần 4 là các sửa sau lượt kiểm, phần 5 là vòng 3 (lửa lưu lâu hơn theo lời anh và các điểm nhìn còn lại).
 
 ## Phần 1: nền mã
 
@@ -568,3 +568,235 @@ Một lượt kiểm độc lập, không tin số của phần 4: server riêng
 - `tmp/shots/element-fire/fixes/fire-fixed-close.mp4`: 12,0 s, phím 1 gõ ở góc nhìn gần của người chơi, phím 1 gõ với camera gần trên chỗ trúng, phím 7 với camera gần trên sân; có tiếng (129 lượt; −12,2 / −0,3 dB); 25,3 MiB.
 - Phụ đề tiếng Anh mỗi đoạn. `tmp/shots/element-fire/fixes/stills-fixed-light-dark.jpg`: cùng bố cục với `stills-fire-light-dark.jpg` (phím 1 F88, F180; phím 7 F186, F260).
 - Bằng chứng: `recheck/evidence/` (nhát chém trước và sau, bản đồ điểm ảnh nhạt và giống máu, các điểm nhìn). Khung thô đã xóa bằng tay (`tools/capture-prune` từ chối đường dẫn trong `immortality-cultivation`); server và bản xuất đã dọn.
+
+## Phần 5: vòng 3 của Sword × Fire, lửa lưu lâu hơn và các điểm nhìn còn lại
+
+Anh xem hai video sau phần 4 và nhắn (03/11): "liệu có nên xử lý ngọn lửa bị ẩn chậm đi 1 chút k, chứ hình như tôi thấy hiệu ứng bị biến mất hơi nhanh". Đó là mục 0, làm trước và vào commit riêng. Các mục 1–7 là những điểm nhìn mà lượt kiểm lại sau phần 4 và lượt xem của điều phối còn thấy; chúng dựng trên nhịp mới của mục 0. Mục 8 là số đo để báo, không chặn.
+
+Ngoài phạm vi, không đụng tới (thiết kế hào quang kiếm sẽ thay): chất của chính thanh kiếm bay (lưỡi furnace trong `sword-material.ts`, vỏ lửa `sheathAt`, vệt và ribbon, 88 tia vệt của phím 7, `real-swords.ts`, `blades.ts`), `src/lab/cutin.ts`, `src/kit/**`, các game khác. Metal giữ nguyên từng bit (số đo ở dưới).
+
+### Cách chụp và đo
+
+- "Trước" là HEAD `cff975b`, xuất bằng `git archive` sang `tmp/r3-before` (có `server.fs.allow` cho `node_modules` dạng symlink), server riêng không HMR cổng 3122. "Sau" là repo, cổng 3121, khởi động lại sau mỗi lần sửa mã. Lượt chạy dở trước đó đã để lại bản xuất và ảnh "trước" của `PLAN=fixes`; tôi đã so bản xuất với `git archive cff975b` (giống hệt) và kiểm đủ 123 ảnh mỗi nền, nên dùng lại.
+- High, 1920×1080, DPR 1, đá sáng `#d6d0c2` và đá tối `#2a2c30`, `WORLD=1` (cùng khung khi ẩn lớp VFX).
+- `PLAN=fixes` như phần 4 (59 khung). Thêm `PLAN=linger` (commit `a7e4784`): khung 0, 6, 12, 24, 36, 48, 60, 90, 120, 180 sau đòn trúng. Phím 1 ở camera gần và camera chơi tính từ đòn đầu (khung mà sự kiện `impact` đầu tiên của lab bắn, tìm bằng cách bước từng khung: khung 7 sau phím); phím 7 ở camera gần tính từ nhát kết (F192).
+- Điểm ảnh hiệu ứng, "nhạt", "thân", "giống máu" định nghĩa như lượt kiểm lại của phần 4: khác hơn 0,10 so với khung ẩn VFX; nhạt là sắc 8–62°, độ bão hòa 0,10–0,45, độ sáng ≥ 0,62; giống máu là sắc < 15° hoặc > 345°, độ sáng < 0,55, độ bão hòa ≥ 0,2.
+- Để biết lớp nào làm nhạt, tôi chụp cùng khung khi ẩn lần lượt từng lớp VFX (qua móc `__THREE_DEVTOOLS__`, không sửa lab) rồi đếm điểm ảnh nhạt mất đi.
+
+### Theo commit
+
+| Mục | Commit | Nội dung |
+|---|---|---|
+| Kịch bản | `a7e4784` | `PLAN=linger` cho dải thời gian trước và sau |
+| 0. Lửa lưu lâu hơn | `000440d` | `flipbook.ts` ánh xạ thời gian hai tốc độ (`slowFrom`, `slowRate`, `frameAt`, `playLife`) và `setSharpen`; nhịp mới của mọi lớp lửa; giới hạn khi sân đông; pool lớn hơn |
+| 1. Va chạm phím 1 bớt nhạt | `ee1a45d` | `FlipbookPool.setGrade` (đế trắng nóng của hoa sen thành vàng đặc, chỉ tim trắng nhất giữ trắng), gốc sprite tan bằng ăn mòn; hoa sen từ khung 2, lửa đất từ khung 3; nhát cắt thành vật chất (`SpritePoolOptions.matte`) |
+| 2. Điểm lửa thay quả cầu trắng | `38c16a1`, `2623274` | `FirePointPool` (`fire-points.ts`); lõi nhỏ màu vàng ở commit sau |
+| 3. Vòng có cấu trúc lửa | `ee67678` | `heat-rings.ts`: bề rộng đổi theo góc, lưỡi lửa liếm ra, đường nóng đứt đoạn, viền bồ hóng trong, nguội không đều; tàn lửa rơi từ vòng |
+| 4. Khung đồ hoạ | `a0fb139` | `fireBurst`, `fireSparks` trong chương trình `ROLES` của `screen-fx.ts` |
+| 5. Đất cháy | `3ea6a47` | Nhánh `PROCEDURAL` của `ground-decals.ts`: mép rõ mà không đều, vành nâu cháy, vòng than, tim tối |
+| 6. Thú cháy | `e8776dc` | `FoeStatus.flash`, `.burn` (`element-kit.ts`), `LAB_BURN` trong `herd.ts`; tông màu đòn của Fire thành hổ phách |
+| 7. Nhát chém lửa | `309db41` | Bảng dải (`measureBand`) cho sống liền mạch, lưỡi lửa đều và rõ; đường nóng chảy của nhát kết và đường cắt thành vàng ×2 |
+
+### 0. Lửa lưu lâu hơn (`000440d`)
+
+Nguyên tắc: pha bùng giữ nguyên (khung đầu ở đỉnh, cùng tốc độ tới đỉnh của clip, phím tới lúc phát chiêu không đổi), rồi đỉnh được giữ lâu hơn và lửa cháy lụi chậm, ăn mòn và nguội về than, không bao giờ mờ nhanh theo alpha.
+
+- `flipbook.ts`:
+  - ánh xạ thời gian hai tốc độ: tới khung `slowFrom` clip chạy ở `rate`, sau đó ở `slowRate` (`frameAt`, đời của sprite tính bằng `playLife`). Khung trộn theo thời gian (crossfade giữa hai khung kề nhau) đã có sẵn từ bản Dragonhold, nên clip chạy chậm không bị giật;
+  - `setSharpen` (chế độ `rgba`): độ phủ đi qua một ngưỡng có nhiễu, nên khi hai khung đang trộn dở, hay ở lớp mờ mỏng của clip, sprite vẫn là vật chất hoặc bị ăn mòn hẳn, không thành màn nhìn xuyên trên đá sáng;
+  - đã ghi vào `docs/SYNC_DEBT.md`.
+- Nhịp trước → sau (tính từ tham số, kiểm bằng bài test và dải ảnh):
+
+| Lớp | Trước | Sau |
+|---|---|---|
+| Hoa sen va chạm phím 1 | 0,67 s (khung 1–16 ở ×1,25) | 1,15 s: khung 2–7 ở ×1,25 (0,22 s), khung 7–15 ở ×0,48; ăn mòn từ 0,6 đời |
+| Hoa sen phát chiêu | 0,60 s | 1,02 s |
+| Hoa sen kiếm đầu phím 7 / cú đập đất của kiếm đầu | 0,64 / 0,73 s | 1,06 / 1,18 s |
+| Hoa sen cắm kiếm | 0,60 s | 0,98 s |
+| Ngọn lửa sụp khi chết | 0,35 s | 0,51 s |
+| Hoa sen trên không (kiếm hiện, kiếm rời vai) | 0,56 / 0,49 s | 0,72 / 0,67 s |
+| Lửa đất | 1,56 s | 2,94 s: vòm lưỡi lửa ngay, rồi co, tối dần và tàn thành than |
+| Tàn lửa (bùng / bốc lên từ đất / văng) | 0,7–1,6 / 1,0–1,9 / 0,35–0,7 s | 0,9–2,0 / 1,3–2,4 / 0,44–0,88 s (sông phím 7: 0,39–0,77 s) |
+| Tàn lửa bốc lên khi lửa đất tàn | từ 1,1 s | từ 1,9 s |
+| Đất cháy (một đòn / nhát kết) | 3,4 / 4,2 s, ăn mòn từ 1,7 s | 5,2 / 5,6 s, ăn mòn từ 3,2 s; vết nứt than hồng nguội trong ~4 s |
+| Nhát chém lửa | theo hình: 0,88 s | đồng hồ riêng sau khi quét: giữ 0,34 s, ăn mòn 0,6 s, hết ở 1,2 s (Metal giữ 0,22 s và 0,4 s) |
+| Đường cắt cháy / lưỡi lửa dọc đường cắt | 0,6 / 0,5 s | 0,85 / 0,8 s |
+| Đường nóng chảy của nhát kết / dòng lửa thấp | 2,4 / 2,0–2,5 s | 3,0 / 2,6–3,2 s |
+| Vòng lửa cắm kiếm / vòng áp suất | 0,42 / 0,24 s | 0,62 / 0,30 s |
+| Khói / tro | 1,3–1,8 / 1,1–1,8 s | 1,8–2,5 / 1,4–2,2 s |
+
+- Phím 7 vẫn đọc được: quá 28 hoa sen đang sống thì hoa sen mới lưu ít hơn, tới nhịp cũ khi sân gấp đôi; lửa đất cũng vậy khi quá 12. Sông kiếm (đòn nhỏ) không có hoa sen, tàn lửa của nó chỉ dài thêm 10 %, ngắn hơn phím 1 và kiếm đầu. Trên khung phím 7 lúc săn (`k7c-090`, `k7c-150`, `k7-150`) thú và chữ số vẫn rõ, không thành màn lửa.
+- Pool (đo bằng cách vá prototype của đúng các module lab dùng, phím 1, phím 7, K5, camera chơi):
+  - `fire-burst` 96 → 128 ô (đỉnh 89 ở K5, 84 ở phím 7 Ultra);
+  - `ash` 160 → 1 024: **trước vòng 3 pool tro đã đầy ở phím 7 và K5, bỏ ~610–680 vảy tro mỗi lần** (lỗi có sẵn); đỉnh nay 785–830;
+  - mọi pool của Fire bỏ hoặc ghi đè 0 lần ở High và Ultra (`demand-after-{high,ultra}.json`): tàn lửa đỉnh 1 785 / 1 831 trên 2 560, điểm lửa 87 trên 256, đất cháy 32 trên 64, lửa đất 16 trên 32.
+- Dải thời gian: `tmp/shots/element-fire/r3/sheet-linger.jpg`. Hàng trên: hoa sen, tàn lửa, lửa đất và đất cháy ở đòn đầu phím 1 (camera gần), đá sáng và đá tối, trước và sau. Hàng giữa: nhát chém lửa, đường cắt, cắm kiếm và lửa đất của nhát kết phím 7. Hàng dưới: phím 1 ở camera chơi.
+  - Trước: hoa sen đầu đã vỡ ở 0,6 s và hết ở ~0,8 s; lửa đất hết ở ~1,5 s.
+  - Sau: hoa sen còn đầy ở 0,6 s, cháy lụi tới ~1,15 s; lửa đất còn cháy ở 2 s, tàn ở ~3 s; nhát chém lửa còn thấy ở 1 s.
+
+### 1. Va chạm phím 1 trên đá sáng (`ee1a45d`)
+
+- Ẩn từng lớp ở `k1c-008`: hoa sen gánh 45 % phần nhạt, chấm trắng `dot` 33 %, lõi cộng sáng của nhát cắt 24 %, lửa đất 10 %, dải lửa của vệt (ngoài phạm vi) 12 %.
+- Sửa:
+  - `FlipbookPool.setGrade`: phần trắng nóng rộng của clip (độ trắng = kênh nhỏ nhất ÷ kênh lớn nhất) vẽ bằng vàng đặc (tuyến tính `[0,9, 0,5, 0,09]`, ≤ 0,9 một kênh); chỉ phần trắng nhất, sáng nhất (độ trắng > 0,9) còn trắng. Lõi mảnh nên chỉ lõi bloom;
+  - gốc sprite tan vào đất cũng đi qua ngưỡng ăn mòn (trước đó là một dải nhìn xuyên dọc mặt đất);
+  - hoa sen va chạm mở từ khung 2 (khung 1 chỉ là viền mỏng), cùng tốc độ; lửa đất từ khung 3 (các khung đầu là một chỏm vàng sáng phẳng);
+  - nhát cắt: lưỡi liềm vật chất màu hổ phách–son (`SpritePoolOptions.matte`: alpha cắt rõ từ tấm mềm; chỉ pool nào xin mới biên dịch, chương trình của Metal không đổi) với một đường vàng mảnh bên trong, dưới ngưỡng bloom.
+- Số đo (đá sáng, phần nhạt, khung của `PLAN=fixes`, gồm cả mục 2 và mục 6):
+
+| Khung | Trước | Sau |
+|---|---|---|
+| `k1c-008` | 53,6 % | **4,5 %** |
+| `k1c-040` | 16,4 % | 3,4 % |
+| `k1-010` | 15,2 % | 1,6 % |
+| Lớn nhất ở mọi khung trúng đòn và bay của phím 1 | 53,6 % | 4,5 % |
+
+- Đá tối: lớn nhất 28,1 % → 2,8 %.
+
+### 2. Điểm lửa thay quả cầu trắng (`38c16a1`, `2623274`)
+
+- `FirePointPool` (`src/view/skills/fire-points.ts`), mô phỏng giải tích trên GPU, một lệnh vẽ, không cấp phát; pool đầy thì bỏ điểm mới, không cắt điểm đang sống:
+  - một lõi nhỏ (≤ 0,3 m, phần duy nhất cộng sáng và HDR) trong một ngôi sao lưỡi lửa: tim hổ phách, nguội về son ở đầu lưỡi, viền bồ hóng mảnh; thân là vật chất (trộn thường, ≤ 0,9 một kênh) nên đậm trên đá sáng;
+  - mỗi lưỡi một độ dài, hơi xoáy, mép rung; sáng đủ ngay khung đầu, lưỡi bắn ra trong ~60 ms, rồi nguội (lõi tắt trước, thân về than) và ăn mòn từ đầu lưỡi vào.
+- Dùng ở va chạm phím 1 (tầm 0,75 m), phát chiêu, kiếm hiện và rời vai, cái chết (tới 1 m), kiếm đầu, đòn nhỏ của sông kiếm, cắm kiếm. Mọi điểm có tầm < 0,95 m, lõi < 0,3 m.
+- Lần đầu lõi vẫn trắng ×3,2: ở nhát kết (`k7c-215`, 194 điểm cùng sống) bloom của lõi lại thành những quả cầu trắng, gánh 37 % phần nhạt của khung. Commit `2623274` đổi lõi thành vàng trắng `#FFE2A0`, ×0,45–1,35, bán kính 0,11–0,22 m, chỉ hiện khi còn nóng.
+- `k7c-215` trên đá sáng: phần nhạt 15,6 % → 4,5 %; điểm ảnh trắng ánh hồng cả khung 22 276 → 3 033.
+
+### 3. Vòng áp suất và vòng lửa cắm kiếm (`ee67678`)
+
+- `heat-rings.ts` (chỉ Fire dùng):
+  - bề rộng đổi theo góc (0,45–1,55 lần) và mép rung; nhiễu đi qua toạ độ của chính vòng tròn, không có đường nối;
+  - lưỡi lửa liếm ra ngoài: 26 ô quanh vòng, mỗi ô một lưỡi dài tới ~1,9 lần bề rộng dải, ngắn lại khi nguội, nhọn đầu, rung và chập chờn, hổ phách ở gốc nguội về son ở ngọn;
+  - đường nóng mảnh (phần duy nhất cộng sáng) đứt thành đoạn và tách ra khi nguội;
+  - lớp bồ hóng dày ở mép trong, mảnh ở mép ngoài;
+  - nguội không đều: có cung giữ sáng lâu hơn, cung nguội hơn vỡ trước;
+  - dải nằm ở 0,68 của tấm (chừa chỗ cho lưỡi lửa).
+- Bộ hệ cho tàn lửa rơi ra từ vòng khi nó mở: trong mặt phẳng camera ở tay, trên mặt đất quanh chỗ cắm kiếm.
+- Vẫn là vật chất trên lớp bồ hóng nên đậm trên đá sáng: `k1t-068` phần nhạt 4,9 % → 4,2 %; `k1t-066` 2,9 % → 1,0 %.
+
+### 4. Khung đồ hoạ (`a0fb139`)
+
+- Chỉ trong chương trình `ROLES` (của Fire; khung của Metal vẫn chương trình cũ):
+  - `fireBurst`: một chùm lưỡi lửa quanh chỗ trúng, mỗi lưỡi một độ dài, thuôn nhọn, liếm theo hình chữ S về ngọn, mép chập chờn, quanh một tim nhỏ, có viền;
+  - `fireSparks`: những hạt tàn tròn thưa văng ra ngoài chùm.
+- Khung cục bộ (F15): chính chùm đó, tim trắng vàng nhỏ, thân hổ phách, ngọn son, viền bồ hóng mảnh, tàn hổ phách. Thú bị trúng là bóng màu gỉ sẫm trong thân chùm (màu đen ở đó đọc thành vết mực), viền vàng; lưỡi liềm của đòn bằng vàng. Vẫn dài 3 khung.
+- Khung đảo màu (F201): ở chỗ trúng là 16 bóng lưỡi lửa bằng bồ hóng mọc từ một khoảng trống quanh tim, cùng tàn lửa hổ phách trên nền son (ánh sáng của khung đảo màu là màu tối), thay cho vệt mực bắn.
+- Không có khung nào nhạt: F15 phần nhạt 9,4 % → 7,7 % (đá sáng), F201 0 %.
+
+### 5. Đất cháy (`3ea6a47`)
+
+- Trước: than mềm, alpha 0,6 ở tim và ~0,2 ở mép; trên đá sáng đọc như vệt bẩn nâu xám.
+- Sau (`ground-decals.ts`, nhánh `PROCEDURAL`, chỉ Fire dùng):
+  - mép rõ nhưng không đều: một khối bị làm méo bằng nhiễu, viền phình thành thuỳ, không có tia nên không thành ngôi sao mực;
+  - đặc tới tận mép (alpha của Fire 0,6 → 0,86, ở mép còn 0,78 phần đó);
+  - một vành đá cháy nâu ấm có vệt toả ra từ chỗ đánh, một vòng than ngay trong mép, tim nâu bồ hóng tối với các đường nứt và đốm than hồng sáng rồi nguội như trước;
+  - mọc ra từ tim, ăn mòn từ mép vào.
+- Màu nâu giữ đủ tối để trên đá tối vẫn làm đá tối đi một chút (nâu sáng hơn thì trên đá tối đọc như vũng nước).
+- Dư âm phím 1 (khung 60–240) trên đá sáng: phần nhạt lớn nhất 6,2 % → 2,2 %; giống máu gộp trên đá tối 1,84 % → 0,91 %. Trên ảnh, đất cháy trên đá sáng đọc rõ là đất cháy (tấm so sánh, hàng 5).
+
+### 6. Thú cháy (`e8776dc`)
+
+- Nguồn:
+  - mép tan của thú trong lab là màu đòn cuối cùng, chuẩn hoá rồi lập phương (`herd.ts`). Màu đòn của sông kiếm Fire `0xf07020` thành `(2,4, 0,25, 0,01)`, tức màu san hô;
+  - màu đòn của phím 1 là màu chớp của bảng màu pha về trắng; vành ×2,6 của nó và bóng một khung (lõi của dòng ×2,2) thành trắng hồng.
+- Sửa (theo VFX_STANDARD §3, đòn mang màu kẻ tấn công):
+  - `FoeStatus.flash` (ánh của bóng trúng đòn) và `.burn` (mép cháy khi giết: nóng, giữa, sâu, than) trong `element-kit.ts`;
+  - Fire: bóng trúng đòn vàng hổ phách `[1,25, 0,58, 0,09]`; con thú bị giết cháy tan từ mép trắng vàng qua hổ phách tới cam, thân cháy thành than ngay sau mép (móc `death` vẫn rải tàn lửa và tro như trước);
+  - `herd.ts` (chỉ lab): `LAB_BURN` chỉ biên dịch cho hệ có `burn`. Với Metal, chương trình sau tiền xử lý không đổi và mép vẫn theo màu kẻ giết. Đặt được cả trước lẫn sau khi model về;
+  - màu đòn của Fire thành hổ phách: sông kiếm `0xf07020` → `0xffa030`, phím 1 → `0xffa030` (K5 `0xffb040`), nhát kết `0xffa850` → `0xff9a28` (mục 7).
+- Game không dùng chung: thú trong game tan thành mực ở `crowd.ts`, tách khỏi bộ hệ, và Fire chưa vào bản build game. Dữ liệu của bộ hệ sẽ theo sang khi Fire vào game.
+- Đếm cả khung (thú là lớp actor): điểm ảnh trắng ánh hồng `k1c-008` 40 113 → 184, `k1c-040` 11 043 → 413, `k7c-260` 7 443 → 29. Ở `k7c-260`, nạn nhân bị ghim cháy tan với mép vàng qua cam và than phía sau, không còn mép san hô (tấm so sánh, hàng 6).
+
+### 7. Nhát chém lửa (`309db41`)
+
+- Sống gợn vì mỗi điểm ảnh đọc tâm dải từ một mip thô của mặt nạ, theo các sợi xơ của nó. Lưỡi lửa lổn nhổn vì là nhiễu fbm.
+- Sửa (`flame-slash.ts`):
+  - bảng dải: tâm và nửa bề rộng của lưỡi liềm tại 128 điểm dọc cung, đo một lần từ ảnh của mặt nạ theo đúng cách shader làm, rồi làm mượt dọc cung bằng Gauss ±8 điểm. Mỗi điểm ảnh chỉ đọc một texture thay vì 24 lần đọc mip thô. Chưa đọc được ảnh (test, trước khi tải xong) thì shader tự đo như cũ;
+  - lưỡi lửa ngoài mép nhìn thấy của lưỡi liềm (1,5 lần nửa bề rộng đo được): mỗi ô một lưỡi (96 ô dọc nhát chém, mỗi bên), dài 0,8–2,4 bề rộng mép (ngắn dần về hai đầu), nhọn, hơi đung đưa về ngọn, hơi ngả về sau, chập chờn, hổ phách ở gốc nguội về son, viền bồ hóng; chỉ ở sau đầu nhát chém;
+  - dải vẽ rộng 1,7 lần lưỡi liềm để có chỗ cho lưỡi lửa; lưỡi liềm giữ nguyên cỡ.
+- Đường nóng chảy của nhát kết và đường cắt trên thú lớn: vàng ×2 (trước là trắng vàng ×4,5 và ×3,6, rộng 0,42 m và 0,12 m, toả bloom kem trên đá sáng: 48 % phần nhạt của `k7c-215` sau mục 2); đường của nhát kết rộng 0,3 m.
+- Nhóm nhát kết và sau đó trên đá sáng: phần nhạt lớn nhất 15,6 % → 4,9 %, trung vị 5,9 % → 1,3 %.
+
+### Các cổng (đo sau cả 7 mục, `309db41`)
+
+- **Metal không đổi: đạt.** 85/85 khung giống hệt từng bit so với `cff975b` (AE 0): 21 khung `lab-element-parity.mjs` (`?element=metal`, có K5 và các cái chết) và 64 khung Metal của `PLAN=fixes` (gõ, khung đồ hoạ, nhát chém, cắm kiếm).
+- **Fire − Metal p95: đạt.** High 1920×1080, DPR 1, M4, tải 2,9–4,4; 6 vòng xen kẽ Metal và Fire, mỗi vòng `RUNS=2`, tức 12 lượt mỗi hệ; `lab-element-perf.mjs` xả hàng đợi GPU trước mỗi cửa sổ.
+
+| Đoạn | Metal (trung vị / TB / tệ nhất) | Fire (trung vị / TB / tệ nhất) | Fire − Metal (trung vị / TB) | Lệnh vẽ Metal / Fire |
+|---|---|---|---|---|
+| Nghỉ | 8,70 / 8,18 / 9,0 | 8,70 / 8,07 / 9,5 | 0,00 / −0,11 | 34 / 34 |
+| Phím 1 | 9,10 / 8,70 / 9,6 | 9,30 / 8,81 / 10,1 | +0,20 / +0,11 | 48 / 44 |
+| Phím 7 săn | 10,30 / 9,98 / 10,9 | 10,40 / 9,72 / 11,1 | +0,10 / −0,26 | 54 / 55 |
+| Phím 7 nhát kết | 10,55 / 10,61 / 13,8 | 10,55 / 10,23 / 13,7 | 0,00 / −0,38 | 51 / 55 |
+| K5 | 10,60 / 9,93 / 10,9 | 10,50 / 9,93 / 11,0 | −0,10 / 0,00 | 54 / 57 |
+
+  - Cổng ≤ 0,85 ms: đạt ở phím 1, phím 7 săn, nhát kết và K5 (lớn nhất +0,20 ms theo trung vị).
+  - Trần 11,5 ms theo trung vị: đạt, cao nhất 10,55 ms.
+  - Lượt tệ nhất của nhát kết vượt trần ở cả hai hệ (Metal 13,8, Fire 13,7 ms), như ở phần 4: đó là nhiễu của máy (tải 4,1–4,4 ở các lượt đó), không do Fire.
+  - Khung lớn nhất: phím 1 của Fire có hai khung lẻ 17,0 và 14,5 ms ở 2/12 lượt (tải 4,1 và 3,6; p95 của hai lượt đó 10,1 và 9,9 ms). Metal lớn nhất 11,6 ms ở phím 1, 14,4 ms ở nhát kết. Chưa rõ nguồn hai khung lẻ đó; p95 không đổi.
+  - Lệnh vẽ của Fire thêm 1–4 lệnh (điểm lửa, vòng, tàn lửa).
+- **Phím tới phát chiêu: đạt.** Máy dò cho VFX 0 ms, thân 33 ms ở cả 8 lần phát của Fire (phím 1 camera chơi, camera gần, gõ theo WPM; phím 7 hai camera; phím 1 và phím 7 của `PLAN=linger`), trên cả hai nền, như trước.
+- **Bloom: đạt.** 0 điểm ảnh NaN hay Inf ở mọi khung (`maxNonFinite` 0, hai nền, cả hai kế hoạch).
+- **Thân lửa sau tone mapping: đạt.** Sắc trung vị của thân ở mọi khung 22,1–35,7° (đá sáng) và 21,9–35,4° (đá tối), trong khoảng 15–40°; gần đỏ cảnh báo 0 %.
+- **Phần nhạt trên đá sáng ≤ 15 % ở mọi khung của phím 1 và nhát kết: đạt.**
+
+| Nhóm khung (đá sáng) | Lớn nhất trước → sau | Trung vị trước → sau |
+|---|---|---|
+| Phát chiêu | 5,9 % → 4,6 % | 3,9 % → 1,5 % |
+| Lúc gõ (`k1t` 10–58) | 5,2 % → 3,9 % | 2,4 % → 1,7 % |
+| Phím 1 trúng đòn và bay (8–40) | **53,6 % → 4,5 %** | 10,0 % → 2,1 % |
+| Phím 1 dư âm (60–240) | 6,2 % → 2,2 % | 0,4 % → 0,2 % |
+| Phím 7 nhát kết và sau (194, 205–360) | **15,6 % → 4,9 %** | 5,9 % → 1,3 % |
+| Phím 7 khung đồ hoạ (15, 197, 201) | 9,4 % → 7,7 % | 0,8 % → 0,5 % |
+| Phím 7 săn (10–186, báo cáo) | 19,1 % → 16,3 % | 6,9 % → 5,2 % |
+
+  - Đá tối: phím 1 trúng đòn 28,1 % → 2,8 %, mọi nhóm khác ≤ 8,3 % (săn).
+  - Phím 7 lúc săn: `k7c-090` 16,3 %, `k7c-060` 14,4 %; phần lớn là vệt kiếm sông, lưỡi furnace và vỏ lửa (ngoài phạm vi).
+- **Điểm ảnh giống máu** (gộp, lớn nhất một khung; trước → sau):
+
+| Nhóm khung | Đá sáng | Đá tối |
+|---|---|---|
+| Phát chiêu | 0,38 % → 0,36 % (1,2 → 1,2 %) | 1,51 % → 1,17 % (4,6 → 2,6 %) |
+| Lúc gõ | 0,84 % → 0,59 % (1,2 → 0,9 %) | 3,19 % → 2,49 % (4,4 → 3,2 %) |
+| Phím 1 trúng đòn và bay | 0,08 % → 0,08 % (1,1 → 0,4 %) | 1,87 % → 1,49 % (7,7 → 4,9 %) |
+| Phím 1 dư âm | 0,13 % → 0,07 % (0,4 → 0,3 %) | 1,84 % → 0,91 % (5,6 → 2,4 %) |
+| Phím 7 săn | 0,96 % → 0,85 % (1,6 → 1,5 %) | 0,75 % → 0,57 % (1,5 → 1,1 %) |
+| Phím 7 khung đồ hoạ | 0,06 % → 0,04 % (0,7 → 0,7 %) | 0,18 % → 0,06 % (1,6 → 0,7 %) |
+| Phím 7 nhát kết và sau | 0,13 % → 0,17 % (1,3 → 1,2 %) | 0,72 % → 0,53 % (2,5 → 1,0 %) |
+
+  - Thêm, đếm cả khung (thú là lớp actor): điểm ảnh san hô (sắc 0–20°, bão hoà 0,3–0,8, sáng) ở `k7c-215` 26 132 → 5 753, `k7c-260` 5 574 → 4 067; trắng ánh hồng `k1c-008` 40 113 → 184.
+- **Không nhảy hình (pool tràn 0): đạt.** Mọi pool của Fire bỏ hay ghi đè 0 lần ở High và Ultra (phím 1, phím 7, K5). Trước vòng 3, pool tro (160) đã bỏ 612–677 vảy ở phím 7 và K5; nay 1 024 ô, đỉnh 830. Pool `splash` của K5 (lớp gốc, 160) bỏ 7 hạt cả trước lẫn sau: ngoài phạm vi Fire.
+- **Kiểm thử và build: đạt.** `pnpm test` 737/737 (81 tệp; thêm 6 bài trong `tests/view/element-layer.test.ts`: nhịp lưu, va chạm phím 1, điểm lửa, vòng, thú, nhát chém; bài đất cháy sửa theo hình mới); `tsc` và `pnpm build` xanh; `verify-kit` 73 tệp; `dist` vẫn là `main-XrAzOVU-.js`, `swords-CpZ2rKAM.js`, không có mã lab hay Fire.
+
+### 8. Đo thêm, không chặn
+
+- Phím 7 với Fire ở Ultra (1920×1080, DPR 1, 3 vòng xen kẽ, 6 lượt mỗi hệ, tải 3,0–5,5): p95 trung vị và lượt tệ nhất:
+  - săn: Fire 18,85 / 19,7 ms, Metal 18,70 / 19,3 ms;
+  - nhát kết: Fire 20,65 / 22,8 ms, Metal 21,05 / 23,0 ms;
+  - (để so: nghỉ 14,05 ms, phím 1 Fire 16,10 và Metal 14,80 ms, K5 Fire 18,90 và Metal 18,15 ms; mẫu nhỏ, phím 1 lệch +1,3 ms theo trung vị, +0,75 ms theo trung bình).
+  - Ultra đắt hơn High ở cả hai hệ (nghỉ đã 14 ms), nên Ultra trên M4 không giữ 60 Hz với phím 7 dù Metal hay Fire.
+- Nhu cầu pool ở phím 7 Ultra: hoa sen 84/128, tàn lửa 1 831/2 560, điểm lửa 73/256, đất cháy 32/64, lửa đất 16/32, tro 786/1 024; 0 bỏ.
+- Nhát kết ở High, lượt tệ nhất: Fire 13,7 ms (khung lớn nhất 14,2), Metal 13,8 ms (14,4).
+
+### Tấm ảnh và số liệu
+
+- `tmp/shots/element-fire/r3/sheet-linger.jpg`: dải thời gian của mục 0 (khung 0, 6, 12, 24, 36, 48, 60, 90, 120, 180 sau đòn trúng), trước và sau, đá sáng và đá tối.
+- `tmp/shots/element-fire/r3/sheet-before-after.jpg`: một hàng một mục (0 `k1h-h060`, 1 `k1c-008`, 2 `k7c-215`, 3 `k1t-068`, 4a `k7-015`, 4b `k7-201`, 5 `k1c-180`, 6 `k7c-260`, 7 `k7c-240`). Mỗi hàng có trước và sau trên đá sáng, rồi trước và sau trên đá tối.
+- Số liệu trong `tmp/shots/element-fire/r3/`:
+  - `gates-{before,after}-{light,dark}.json` (từng khung), `gates-summary.json` (theo nhóm);
+  - `fire-{before,after,lb,la}-{light,dark}.json` (phím tới VFX, bloom, trạng thái màn hình);
+  - `demand-{before,after}-{high,ultra}.json` (pool), `parity-metal.json`;
+  - `perf-high/`, `perf-ultra/` (thời gian khung, `perf-summary.json`);
+  - `evidence/iso/` (danh sách lớp khi ẩn từng lớp).
+- Khung thô của tôi đã xoá (giữ tấm, JSON); server và bản xuất `tmp/r3-before` đã dọn.
+
+### Còn lại
+
+- Chưa có giám khảo mù hay anh duyệt: mọi phần ở đây vẫn là tạm, chưa qua 8,5. Cần video mới cho anh xem nhịp lưu lâu hơn (chưa làm trong lượt này).
+- Phím 7 lúc săn trên đá sáng vẫn có khung nhạt quá 15 % (`k7c-090` 16,3 %, trước 19,1 %): phần lớn là vệt kiếm sông, lưỡi furnace và vỏ lửa, ngoài phạm vi (chờ thiết kế hào quang kiếm).
+- Đất cháy trên đá tối đọc như đá nâu ấm hơi sáng hơn nền, có viền và vết nứt; trên đá sáng thì rõ là đất cháy. Muốn tối hơn trên đá tối thì cần một lượt trộn nhân (multiply) riêng cho vành nâu.
+- Khung cục bộ hình chùm lưỡi lửa: đọc là lửa, nhưng các lưỡi cong cùng chiều nên hơi giống chong chóng hay bông hoa. Lưỡi lửa của nhát chém đều và rõ nhưng hơi giống hàng răng cưa; có thể thêm lưỡi phụ xen kẽ.
+- Đuôi lửa đất (các khung cuối là vòm khói nâu) ở ~2,5–3 s trên đá sáng là một vòm nâu cam sẫm; đọc là lửa tàn, chưa đẹp nhất.
+- Ở nhát kết, nhiều điểm lửa của các cái chết cùng lúc vẫn là những chấm vàng sáng (đã nhỏ và vàng, không còn quả cầu trắng).
+- Pool `splash` của K5 (lớp gốc trong `sword-skills.ts`, 160 ô) bỏ 7 hạt khi K5 chạy với Fire; đó là lớp của K5, ngoài phạm vi Fire, và bỏ hạt mới chứ không cắt hạt đang sống.
+- Pass méo hơi nóng dùng chung: vẫn để làm cùng Water.
