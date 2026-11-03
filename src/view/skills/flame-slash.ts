@@ -34,6 +34,15 @@ float m(float s, float v) {
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return 0.0;
   return texture2D(tMask, uv).r;
 }
+/** The crescent seen soft (a coarse mip: its ragged streaks merged), for where its band runs. */
+float mSoft(float s, float v) {
+  if (uHasMask < 0.5) return m(s, v);
+  float th = mix(0.85, 5.43, s);
+  float rr = mix(0.3, 0.64, v * 0.5 + 0.5);
+  vec2 uv = vec2(0.62, 0.5) + rr * vec2(cos(th), sin(th));
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return 0.0;
+  return texture2D(tMask, uv, 4.5).r;
+}
 float fsHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float fsNoise(vec2 p) {
   vec2 i = floor(p);
@@ -48,8 +57,25 @@ void main() {
   float s = vP.y;
   float v = vP.x;
   float body = m(s, v);
-  float inner = min(m(s, v - 0.1), m(s, v + 0.1));
   float outer = max(max(m(s, v - 0.34), m(s, v + 0.34)), max(m(s, v - 0.18), m(s, v + 0.18)));
+  // The crescent's band across this s, read soft (a coarse mip merges its ragged streaks): its centre and half width
+  // weighted by that soft cover (continuous along the slash, so the spine never jumps), so the hot spine stays a thin
+  // line down its middle wherever the authored crescent is thick or thin (an inset by a fixed width left most of its
+  // thick middle white-hot: 03/11 recheck).
+  // Only the crescent's own pixels need it (outside it the heat is its tongues alone).
+  float rel = 2.0;
+  if (body > 0.0) {
+    float wSum = 0.0;
+    float vSum = 0.0;
+    for (int i = 0; i < 24; i++) {
+      float vv = -0.98 + float(i) * 0.085217;
+      float k = mSoft(s, vv);
+      wSum += k;
+      vSum += k * vv;
+    }
+    if (wSum > 0.05) rel = abs(v - vSum / wSum) / max(wSum * 0.085217 * 0.5, 0.04);
+  }
+  float spine = 1.0 - smoothstep(0.08, 0.2, rel);
   // Flame tongues: noise narrow along the strip and long across it (streaks licking outward from the spine),
   // scrolling outward and back from the head.
   float side = abs(v);
@@ -61,8 +87,9 @@ void main() {
   // The head's heat stays inside the shape (at the strip's ends it would draw a square).
   float head = exp(-abs(s - uHead) * 22.0) * step(s, uHead + 0.05) * max(body, outer * 0.6);
   float behind = step(s, uHead + 0.02);
-  // A clean hot spine and body (the cut), flame only at its edges.
-  float heat = (body * 0.56 + inner * 0.36) * (0.95 + 0.07 * n) + outer * (n - 0.25) * 0.9 + lick * 0.5 + head * 0.55;
+  // A thin white-gold spine (wider at the running head), an amber body cooling to vermilion toward its edge, flame
+  // tongues only outside it.
+  float heat = body * (0.5 + 0.22 * (1.0 - smoothstep(0.3, 0.95, rel)) + 0.3 * spine) * (0.95 + 0.07 * n) + outer * (1.0 - body) * (n - 0.25) * 0.9 + lick * 0.5 + head * 0.3 * (1.0 - smoothstep(0.25, 0.6, rel));
   heat *= mix(0.82, 1.0, behind);
   // It cools (falls through the bands) and erodes from its thin tongues; it never turns see-through.
   heat = heat * uFade - uErode * 0.55;
