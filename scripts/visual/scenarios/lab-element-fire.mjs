@@ -53,6 +53,8 @@ export default async function (page) {
   const phase = process.env.PHASE ?? "fire";
   const element = process.env.ELEMENT ?? "fire";
   const ground = process.env.GROUND ? `&ground=${encodeURIComponent(process.env.GROUND)}` : "";
+  // QS appends raw query flags (the sword aura's re-measure of the Fire gates: QS="&aura=a", "&bladeHeat=furnace").
+  const qs = process.env.QS ?? "";
   const root = resolve(process.env.OUT_DIR ?? "tmp/shots/element-fire");
   const out = join(root, `raw-${phase}`);
   const only = process.env.ONLY ? process.env.ONLY.split(",") : null;
@@ -68,7 +70,7 @@ export default async function (page) {
     const hitAt = item.length > 5 ? item[4] : null;
     let frames = item.length > 5 ? item[5] : item[4];
     if (only && !only.includes(id)) continue;
-    const url = `${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind&cutin=0.9&element=${element}${ground}${typed ? "&typed=1" : ""}`;
+    const url = `${base}?fixed=1&ui=0&dpr=1&weapon=clear-wind&cutin=0.9&element=${element}${ground}${qs}${typed ? "&typed=1" : ""}`;
     if (url !== loaded) {
       await page.goto(url, { settle: 1500 });
       for (let i = 0; i < 240; i += 1) {
@@ -126,7 +128,7 @@ export default async function (page) {
     releases.push({ id, releases: rel, maxNonFinite, before });
   }
   const info = { weapon: await page.eval("window.__lab.weapon()"), element: await page.eval("window.__lab.element()"), sound: await page.eval("window.__lab.sound()") };
-  const report = { phase, element, ground: process.env.GROUND ?? "default", info, releases, shots };
+  const report = { phase, element, qs, ground: process.env.GROUND ?? "default", info, releases, shots };
   writeFileSync(join(root, `fire-${phase}.json`), JSON.stringify(report, null, 1));
   return { phase, info, shots: shots.length, releases };
 }

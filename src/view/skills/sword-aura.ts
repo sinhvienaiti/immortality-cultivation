@@ -602,14 +602,17 @@ export class SwordAura {
    * body, ≤ 0.7 a channel. The deep edge is the motif's silkDeep.
    */
   get silkBody(): readonly number[] {
+    // The tassel's silk at its own light (the motif's silkLight is its colour × 0.7: lift it back to ≤ 0.7 a channel,
+    // tuned on frames: at × 0.7 twice over it read as a dark slate band at the play camera).
     const l = this.silkLight;
+    const lm = Math.max(l[0]!, l[1]!, l[2]!, 1e-6);
     const b = SWORD_AURA_LOOK.body.value;
     const c = this.silkTmp;
-    c[0] = l[0]! * 0.7 + b.x * 0.3;
-    c[1] = l[1]! * 0.7 + b.y * 0.3;
-    c[2] = l[2]! * 0.7 + b.z * 0.3;
+    c[0] = (l[0]! / lm) * 0.7 * 0.7 + b.x * 0.3;
+    c[1] = (l[1]! / lm) * 0.7 * 0.7 + b.y * 0.3;
+    c[2] = (l[2]! / lm) * 0.7 * 0.7 + b.z * 0.3;
     const m = Math.max(c[0], c[1], c[2], 1e-6);
-    if (m > 0.7) for (let k = 0; k < 3; k += 1) c[k] = c[k]! * (0.7 / m);
+    for (let k = 0; k < 3; k += 1) c[k] = c[k]! * (0.7 / m);
     return c;
   }
 

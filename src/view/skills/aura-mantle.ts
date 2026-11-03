@@ -228,8 +228,11 @@ void main() {
       light = mix(uDeep, uBody, st) * th * 0.85 + uDeep * cover * st * 0.35 * (1.0 - tt);
       inkA = uInk.a * cover * (0.6 - 0.4 * tt);
     } else {
-      light = mix(uDeep, uBody, st) * cover * (0.18 + 0.67 * st) * (1.0 - tt * 0.7);
-      inkA = uInk.a * cover * 0.55 * (1.0 - tt);
+      // The tail is the mid sword's trail now: its streaked body and a thin bright thread down its middle (the old
+      // trail's core, ≤ 1 px, HDR only near the pommel).
+      float thread = band(ax, 0.0, 0.55 * px) * (1.0 - tt);
+      light = mix(uBody, uEdge, st * 0.5) * cover * (0.35 + 0.5 * st) * (1.0 - tt * 0.6) + mix(uEdge, uCore * 0.6, 1.0 - smoothstep(0.0, 0.35, tt)) * thread;
+      inkA = uInk.a * cover * 0.45 * (1.0 - tt);
     }
     float a = vF.x * uLayer * alive * ground;
     gl_FragColor = vec4((uInk.rgb * inkA + light) * a, inkA * a);
@@ -265,8 +268,8 @@ void main() {
       float bed = band(d, 0.0, 0.6 * M);
       float hem = band(d, 0.6 * M - 0.9 * px, 0.6 * M);
       float crawl = smoothstep(0.55, 0.85, aNoise(vec2(y * 30.0 + vF.w * 6.0, seed * 9.0 + uTime * 1.5)));
-      light = mix(uDeep, uBody, crawl) * (hem * (0.55 + 0.45 * crawl) + bed * crawl * 0.25);
-      inkA = uInk.a * (bed * 0.8 + rootGap * 0.7);
+      light = mix(uDeep, uBody, crawl) * (hem * (0.6 + 0.4 * crawl) + bed * (0.12 + crawl * 0.35));
+      inkA = uInk.a * (bed * 0.5 + rootGap * 0.6);
     } else {
       // Licking flame (lead blades, key 1, ≤ 8 mid swords): tongues rooted on the hem, blown back by the flight and
       // rising, sharp tips, flickering; soot rim, vermilion-to-orange body, a thin amber band, a white-gold root.
@@ -282,12 +285,14 @@ void main() {
       float cell = fract(yy);
       float k = floor(yy);
       float flick = aNoise(vec2(k * 1.7 + seed * 11.0 + side, uTime * hz));
-      float hk = 0.3 + 0.7 * flick;
+      // Tongue heights vary a lot (a few tall ones, many short), under a slow envelope that groups them into gusts.
+      float env = 0.55 + 0.45 * aNoise(vec2(y * 2.6 + seed * 4.0 + side * 1.7, uTime * 1.4));
+      float hk = (0.15 + 0.85 * flick * flick) * env;
       // A tongue: concave sides to a sharp tip (never a round puff); a smaller one between them, out of phase.
       float tri = 1.0 - abs(2.0 * cell - 1.0);
-      float yy2 = yy * 2.0 + 0.37;
+      float yy2 = yy * 1.73 + 0.37;
       float tri2 = 1.0 - abs(2.0 * fract(yy2) - 1.0);
-      float hk2 = 0.3 + 0.7 * aNoise(vec2(floor(yy2) * 2.3 + seed * 5.0, uTime * hz * 1.3 + 7.0));
+      float hk2 = (0.2 + 0.8 * aNoise(vec2(floor(yy2) * 2.3 + seed * 5.0, uTime * hz * 1.3 + 7.0))) * env;
       float shape = max(pow(tri, 2.2) * hk, 0.55 * pow(tri2, 2.6) * hk2);
       float tongue = base + reach * 1.3 * shape * upBias * pw;
       if (inNeedle > 0.5) tongue = (gap + Mtip) * pow(1.0 - nt, 1.2) + reach * 0.35 * hk * (1.0 - nt);
@@ -343,6 +348,8 @@ void main() {
   // The painted qi streaks (one tile per half sword, flowing tip to pommel), offset per plate.
   float st = streak(vec2(-(y + vF.w * (1.0 - bf)) / (0.5 * Lu) + k * 0.37, 0.1 + 0.8 * vT));
   if (pg > 0.5) st *= mix(0.4 + 0.6 * step(0.5, fract(across / px * 0.5)), 1.0, smoothstep(0.1, 0.45, bl));
+  // A small mantle (a few px) cannot show its streaks: it reads by its light, so it leans to the lit vanes, not the bed.
+  st = mix(st, 0.85, 1.0 - smoothstep(4.0 * px, 14.0 * px, M));
   float front = smoothstep(0.2, 1.0, fp);
   // A luminous feather: silver-blue lit by the painted streaks, its barbs' gaps in deep sapphire, brightest toward the
   // plate's front and its hem (the concept's plates: bright vanes, dark lines between them).
@@ -359,8 +366,11 @@ void main() {
   float tipGlint = inNeedle > 0.5 ? 0.0 : exp(-pow((1.0 - fp) * platePx / (1.6 * px), 2.0)) * exp(-pow((edgePx - d) / (1.4 * px), 2.0));
   // The plate tips glisten in turn (a ≤ 1 px HDR point now and then, each tip on its own phase; none in reduced motion).
   float tipSpark = uOpt.w > 0.5 ? 0.0 : tipGlint * pow(max(0.0, sin(uTime * 2.3 + k * 1.9 + side * 0.7 + seed * 6.28)), 24.0) * seamOn;
-  // The mantle's outer seam (the two hems sewn into the needle), 1 px.
-  float hem = band(ax, outer - 1.0 * px, outer) * step(collar, y);
+  // The seams (§3.A): each side's hem follows its plates' serrated edge (the feathers read), then, over the last third of
+  // the blade, gathers into one straight thread that the two sides sew into the needle; 1 px.
+  float gather = smoothstep(0.62, 0.9, bl) + inNeedle;
+  float hemPlate = band(d, edgePx - 1.0 * px, edgePx) * plateIn * (1.0 - min(gather, 1.0));
+  float hem = max(hemPlate, band(ax, outer - 1.0 * px, outer) * min(gather, 1.0)) * step(collar, y);
   // The collar's cloud-curl hem: a small curl at the start of each side (from 70 px).
   float rc = max(1.6 * px, 0.45 * MANTLE_W * Wpx * wmul);
   vec2 cc = vec2((y - collar - 0.012 * Lu) * pxU, ax - (halfW + gap + rc));
@@ -381,16 +391,18 @@ void main() {
     glint *= vX.z * (hem + 0.5 * band(ax, outer - 1.8 * px, outer));
   }
   float body = plateIn * erode;
-  float rim = band(ax, outer, outer + max(1.0 * px, 0.25 * M)) * step(collar, y) * (1.0 - inNeedle * nt);
+  float rimAt = mix(inner + edgePx, outer, min(gather, 1.0));
+  float rim = band(ax, rimAt, rimAt + max(1.0 * px, 0.25 * M)) * step(collar, y) * (1.0 - inNeedle * nt) * (1.0 - plateIn);
   float inGap = inNeedle > 0.5 ? 0.0 : band(ax, halfW, inner);
   float plateSeam = (1.0 - plateIn) * step(0.0, d) * step(ax, outer) * seamOn * (1.0 - inNeedle);
   // The seam between two plates reads as a cut line: darker right at the plate's back edge.
   plateSeam = max(plateSeam, (1.0 - smoothstep(gapF, gapF + 1.6 * px / max(platePx, 1.0), fp)) * step(0.0, d) * step(d, edgePx) * seamOn * (1.0 - inNeedle) * 0.6);
   vec3 hemC = mix(uEdge, uCore, coreK);
-  light = min(plateC + uEdge * (hemLine * 0.8 + tipGlint * 0.9), vec3(0.85)) * body + hemC * (hem + curl) * mix(0.8, 1.0, coreK) + uCore * (glint * 0.8 + tipSpark * 0.7 * body);
+  light = min(plateC + uEdge * (hemLine * 0.35 + tipGlint * 0.9), vec3(0.85)) * body + hemC * (hem + curl) * mix(0.8, 1.0, coreK) + uCore * (glint * 0.8 + tipSpark * 0.7 * body);
   // Matter under the light (premultiplied): a bed under each plate (the light reads saturated on pale stone), the
   // rim's and the gap's ink, lighter seams between plates.
-  inkA = body * 0.6 + uInk.a * (rim * 1.6 + inGap * 2.0 + plateSeam * 1.4 + curl * 0.4);
+  float seamInk = mix(0.6, 1.4, smoothstep(4.0 * px, 12.0 * px, M));
+  inkA = body * 0.6 + uInk.a * (rim * 1.6 + inGap * 1.4 + plateSeam * seamInk + curl * 0.4);
   float a = vF.x * uLayer * alive * ground * open;
   gl_FragColor = vec4((uInk.rgb * inkA + light) * a, min(inkA, 0.9) * a);
   #include <tonemapping_fragment>
