@@ -8,6 +8,8 @@ import { applySwordAuraLook, AURA_BODY_MAX, SWORD_AURA_LOOK } from "../../src/vi
 import { applyBladeLook, SWORD_LOOK } from "../../src/view/skills/sword-material";
 import { RibbonPool } from "../../src/view/skills/fxkit";
 import { SwordImpostors } from "../../src/view/skills/real-swords";
+import { bladeWidth, WindSilkMantle } from "../../src/view/skills/aura-mantle";
+import { AURA_FLY, AURA_LEAD, AURA_MID, AURA_WAIT, auraIdOf, FLAME_CAP, FLAME_MID_CAP, SwordAura } from "../../src/view/skills/sword-aura";
 
 /** Hue (degrees, on sRGB) and saturation of a linear colour. */
 function hsl(c: { x: number; y: number; z: number } | readonly number[]): { h: number; s: number; l: number } {
@@ -126,7 +128,9 @@ describe("sword aura contract (SWORD_AURA §4.8)", () => {
     expect(len).toBeLessThanOrEqual(2.05);
     expect(len).toBeGreaterThan(1.5);
     expect(widestAt).toBeGreaterThan(0);
-    expect(widest).toBeCloseTo(0.32, 1);
+    // Its widest point (0.16 m a side, twisting as it flutters) is never wider than the silk's 0.32 m.
+    expect(widest).toBeLessThanOrEqual(0.321);
+    expect(widest).toBeGreaterThan(0.15);
     const light = pool.mesh.material;
     pool.setModed(true);
     expect(pool.mesh.material).not.toBe(light);
@@ -152,5 +156,131 @@ describe("sword aura contract (SWORD_AURA §4.8)", () => {
     expect(far.haloProgram).not.toBeNull();
     far.setHalo(false);
     expect(far.mesh.material).toBe(own);
+  });
+
+  it("the switch: off by default and for unknown values; a = wind-silk-mantle", () => {
+    expect(auraIdOf(null)).toBe("off");
+    expect(auraIdOf("nope")).toBe("off");
+    expect(auraIdOf("a")).toBe("a");
+    expect(auraIdOf("wind-silk-mantle")).toBe("a");
+  });
+
+  it("the mantle's width W is the mid-blade's, not the root's flare", () => {
+    const a = standInModel().aura;
+    const p = Float32Array.from(a.profile);
+    p[0] = 0.2;
+    expect(bladeWidth({ ...a, profile: p })).toBeLessThan(0.2);
+  });
+
+  function setup(kit = METAL): { aura: SwordAura; mantle: WindSilkMantle; cam: THREE.PerspectiveCamera } {
+    const aura = new SwordAura("high");
+    const mantle = new WindSilkMantle("high", null);
+    aura.install(mantle);
+    const m = standInModel();
+    aura.setAnchors(m.aura, m.pommelY);
+    aura.setElement(kit);
+    aura.setDirection("a");
+    const cam = new THREE.PerspectiveCamera(28, 16 / 9, 0.1, 300);
+    cam.position.set(0, 26, 14);
+    cam.lookAt(0, 0, -6);
+    cam.updateMatrixWorld(true);
+    return { aura, mantle, cam };
+  }
+  function push(aura: SwordAura, id: number, cls: number, x: number, bright: number, diving = false, hero = false): void {
+    const a = aura.input;
+    a.id = id;
+    a.gx = x;
+    a.gy = 2;
+    a.gz = -6;
+    a.dx = 1;
+    a.dy = 0;
+    a.dz = 0;
+    a.blade = 2;
+    a.pommelY = -0.45;
+    a.widthK = 1;
+    a.cls = cls;
+    a.state = AURA_FLY;
+    a.level = 1;
+    a.releaseAge = -1;
+    a.presence = 1;
+    a.dissolve = 0;
+    a.bright = bright;
+    a.diving = diving;
+    a.hero = hero;
+    aura.push();
+  }
+
+  it("off draws nothing; on: a mantle card per lead and mid sword, tip stars on leads and on bright or diving mids", () => {
+    const { aura, mantle, cam } = setup();
+    aura.setDirection("off");
+    aura.begin();
+    push(aura, 1, AURA_LEAD, 0, 1, false, true);
+    aura.end(1 / 60, cam);
+    expect(aura.count).toBe(0);
+    expect(mantle.cards.visible).toBe(false);
+    aura.setDirection("a");
+    aura.begin();
+    push(aura, 1, AURA_LEAD, -8, 1, false, true);
+    push(aura, 2, AURA_MID, 0, 0.5);
+    push(aura, 3, AURA_MID, 8, 0.9);
+    aura.end(1 / 60, cam);
+    expect((mantle.cards.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(3);
+    expect((mantle.stars.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(2);
+    // A layer switched off draws none (the judges score each alone).
+    aura.setLayer("TipStar", false);
+    aura.begin();
+    push(aura, 1, AURA_LEAD, -8, 1, false, true);
+    aura.end(1 / 60, cam);
+    expect((mantle.stars.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(0);
+  });
+
+  it("Fire's tiers: lead blades lick flame, ≤ 8 mid swords (diving first, then the brightest), ≤ 14 a frame", () => {
+    const { aura, cam } = setup(FIRE);
+    aura.begin();
+    for (let i = 0; i < 6; i += 1) push(aura, 100 + i, AURA_LEAD, -10 + i * 0.5, 1, false, true);
+    for (let i = 0; i < 24; i += 1) push(aura, 200 + i, AURA_MID, -6 + i * 0.7, 0.86 + (i % 5) * 0.02, i < 3);
+    aura.end(1 / 60, cam);
+    expect(aura.flames()).toBeLessThanOrEqual(FLAME_CAP);
+    let mids = 0;
+    let divers = 0;
+    for (let k = 0; k < aura.count; k += 1) {
+      const r = aura.record(k)!;
+      if (r.cls === AURA_MID && r.flame === 1) {
+        mids += 1;
+        if (r.diving) divers += 1;
+      }
+      if (r.hero) expect(r.flame).toBe(1);
+    }
+    expect(mids).toBe(FLAME_MID_CAP);
+    expect(divers).toBe(3);
+    expect(aura.licking(200)).toBe(true);
+    // Metal licks nothing.
+    const m = setup(METAL);
+    m.aura.begin();
+    push(m.aura, 1, AURA_LEAD, 0, 1, false, true);
+    m.aura.end(1 / 60, m.cam);
+    expect(m.aura.flames()).toBe(0);
+  });
+
+  it("history on world time: a hit-stop (dt 0) holds the flow; a waiting sword flows slower than one in flight", () => {
+    const { aura, cam } = setup();
+    const step = (dt: number, state: number): number => {
+      aura.begin();
+      push(aura, 7, AURA_LEAD, 0, 1, false, true);
+      aura.input.state = state;
+      aura.end(dt, cam);
+      return aura.record(0)!.flow;
+    };
+    // The record was pushed before the state change above: push again with the state.
+    aura.begin();
+    const a = aura.input;
+    push(aura, 7, AURA_LEAD, 0, 1, false, true);
+    a.state = AURA_WAIT;
+    aura.end(1 / 60, cam);
+    const f0 = step(1 / 60, AURA_FLY);
+    const f1 = step(0, AURA_FLY);
+    expect(f1).toBeCloseTo(f0, 6);
+    const f2 = step(1 / 60, AURA_FLY);
+    expect(f2).toBeGreaterThan(f1);
   });
 });

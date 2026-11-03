@@ -30,7 +30,9 @@
  * Sword aura (docs/games/tu-tien/skills/SWORD_AURA.md §5.1): ?aura=off|a (default off: today's look; a =
  * wind-silk-mantle), the panel's Aura list, A toggles it, __lab.aura(id) sets it, __lab.auraLayer(name, on, intensity)
  * switches one layer (MantleSheath, MantleHull, SilkTail, MantleHalo, TipStar); ?motion=reduce (resolveReducedMotion)
- * gives the reduced-motion version of each layer.
+ * gives the reduced-motion version of each layer. ?streak=1..4 picks the mantle's qi-streak candidate
+ * (art-src/lab/vfx/aura/qi-streak-<n>.png; default 3, the prep's recommendation until the owner picks one),
+ * ?plates=graded the graded plates (default even).
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -63,8 +65,11 @@ import type { DeathArgs } from "../view/skills/element-kit";
 import type { FlipbookMode } from "../view/skills/flipbook";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
-import { FIRE_FURNACE_BLADE } from "../view/skills/element-fire";
+import { FIRE_FURNACE_BLADE, FIRE_LAB } from "../view/skills/element-fire";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
+import { WindSilkMantle } from "../view/skills/aura-mantle";
+import { AuraSolo } from "./aura-solo";
+import { flameOf } from "../view/skills/sword-skills";
 import { resolveReducedMotion } from "../ui/skin";
 import { expectedTicks, gradeOf } from "../typing/grading";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
@@ -722,6 +727,9 @@ async function setWeapon(id: string): Promise<boolean> {
     // The aura's anchors: the full model's (every tier is the same GLB).
     const models = await loadSwordModels(def);
     swordAura.setAnchors(models.full.aura, models.full.pommelY);
+    auraSolo.setModel(models.full, def.motif !== undefined && def.motif.silk ? def.motif.silkDeep : null);
+    // The lead blades' hull (High and Ultra): the weapon's LOD blade, smoothed (an invisible light-carrying shell).
+    auraMantle.setHullSource(models.lod.real ? models.lod.geometry : null, models.full.aura, view.layers.fx);
     if (def.motif !== undefined) swordAura.silkLight = def.motif.silkLight;
     // The pinned swords of the hero victims: the same real sword (its full model).
     victims.setSword((await loadSwordModels(def)).full);
@@ -747,11 +755,37 @@ function kitTexture(name: string): THREE.Texture {
   }
   return t;
 }
+// The sword aura's direction (the owner's pick: A, the Wind-Silk Mantle, with C's tip star). Its body is painted with
+// a qi-streak mask (game-art-pipeline candidates, art-src/lab/vfx/aura/manifest.json): ?streak=<n>, default 3 (the
+// prep's recommendation; the owner has not picked one yet). Missing file: a flat body.
+const AURA_STREAK = Math.max(1, Math.min(4, Math.round(Number(params.get("streak") ?? "3")) || 3));
+const auraMantle = new WindSilkMantle(quality, null);
+texLoader.load(
+  VFX_BASE + `aura/qi-streak-${AURA_STREAK}.png`,
+  (t) => {
+    t.colorSpace = THREE.NoColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    t.anisotropy = 4;
+    t.needsUpdate = true;
+    auraMantle.setStreak(t);
+  },
+  undefined,
+  () => console.warn("[lab] qi-streak mask missing: the mantle's body is flat"),
+);
+auraMantle.setGraded(params.get("plates") === "graded");
+swordAura.install(auraMantle);
+for (const m of swordAura.meshes) view.layers.fx.add(m);
+// The aura's solo flight (__lab.auraSolo, §5.1): one sword on a fixed 6 s script.
+const auraSolo = new AuraSolo(view.layers.fx, textures.trace);
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k) });
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
 const BLADE_HEAT = params.get("bladeHeat");
+// SWORD_AURA §5.5: ?riverSheath=1 puts the Fire round's removed flame cards back on key 7's river (the "burning planks"
+// comparison sheet only).
+FIRE_LAB.riverSheath = params.get("riverSheath") === "1";
 /** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
 async function setElement(id: string): Promise<boolean> {
   const kit = elementById(id);
@@ -764,6 +798,7 @@ async function setElement(id: string): Promise<boolean> {
   myriad.setElement(kit, stage);
   if (BLADE_HEAT === "furnace" && kit.id === "fire") applyBladeLook(FIRE_FURNACE_BLADE);
   swordAura.setElement(kit);
+  auraSolo.setFlame(flameOf(kit, stage));
   sound.element = kit.sound;
   // The screen accent, the herd's hit silhouette and the hero victims' plants follow the element (Metal: their own).
   const flash = kit.screen.flash;
@@ -1003,6 +1038,7 @@ function reset(): void {
   compiler.reset();
   numbers.clear();
   myriad.reset();
+  auraSolo.stop();
   swordAura.hide();
   stage.reset();
   cutin.stop();
@@ -1184,6 +1220,7 @@ function frame(dt: number): void {
   swordAura.begin();
   fx.update(world, dt);
   myriad.update(world);
+  auraSolo.update(world, view.camera, swordAura, fx.element.trail.flame !== undefined);
   // The aura wears the swords as both modules drew them this frame (CSS viewport for its crowding count).
   swordAura.viewW = innerWidth;
   swordAura.viewH = innerHeight;
@@ -1321,6 +1358,13 @@ declare global {
       /** The aura's records this frame: swords wearing it, Fire's licking flames, reduced motion. */
       auraInfo(): Record<string, unknown>;
       /**
+       * Redraws this frame (no time passes) with one aura part hidden or shown: "mantle" (MantleSheath), "star"
+       * (TipStar), "silk" (the ribbons: SilkTail and the other trails), "halo" (the far swords' MantleHalo), "all".
+       */
+      auraShow(part: "mantle" | "star" | "silk" | "halo" | "all", on: boolean): void;
+      /** SWORD_AURA §5.1: one Clear Wind on a fixed 6 s flight (waiting while typed, release, S, a sharp turn and dive, the hit, return, melt). */
+      auraSolo(): boolean;
+      /**
        * Plays flipbook clip `id` of art-src/lab/vfx/<folder>/ once at (x, y, z), `sizeM` tall, on the ground's soft fade (a
        * look at a clip in the lab's light; `mode` overrides the manifest's). Resolves false when the clip is missing.
        */
@@ -1454,6 +1498,10 @@ void (async () => {
   // The graphic frame's programs (the mask over instanced and skinned figures, the frame) compile now, not on the
   // first climax.
   screen.prewarm(view.stage.renderer);
+  // The aura's programs (mantle, tip star, the silk ribbons, the far swords' halo) compile now, aura on or off.
+  swordAura.prewarm(view.stage.renderer, view.camera);
+  fx.prewarmAura(view.stage.renderer, view.camera);
+  myriad.prewarmAura(view.stage.renderer, view.camera);
   caster.onState = (kind, detail) => {
     if (kind === "clip") probe.clip(detail);
     else probe.event(kind, detail);
@@ -1514,7 +1562,22 @@ void (async () => {
       for (const l of AURA_LAYERS) out[l] = { ...swordAura.layers[l] };
       return out;
     },
-    auraInfo: () => ({ direction: swordAura.direction, name: AURA_NAMES[swordAura.direction], swords: swordAura.count, flames: swordAura.flames(), reduced: swordAura.reduced, quality }),
+    auraSolo() {
+      auraSolo.start();
+      return true;
+    },
+    auraShow(part, on) {
+      const meshes = swordAura.meshes;
+      if (part === "mantle" || part === "all") meshes[0]!.visible = on && (meshes[0] as THREE.Mesh & { geometry: THREE.InstancedBufferGeometry }).geometry.instanceCount > 0;
+      if (part === "star" || part === "all") meshes[1]!.visible = on && (meshes[1] as THREE.Mesh & { geometry: THREE.InstancedBufferGeometry }).geometry.instanceCount > 0;
+      if (part === "silk" || part === "all") {
+        fx.ribbonMesh.visible = on;
+        myriad.auraDebug.ribbons.visible = on;
+      }
+      if (part === "halo" || part === "all") myriad.auraDebug.far.setHalo(on && swordAura.on);
+      view.render(0);
+    },
+    auraInfo: () => ({ direction: swordAura.direction, name: AURA_NAMES[swordAura.direction], swords: swordAura.count, flames: swordAura.flames(), reduced: swordAura.reduced, quality, streak: AURA_STREAK, plates: auraMantle.graded ? "graded" : "even", anchors: swordAura.anchors === null ? null : { bladeFrom: swordAura.anchors.bladeFrom, guardFrom: swordAura.anchors.guardFrom, ring: swordAura.anchors.ring, pommelY: swordAura.pommelY, profile: Array.from(swordAura.anchors.profile).filter((_, i) => i % 8 === 0).map((v) => +v.toFixed(4)) } }),
     async clip(folder, id, x, y, z, sizeM, mode) {
       await stage.flipbooks.ready(folder);
       const pool = stage.flipbooks.pool(folder, id, mode !== undefined ? { mode } : {});

@@ -459,6 +459,8 @@ export interface StreamTravelArgs {
   trailM: number;
   /** The sword wears its aura this frame (TravelArgs.aura): the kit drops its sheath round the blade. */
   aura: boolean;
+  /** Its aura licks flame (Fire's tiers, SwordAura; as chosen last frame): a mid sword sheds embers then. */
+  licking: boolean;
 }
 
 export interface StreamSeamArgs {

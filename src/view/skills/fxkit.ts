@@ -638,14 +638,16 @@ void main() {
     gl_FragColor = vec4(rgb * a, 0.0);
     return;
   }
-  // Silk: a crisp ribbon (its edge a pixel's soft step), its deep border, a sheen line, eroded along its tail.
-  float edge = smoothstep(0.0, 0.16, s);
-  float inner = smoothstep(0.2, 0.55, s);
-  float sheen = smoothstep(0.62, 0.95, s) * (0.55 + 0.45 * sin(vT * 18.0 - uTime * 6.0));
-  float erode = smoothstep(0.0, 0.3, t.a * 0.7 + (1.0 - vT) * 0.85 - vT * 0.35);
-  float a = vCol.a * edge * erode * (1.0 - vT * vT * 0.6);
-  vec3 col = mix(vCol.rgb, vRim, inner) + vRim * sheen * 0.22;
-  gl_FragColor = vec4(min(col, vec3(0.85)) * a, a * 0.85);
+  // Silk: a crisp ribbon of the tassel's silk (its edge a pixel's soft step), a bright sheen line down its middle,
+  // diagonal folds crossing it as it flutters, a thin deep border; its end breaks into strands.
+  float edge = smoothstep(0.0, 0.12, s);
+  float inner = smoothstep(0.1, 0.32, s);
+  float fold = 0.55 + 0.45 * smoothstep(-0.6, 0.9, sin(vT * 26.0 + (vSide - 0.5) * 2.4 - uTime * 10.0));
+  float sheen = smoothstep(0.7, 0.98, s) * (0.6 + 0.4 * sin(vT * 15.0 - uTime * 7.0));
+  float strands = mix(1.0, smoothstep(0.25, 0.6, texture2D(map, vec2(vT * 3.0 - uTime * 0.8, vSide * 0.5 + 0.25)).a), smoothstep(0.45, 0.95, vT));
+  float a = vCol.a * edge * strands * (1.0 - smoothstep(0.75, 1.0, vT));
+  vec3 col = mix(vCol.rgb, vRim * fold, inner) + vec3(0.32, 0.36, 0.4) * sheen * fold;
+  gl_FragColor = vec4(min(col, vec3(0.85)) * a, a * 0.88);
 }`;
 
 /** A flame atlas for RibbonPool.setFlame: its texture and grid, and the heat ramp (linear). */
@@ -1132,8 +1134,10 @@ export class RibbonPool {
           this.tmpB.set(0, 0, 1).cross(this.tmpC).normalize();
         }
         const tt = norm > 0 ? Math.min(1, sc[q + 3]! * norm) : k === 0 ? 0 : 1;
-        // The silk: 0.11 → its widest at a quarter → 0.03 of 0.16 (SWORD_AURA §3.A SilkTail); else the light taper.
-        const w = silk ? w0 * (tt < 0.25 ? 0.6875 + 1.25 * tt : 1 - 1.08 * (tt - 0.25)) : w0 * (1 - tt * 0.85);
+        // The silk: knotted narrow at the pommel, its widest (0.16) at a quarter, 0.03 at its end (SWORD_AURA §3.A
+        // SilkTail: 0.11 → 0.16 → 0.03; its head narrower, tied on); else the light taper.
+        // The silk twists as it flutters: its drawn width swells and pinches along its length on world time.
+        const w = silk ? w0 * (tt < 0.25 ? 0.4 + 2.4 * tt : 1 - 1.08 * (tt - 0.25)) * (0.62 + 0.38 * Math.abs(Math.cos(tt * 7.5 - this.time * 6))) : w0 * (1 - tt * 0.85);
         const v = vbase + k * 2;
         this.positions[v * 3] = this.tmpA.x + this.tmpB.x * w;
         this.positions[v * 3 + 1] = this.tmpA.y + this.tmpB.y * w;

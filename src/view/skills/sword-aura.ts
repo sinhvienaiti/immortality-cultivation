@@ -197,9 +197,13 @@ export interface AuraDrawer {
   draw(records: readonly AuraRecord[], n: number, aura: SwordAura, dt: number): void;
   hide(): void;
   setAnchors(anchors: AuraAnchors, pommelY: number): void;
+  /** The weapon's blade geometry for a hull (unit jian; null: none). */
+  setHullSource?(geometry: THREE.BufferGeometry | null, anchors: AuraAnchors): void;
   setElement(kit: ElementKit): void;
   /** Layer timings (GpuTimer), by layer name, one mesh each. */
   readonly timed: readonly { readonly layer: AuraLayerName; readonly mesh: THREE.Object3D }[];
+  /** Compiles its programs now (load time). */
+  prewarm(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void;
 }
 
 /** Swords a frame can wear the aura (key 1's three, key 7's leads and mid swords on Ultra, room to spare). */
@@ -241,6 +245,8 @@ class History {
   readonly twAt = new Float64Array(IDS).fill(-10);
   /** The screen axis angle last frame (turn side). */
   readonly ang = new Float32Array(IDS);
+  /** Fire's tier chosen for it last frame (1 licking flame). */
+  readonly flame = new Uint8Array(IDS);
 }
 
 /** A seeded hash in [0, 1) of an integer (per-sword phases; no Math.random in the view's steady state). */
@@ -284,7 +290,8 @@ export class SwordAura {
   pommelY = -0.3;
   /** Draws the records (the direction's layers); null until a direction is installed. */
   private drawer: AuraDrawer | null = null;
-  private readonly camPos = new THREE.Vector3();
+  /** The camera's position this frame (the direction weighs its card against its hull by the view). */
+  readonly camPos = new THREE.Vector3();
   private readonly v = new THREE.Vector3();
   private readonly w = new THREE.Vector3();
   private readonly vpm = new THREE.Matrix4();
@@ -558,7 +565,10 @@ export class SwordAura {
         if (r.diving || r.bright >= 0.85) this.flameOrder[cands++] = k;
       }
     }
-    if (!fire || cands === 0) return;
+    if (!fire || cands === 0) {
+      for (let k = 0; k < this.n; k += 1) this.hist.flame[this.records[k]!.id] = this.records[k]!.flame;
+      return;
+    }
     // Diving first, then the brightest (insertion sort over ≤ 96).
     const key = (k: number): number => (this.records[k]!.diving ? 2 : 0) + this.records[k]!.bright;
     for (let i = 1; i < cands; i += 1) {
@@ -572,6 +582,12 @@ export class SwordAura {
     }
     const room = Math.min(FLAME_MID_CAP, FLAME_CAP - heroes);
     for (let i = 0; i < cands && i < room; i += 1) this.records[this.flameOrder[i]!]!.flame = 1;
+    for (let k = 0; k < this.n; k += 1) this.hist.flame[this.records[k]!.id] = this.records[k]!.flame;
+  }
+
+  /** Whether sword `id` licked flame on the last frame (Fire's tier; a kit sheds embers off it). */
+  licking(id: number): boolean {
+    return this.on && id >= 0 && id < IDS && this.hist.flame[id] === 1 && this.hist.frame[id] === this.frameNo;
   }
 
   /** Swords licking flame this frame (Fire's cap check). */
@@ -600,6 +616,11 @@ export class SwordAura {
   /** The weapon's silk light (WeaponMotif.silkLight; the lab sets it with the weapon). */
   silkLight: readonly number[] = [0.43, 0.53, 0.7];
   private readonly silkTmp = [0, 0, 0];
+
+  /** Compiles the direction's programs (load time; the first cast must not stall on them). */
+  prewarm(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    this.drawer?.prewarm(renderer, camera);
+  }
 
   /** Hides every aura mesh (a reset). */
   hide(): void {

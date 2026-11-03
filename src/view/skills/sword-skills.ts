@@ -795,6 +795,22 @@ export class SwordSkillFx {
     return this.swordAura !== null && this.swordAura.on;
   }
 
+  /** The ribbons' mesh (the lab hides it to look at one aura layer alone; no time passes). */
+  get ribbonMesh(): THREE.Object3D {
+    return this.ribbons.mesh;
+  }
+
+  /** Compiles the ribbons' moded program (the aura's SilkTail) now; it stays off until the aura is on. */
+  prewarmAura(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    const was = this.ribbons.mesh.material;
+    const vis = this.ribbons.mesh.visible;
+    this.ribbons.setModed(true);
+    this.ribbons.mesh.visible = true;
+    renderer.compile(this.ribbons.mesh, camera);
+    this.ribbons.mesh.material = was;
+    this.ribbons.mesh.visible = vis;
+  }
+
   /** Blade `i` wears the aura this frame in `state` (pushed in settleBlades with its drawn pose). */
   private markAura(i: number, state: number, level: number, releaseAge: number, fade: number): void {
     this.bAura[i] = state + 1;

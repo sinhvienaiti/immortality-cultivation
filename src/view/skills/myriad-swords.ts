@@ -291,7 +291,7 @@ export class MyriadSwordsFx {
   private readonly aSeam: StreamSeamArgs = { target: -1, ux: 1, uz: 0, x: 0, y: 0, z: 0, dx: 1, dy: 0, dz: 0, len: 1 };
   private readonly aSlash: StreamSlashArgs = { ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, halfPx: 0, head: 0, fade: 0, erode: 0, t: 0, dt: 0, mask: null };
   private readonly slashMask: THREE.Texture | null;
-  private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0, aura: false };
+  private readonly aTravel: StreamTravelArgs = { x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, len: 1, cls: 0, bright: 1, dissolve: 0, diving: false, trailM: 0, aura: false, licking: false };
   /** The lead blades' trail width over Metal's (the element's trail width ÷ Metal's 0.14 m). */
   private trailK = 1;
   /** The flying swords' aura (SWORD_AURA; the host's shared owner), null or off: the layers as they were. */
@@ -400,6 +400,28 @@ export class MyriadSwordsFx {
   /** The aura is drawn now. */
   private get auraOn(): boolean {
     return this.swordAura !== null && this.swordAura.on;
+  }
+
+  /** The lead blades' ribbons and the far swords (the lab hides one to look at an aura layer alone; no time passes). */
+  get auraDebug(): { ribbons: THREE.Object3D; far: SwordImpostors } {
+    return { ribbons: this.ribbons.mesh, far: this.far };
+  }
+
+  /** Compiles the aura's programs of key 7 (the lead blades' moded ribbons, the far swords' halo) now; they stay off. */
+  prewarmAura(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    const rib = this.ribbons.mesh.material;
+    const far = this.far.mesh.material;
+    const vis = [this.ribbons.mesh.visible, this.far.mesh.visible];
+    this.ribbons.setModed(true);
+    this.far.setHalo(true);
+    this.ribbons.mesh.visible = true;
+    this.far.mesh.visible = true;
+    renderer.compile(this.ribbons.mesh, camera);
+    renderer.compile(this.far.mesh, camera);
+    this.ribbons.mesh.material = rib;
+    this.far.mesh.material = far;
+    this.ribbons.mesh.visible = vis[0]!;
+    this.far.mesh.visible = vis[1]!;
   }
 
   /** History ids of key 7's swords in the shared aura (key 1 takes the low ones). */
@@ -1822,6 +1844,7 @@ export class MyriadSwordsFx {
         a.diving = st === S_DIVE;
         a.trailM = cls === SWORD_LEAD || st === S_WOUND ? 0 : (st === S_DIVE ? 0.9 : st === S_GATHER || st === S_FOLD ? 0.6 : st === S_STROKE || st === S_AIM ? 0.25 : 0.45) * len;
         a.aura = auraOn && cls !== SWORD_FAR;
+        a.licking = a.aura && this.swordAura!.licking(MyriadSwordsFx.AURA_ID0 + i);
         if (travel(a)) continue;
       }
       // The trail: long while diving, a short flowing one in the river (the lead blades have their ribbons). With the

@@ -118,7 +118,12 @@ export const METAL_STREAM: StreamTone = {
  */
 export const METAL_AURA: SwordAuraLook = {
   mode: "qi",
-  ramp: { core: [0.62, 0.88, 1.0], edge: [0.6, 0.76, 0.85], body: [0.3, 0.62, 0.85], soot: [0.02, 0.028, 0.06] },
+  // The body tuned on frames (03/11): the design's silver-blue [0.30, 0.62, 0.85] read as pale steel round a pale steel
+  // blade at the play camera (a fatter sword, not a mantle); a deeper sapphire-blue (hue ~207°) reads as qi apart from
+  // the steel, still far from the typing colour (169°) and from violet.
+  ramp: { core: [0.62, 0.88, 1.0], edge: [0.6, 0.78, 0.85], body: [0.14, 0.45, 0.85], soot: [0.02, 0.028, 0.06] },
+  // The plates' bed where no streak lights it: a deep sapphire (hue ~212°), so the bright vanes read on it.
+  deep: [0.025, 0.09, 0.3],
   coreHdr: 3.0,
   ink: { rgb: [0.02, 0.028, 0.06], alpha: 0.35 },
   edge: 0.7,

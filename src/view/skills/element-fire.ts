@@ -86,6 +86,12 @@ const CUT_BODY: Rgb = [0.86, 0.3, 0.025];
 /** The flame slash's deep body: a vermilion kept off red (hue ~21°). */
 const SLASH_DEEP = lin("#E8560E");
 
+/**
+ * Lab-only comparisons (the skills lab sets them; the game never does): `riverSheath` puts the flame cards back on key
+ * 7's river swords (the "burning planks" the Fire round removed), for SWORD_AURA §5.5's comparison sheet only.
+ */
+export const FIRE_LAB = { riverSheath: false };
+
 /** Folder of the kit's clips (art-src/lab/vfx/fire/manifest.json). */
 const FOLDER = "fire";
 
@@ -217,6 +223,10 @@ class FireLayers {
   private chargeAcc = 0;
   private shedAcc = 0;
   private waitAcc = 0;
+  /** Embers owed by key 7's mid swords licking the aura's flame (8 a second each, SWORD_AURA §3.A Fire). */
+  private midShedAcc = 0;
+  /** The last world step (the sword hooks' frame; key 7's stream hooks run after it in the same frame). */
+  private lastDt = 1 / 60;
 
   constructor(private readonly stage: ElementStage) {
     const P = stage.flipbooks;
@@ -717,9 +727,10 @@ class FireLayers {
   }
 
   waiting(a: TravelArgs): boolean {
-    // A blade waiting at its place smoulders: its sheath, cooler than in flight, and a rising ember now and then.
+    // A blade waiting at its place smoulders: its sheath, cooler than in flight, and a rising ember now and then. With
+    // the sword aura on, its flame mantle is the fire round the blade (SWORD_AURA §4.6): no sheath, the embers stay.
     const half = a.tipM * 0.5;
-    this.sheathAt(a.x + a.dx * half, a.y + a.dy * half, a.z + a.dz * half, a.dx, a.dy, a.dz, a.tipM * 1.1, 0.24, 0.86 * a.u, a.blade * 3.1);
+    if (!a.aura) this.sheathAt(a.x + a.dx * half, a.y + a.dy * half, a.z + a.dz * half, a.dx, a.dy, a.dz, a.tipM * 1.1, 0.24, 0.86 * a.u, a.blade * 3.1);
     this.waitAcc += 9 * a.dt * this.stage.dens;
     if (this.waitAcc >= 1) {
       this.waitAcc -= 1;
@@ -731,9 +742,10 @@ class FireLayers {
   }
 
   travel(a: TravelArgs): boolean {
-    // The sheath hugs the blade and runs a little past its pommel, cooling to soot there.
+    // The sheath hugs the blade and runs a little past its pommel, cooling to soot there (with the aura on, its licking
+    // flame mantle instead; the embers stay, 40 a second).
     const c = a.tipM * 0.35;
-    this.sheathAt(a.x + a.dx * c, a.y + a.dy * c, a.z + a.dz * c, a.dx, a.dy, a.dz, a.tipM * 1.45, 0.26, 0.84, a.blade * 3.1);
+    if (!a.aura) this.sheathAt(a.x + a.dx * c, a.y + a.dy * c, a.z + a.dz * c, a.dx, a.dy, a.dz, a.tipM * 1.45, 0.26, 0.84, a.blade * 3.1);
     // Embers shed backwards along the path.
     this.shedAcc += 40 * this.stage.dens * a.dt;
     const R = this.stage.rand;
@@ -843,6 +855,7 @@ class FireLayers {
 
   frame(dt: number): void {
     SWORD_LOOK.time.value += dt;
+    this.lastDt = dt;
     for (const e of this.emitters) {
       if (!e.on) continue;
       e.t += dt;
@@ -860,7 +873,7 @@ class FireLayers {
 
   reset(): void {
     for (const e of this.emitters) e.on = false;
-    this.chargeAcc = this.shedAcc = this.waitAcc = 0;
+    this.chargeAcc = this.shedAcc = this.waitAcc = this.midShedAcc = 0;
     SWORD_LOOK.time.value = 0;
   }
 
@@ -869,11 +882,25 @@ class FireLayers {
   streamTravel(a: StreamTravelArgs): boolean {
     // River swords keep the shape's thin trail behind the pommel, in the fire tone (white-gold core, orange rim): ~90
     // flame cards across the field read as burning planks (03/11 captures). Their blades are hot-edged steel (Q3).
-    if (a.cls !== 0) return false;
+    // With the sword aura on, its tiers carry the fire (§3.A Fire): a mid sword licking flame sheds 8 embers a second.
+    if (a.cls !== 0) {
+      if (a.aura && a.licking && a.dissolve < 0.5) {
+        this.midShedAcc += 8 * this.stage.dens * this.lastDt;
+        const R = this.stage.rand;
+        while (this.midShedAcc >= 1) {
+          this.midShedAcc -= 1;
+          const t = R.range(-0.2, 0.4) * a.len;
+          this.dot(a.x + a.dx * t, a.y + a.dy * t, a.z + a.dz * t, R.range(0.08, 0.13), 0.03, R.range(0.25, 0.45), R.next() < 0.3 ? CORE : AMBER, 2, -a.dx * 2 + R.range(-0.6, 0.6), -a.dy * 2 + R.range(0.2, 1.2), -a.dz * 2 + R.range(-0.6, 0.6));
+        }
+      }
+      // A lab-only comparison (§5.5 "tấm ván cháy"): the river's old flame cards back on (FIRE_LAB.riverSheath).
+      if (FIRE_LAB.riverSheath && a.dissolve < 0.6) this.sheathAt(a.x - a.dx * a.len * 0.12, a.y - a.dy * a.len * 0.12, a.z - a.dz * a.len * 0.12, a.dx, a.dy, a.dz, a.len * 1.2, 0.26, 0.8, a.len);
+      return false;
+    }
     if (a.dissolve > 0.6) return true;
-    // A lead blade: its sheath hugs it (its ribbon is the flame trail).
+    // A lead blade: its sheath hugs it (its ribbon is the flame trail); with the aura on, its licking flame mantle.
     const heat = (1 - a.dissolve) * 0.86;
-    this.sheathAt(a.x - a.dx * a.len * 0.12, a.y - a.dy * a.len * 0.12, a.z - a.dz * a.len * 0.12, a.dx, a.dy, a.dz, a.len * 1.2, 0.3, heat, 1.7);
+    if (!a.aura) this.sheathAt(a.x - a.dx * a.len * 0.12, a.y - a.dy * a.len * 0.12, a.z - a.dz * a.len * 0.12, a.dx, a.dy, a.dz, a.len * 1.2, 0.3, heat, 1.7);
     return true;
   }
 
