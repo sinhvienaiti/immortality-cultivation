@@ -67,6 +67,21 @@ interface Bucket {
   power: number;
 }
 
+/**
+ * One sound the lab started while recording (fixed-step captures have no live audio, so a video's sound is mixed
+ * offline from these: scripts/visual/mix-lab-sound.mjs). `at` is the lab clock (s since `record()`) when it was asked,
+ * the start of the frame it belongs to; `gain` includes its bus; a duck has no url.
+ */
+export interface SoundTake {
+  readonly at: number;
+  readonly url: string;
+  readonly gain: number;
+  readonly pan: number;
+  readonly rate: number;
+  /** A duck of every bus to 8 % for this long (s): the hush before a finisher. */
+  readonly duck?: number;
+}
+
 export class LabSound {
   enabled = true;
   private context: AudioContext | null = null;
@@ -88,6 +103,27 @@ export class LabSound {
   readonly asked: Record<string, number> = {};
   /** Sounds actually started (a file was there). */
   played = 0;
+  /** Recording (captures): the lab clock and what started on it; null when the lab plays live. */
+  private clock = 0;
+  private recording: SoundTake[] | null = null;
+  private readonly lastRecorded = new Map<string, number>();
+
+  /**
+   * Starts recording from now (captures): later sounds are logged on the lab clock instead of played. Resolves
+   * when the files are known (it finds them without an audio context).
+   */
+  record(): Promise<void> {
+    this.recording = [];
+    this.lastRecorded.clear();
+    this.clock = 0;
+    this.discovered ??= this.discover();
+    return this.discovered;
+  }
+
+  /** What was recorded since `record()`. */
+  takes(): readonly SoundTake[] {
+    return this.recording ?? [];
+  }
 
   /** Starts the audio on the first user gesture (browsers block it before). */
   unlock(): void {
@@ -172,6 +208,17 @@ export class LabSound {
   private play(id: string, bus: Bus, gain: number, pan = 0, rate = 1, gap = 0.03): boolean {
     this.asked[id] = (this.asked[id] ?? 0) + 1;
     const list = this.files.get(id);
+    const recording = this.recording;
+    if (recording !== null) {
+      // The same choices as live playback (round robin, ±5 % rate, the gap), on the lab clock.
+      if (!this.enabled || list === undefined || list.length === 0) return false;
+      if (this.clock - (this.lastRecorded.get(id) ?? -Infinity) < gap) return false;
+      this.lastRecorded.set(id, this.clock);
+      const url = list[this.rr++ % list.length]!;
+      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: rate * (0.96 + 0.08 * ((this.rr * 0.618) % 1)) });
+      this.played += 1;
+      return true;
+    }
     const context = this.context;
     if (!this.enabled || context === null || list === undefined || list.length === 0) return false;
     const now = context.currentTime;
@@ -202,6 +249,10 @@ export class LabSound {
 
   /** Ducks every bus for `seconds` (the hush before a finisher). */
   private duck(seconds: number): void {
+    if (this.recording !== null) {
+      this.recording.push({ at: this.clock, url: "", gain: 0, pan: 0, rate: 1, duck: seconds });
+      return;
+    }
     const context = this.context;
     if (context === null) return;
     const now = context.currentTime;
@@ -272,6 +323,7 @@ export class LabSound {
 
   /** Closes the buckets that are due (real time). */
   update(dt: number): void {
+    this.clock += dt;
     for (const m of ["flesh", "stone", "spirit"] as const) {
       const b = this.impact[m];
       if (!b.open) continue;
