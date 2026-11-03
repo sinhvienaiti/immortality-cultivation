@@ -289,6 +289,53 @@ uniform vec3 uStrokes;
 uniform vec3 uContour;
 #endif
 varying vec2 vUv;
+#ifdef ROLES
+float frHash(float p) { return fract(sin(p * 78.233 + 11.17) * 43758.5453); }
+/**
+ * Fire's impact shapes (round 3: the burst star and the cracked brush burst read as an ink splat on paper): a burst of
+ * flame tongues round c (uv), its reach \`size\` (share of the view's height), turned \`rot\`: n tongues, each its own
+ * length, tapering to a point and curling, round a small heart; or (streaks) thin radial flame streaks from a gap
+ * round the heart. x = its coverage, y = how far out (0 heart … 1 tip), z = a thin outline round it.
+ */
+vec3 fireBurst(vec2 c, float size, float rot, float n, float curl, float streaks) {
+  vec2 q = vec2((vUv.x - c.x) * uAspect, vUv.y - c.y) / max(size, 1e-4);
+  float rr = length(q);
+  float ang = atan(q.y, q.x);
+  float sec = fract((ang - rot) / 6.2831853 + 0.5) * n + rr * curl;
+  float id = mod(floor(sec), n);
+  float fs = fract(sec) - 0.5;
+  float seed = floor(rot * 13.0);
+  float len = mix(0.5, 1.0, frHash(id + seed));
+  float r0 = streaks * mix(0.16, 0.34, frHash(id * 1.7 + seed + 3.0));
+  float tt = (rr - r0) / max(len - r0, 1e-3);
+  float aa = 1.5 * uTexel.y / max(size, 1e-4) / max(rr, 0.05);
+  // Each tongue licks: it sways in an S toward its tip and its edges flicker (a flame, not a spike or a petal).
+  fs -= sin(tt * 3.4 + id * 1.9 + seed) * 0.2 * tt + (frHash(floor(tt * 6.0) + id * 5.0 + seed) - 0.5) * 0.06 * tt;
+  float hw = mix(mix(0.46, 0.42, streaks), 0.0, smoothstep(0.05, 1.0, tt)) * mix(0.75, 1.15, frHash(id * 2.3 + seed + 5.0));
+  float on = step(0.0, tt) * (1.0 - smoothstep(0.94, 1.0, tt));
+  float tongue = (1.0 - smoothstep(hw - aa - 0.03, hw, abs(fs))) * on;
+  float heart = (1.0 - streaks) * (1.0 - smoothstep(0.24, 0.27, rr));
+  float cov = max(tongue, heart);
+  float hw2 = hw + 0.08;
+  float on2 = step(-0.06, tt) * (1.0 - smoothstep(0.98, 1.06, tt));
+  float big = max((1.0 - smoothstep(hw2 - aa - 0.03, hw2, abs(fs))) * on2, (1.0 - streaks) * (1.0 - smoothstep(0.27, 0.31, rr)));
+  return vec3(cov, clamp(tt, 0.0, 1.0), max(big - cov, 0.0));
+}
+/** Ember sparks flung out round c beyond its reach (from 0.85 to 1.5 of \`size\`): small round specks, sparse. */
+float fireSparks(vec2 c, float size, float rot) {
+  vec2 q = vec2((vUv.x - c.x) * uAspect, vUv.y - c.y) / max(size, 1e-4);
+  float rr = length(q);
+  float ang = atan(q.y, q.x);
+  vec2 cell = vec2(floor((ang / 6.2831853 + 0.5) * 28.0), floor(rr * 7.0));
+  float seed = floor(rot * 11.0);
+  float h = frHash(cell.x * 7.13 + cell.y * 31.7 + seed);
+  float a0 = ((cell.x + 0.25 + 0.5 * frHash(cell.x + cell.y * 5.1 + seed + 1.0)) / 28.0 - 0.5) * 6.2831853;
+  float r0 = (cell.y + 0.25 + 0.5 * frHash(cell.x * 3.3 + cell.y + seed + 2.0)) / 7.0;
+  float d = length(q - vec2(cos(a0), sin(a0)) * r0);
+  float rad = mix(0.018, 0.034, frHash(h * 9.1));
+  return step(0.7, h) * (1.0 - smoothstep(rad * 0.7, rad, d)) * step(0.85, rr) * (1.0 - step(1.5, rr));
+}
+#endif
 /** An authored mask placed at xf.xy (uv), xf.z the sheet's size (share of the view's height), turned xf.w on screen. */
 float shapeAt(sampler2D t, vec4 xf, float mirror) {
   vec2 p = vec2((vUv.x - xf.x) * uAspect, vUv.y - xf.y) / max(xf.z, 1e-4);
@@ -332,16 +379,27 @@ void main() {
     // dark with a cyan contour, the strike's cores and a slash crescent in ink.
     g = uPaper * (1.0 - 0.22 * smoothstep(0.08, 0.5, l));
 #ifdef ROLES
-    g = mix(g, uLines, glow);
-    g = mix(g, uInk, m);
-    g = mix(g, uContour, edge);
-    g = mix(g, uStrokes, max(core, sb));
+    // Fire: a burst of flame tongues, not an ink star: a small white-gold heart, an amber body, vermilion tips with a
+    // thin soot outline, ember sparks flung beyond; the figure dark inside it with a gold contour, the blow's crescent
+    // in gold across it.
+    vec3 fb = fireBurst(uLocal.xy, uLocal.z * 1.15, uRot, 9.0, 0.12, 0.0);
+    float sp = fireSparks(uLocal.xy, uLocal.z * 1.15, uRot);
+    g = mix(uCyan, uPaper, smoothstep(0.25, 0.95, fb.y));
+    // The figure a deep rust silhouette in the body (black there read as an ink blot), never over the white heart.
+    g = mix(g, mix(uLines, uPaper, 0.35), m * smoothstep(0.15, 0.4, fb.y));
+    g = mix(g, uContour, max(edge, sb) * fb.x);
+    g = mix(uStrike, g, smoothstep(0.0, 0.25, fb.y));
+    g = mix(g, uLines, fb.z);
+    g = mix(g, uCyan, sp * (1.0 - fb.x));
 #else
     g = mix(g, uInk, m);
     g = mix(g, uCyan, max(edge, glow));
     g = mix(g, uInk, max(core, sb));
 #endif
     float region;
+#ifdef ROLES
+    region = max(max(fb.x, fb.z), sp);
+#else
     if (uHasA > 0.5) region = sa;
     else {
       vec2 q = vec2((vUv.x - uLocal.x) * uAspect, vUv.y - uLocal.y);
@@ -351,6 +409,7 @@ void main() {
       float px = 1.5 * uTexel.y / max(uLocal.z, 1e-4);
       region = 1.0 - smoothstep(shape - px, shape + px, r);
     }
+#endif
     a *= region;
   } else if (uMode < 1.5) {
     // Dark frame: a navy world keeping a trace of its values, dim cyan focus rays behind the figures, the figures
@@ -378,7 +437,16 @@ void main() {
     g = mix(g, uLines, glow);
     g = mix(g, uInk, m);
     g = mix(g, uContour, edge);
-    g = mix(g, uStrokes, max(core, sb));
+    // The burst at the strike: radial flame streaks and ember sparks in soot (not a cracked brush splash).
+    float fs = 0.0;
+    float sp = 0.0;
+    if (uHasB > 0.5) {
+      fs = fireBurst(uB.xy, uB.z * 0.62, uB.w, 16.0, 0.12, 1.0).x;
+      sp = fireSparks(uB.xy, uB.z * 0.62, uB.w);
+    }
+    g = mix(g, uStrokes, max(core, fs));
+    // Its ember sparks are the frame's own light: amber on the vermilion ground.
+    g = mix(g, uContour, sp * (1.0 - fs));
 #else
     g = mix(g, uNavy * 0.6, sa * 0.85 * (1.0 - m));
     g = mix(g, uInk, m);
