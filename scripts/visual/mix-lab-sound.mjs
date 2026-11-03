@@ -1,8 +1,10 @@
 // Mixes a skills-lab capture's sound offline (03/11/2026): fixed-step captures have no live audio, so the lab records
 // what it would play (src/lab/sound.ts record()/takes(), through __lab.soundRecord() and __lab.soundTakes()) and this
-// rebuilds it on the capture's clock with ffmpeg: each take at its time plus one frame (a frame's sounds are logged
-// at its start), its bus gain, its ±5 % rate, a pan like Web Audio's StereoPannerNode on a stereo source, the hush
-// ducks, then the master gain (0.9, as live) and a limiter. Mux the result with the frames' video.
+// rebuilds it on the capture's clock with ffmpeg: each take at its time, its bus gain, its ±5 % rate, a pan like Web
+// Audio's StereoPannerNode on a stereo source, the hush ducks, then the master gain (0.9, as live) and a limiter. Mux
+// the result with the frames' video. A take's time is the lab clock at the start of the step that asked for it, so
+// when a capture shoots each frame after its step (frame k = step k + 1 since soundRecord()), the offset is 0; pass
+// --offset=<1/fps> when frame 0 is shot before the first step.
 //   node scripts/visual/mix-lab-sound.mjs <takes.json> <out.wav> [--duration=<s>] [--offset=<s>] [--root=<dir>]
 // takes.json: the array of takes; root: the folder served at "/" (default: this repo), so "/art-src/…" urls resolve.
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -22,7 +24,7 @@ if (takesPath === undefined || outPath === undefined) {
   process.exit(2);
 }
 const root = resolve(flag("root", join(dirname(fileURLToPath(import.meta.url)), "..", "..")));
-const offset = Number(flag("offset", String(1 / 60)));
+const offset = Number(flag("offset", "0"));
 const takes = JSON.parse(readFileSync(takesPath, "utf8"));
 const last = takes.reduce((m, t) => Math.max(m, t.at + offset), 0);
 const duration = Number(flag("duration", String(last + 4)));
