@@ -524,3 +524,47 @@ Sáu điểm nhìn của phần 3 (tàn lửa, vết cháy, ấn và vòng, khun
 - Vết cháy thủ tục trên đá sáng đọc như đá bị cháy nâu xám. Nếu anh muốn vết cháy đậm chất "anime" hơn, có thể thêm vệt bồ hóng toả tia mềm (không phải ngôi sao).
 - Pass méo hơi nóng dùng chung: vẫn để làm cùng Water.
 - Các chiêu khác (Phi Kiếm, K2, Hộ thân, Lưu Quang Bộ, K4, K5) vẫn vẽ bằng lớp Metal theo bảng màu lửa; `SigilLook` mới chỉ áp cho ấn và vòng dưới chân.
+
+### Kiểm tra lại (lượt kiểm đối kháng sau phần 4)
+
+Một lượt kiểm độc lập, không tin số của phần 4: server riêng không HMR, `867ba32` xuất bằng `git archive` (thêm `server.fs.allow` cho `node_modules` dạng symlink), cùng `PLAN=fixes`, `WORLD=1`, đá sáng `#d6d0c2` và đá tối `#2a2c30`, High 1920×1080, DPR 1. Điểm ảnh hiệu ứng là chỗ khác hơn 0,10 so với khung ẩn VFX; "nhạt" và "thân" như phần 4; "giống máu" theo brief (sắc < 15° hoặc > 345°, độ sáng < 0,55) cộng độ bão hòa ≥ 0,2 để sắc có nghĩa. Số liệu: `tmp/shots/element-fire/fixes/recheck/`.
+
+**Lỗi rõ đã sửa (mỗi lỗi một commit):**
+
+| Commit | Lỗi | Số đo |
+|---|---|---|
+| `905d8c2` | `EmberPool` ghi đè ô cũ nhất dù tàn lửa còn sống: ở phím 7, 1 020 trên 2 408 tàn lửa biến mất trong một khung (nhảy hình). Nhu cầu đỉnh 1 854 hạt (High), 1 873 (Ultra), pool chỉ có 1 024 | Tìm ô trống trong 64 ô kế tiếp, đầy thì bỏ hạt mới (`dropped`); pool Fire 2 560. Sau sửa: 0 hạt bị cắt. Có test |
+| `d2093bd` | `FlipbookPool` cũng ghi đè sprite còn sống: 29 trên 111 hoa sen `fire-burst` (chết, kiếm đầu) tắt ngang ở phím 7. Nhu cầu đỉnh 76 (phím 7), 88 (K5), pool 48 | Pool đầy thì bỏ sprite mới; `fire-burst` 96 ô; ghi vào `SYNC_DEBT.md`. Sau sửa: 0. Có test |
+| `99771ab` | `SEAL_LIT` là `#FFAE34` nguyên, kênh đỏ 1,0, trái hợp đồng `SigilLook` (thân ấn và vòng ≤ 0,9 một kênh) | `#FFAE34` × 0,9 cho ấn, vòng dưới chân và hai pool vòng nhiệt. Có test trên mọi bộ chất |
+| `322157b` | Nhát chém lửa: lõi HDR trắng vàng × 2,4 chiếm ~75 % bề rộng (thân, phần lõm vào và số hạng lưỡi lửa cộng dồn qua ngưỡng lõi), thành một dải kem trên đá sáng, trái mô tả của chính nó và luật "chỉ lõi mảnh mới bloom" | Đọc dải trăng khuyết từ một mip thô của mặt nạ (tâm và nửa bề rộng có trọng số, liền mạch dọc nhát chém): sống trắng vàng ở ~16 % giữa, thân hổ phách, mép son, viền bồ hóng, lưỡi lửa chỉ ở ngoài. Riêng nhát chém trên đá sáng: thân 7–22 % → 46–80 %, lõi 18–26 % → 0,3–13 %, nhạt 19–23 % → 1–17 %. Chỉ là shader, đo trên khung (không có test đơn vị) |
+
+**Các cổng (đo trên `322157b`):**
+
+- **Metal không đổi: đạt.** 85/85 khung giống hệt từng bit so với `867ba32` (21 khung `lab-element-parity` và 64 khung Metal của `PLAN=fixes`: gõ, khung đồ hoạ, nhát chém, cắm kiếm). Đo cả trước và sau bốn sửa trên.
+- **Fire − Metal p95: đạt.** 6 vòng xen kẽ, `RUNS=2`, 12 lượt mỗi hệ, xả GPU trước mỗi cửa sổ, tải 3,3–5,1. Trung vị / trung bình: nghỉ +0,25 / +0,35, phím 1 +0,15 / +0,27, phím 7 săn +0,25 / +0,55, nhát kết −0,35 / +0,21, K5 +0,15 / +0,29 ms (cổng ≤ 0,85). Lúc nghỉ Fire không vẽ gì mà vẫn lệch +0,35: đó là mức nhiễu.
+- **Trần 11,5 ms: đạt.** Trung vị p95 cao nhất 10,2 ms; lượt tệ nhất 11,3 ms (Fire, nhát kết), 10,7 ms (Metal). Khung lớn nhất 13,3 ms (Fire, nhát kết), 14,5 ms (Metal, nghỉ). Lệnh vẽ Metal / Fire: 34/34, 48/43, 54/54, 51/54, 54/53.
+- **Phím tới phát chiêu: đạt.** VFX 0 ms, thân 33 ms ở cả 5 lần phát, hai nền.
+- **Bloom: đạt.** 0 điểm ảnh NaN hay Inf ở 118 khung.
+- **Thân lửa sau tone mapping: đạt.** Sắc trung vị 21,4–34,9°, độ bão hòa trung vị 0,55–0,99 ở mọi khung, hai nền; gần đỏ cảnh báo ≤ 0,31 %.
+- **Thay, không chồng: đạt.** Đếm instance sống mỗi khung qua `__THREE_DEVTOOLS__`. Phím 1: 25/26 lớp VFX của Metal im lặng khi chọn Fire; còn lại là số sát thương (HUD) và phần hình (ấn và vòng dưới chân đã thành `SOLID`, ribbon thành dải lửa, kiếm). Phím 7: 25/27 im lặng; còn lại là impostor của kiếm xa và 88 tia vệt kiếm sông (ngoài phạm vi). `QiSlash` 0 khung (bản `867ba32`: 67), sao, vòng, vết mực của nạn nhân bị ghim 0.
+- **Phần nhạt trên đá sáng ≤ 15 %: không đạt ở 6/59 khung.** Phát chiêu ≤ 5,9 %, lúc gõ ≤ 5,2 %, dư âm phím 1 ≤ 6,2 %, khung đồ hoạ ≤ 6,4 %: đạt. Không đạt: `k1c-008` 53,6 %, `k1c-040` 16,4 %, `k1-010` 15,2 % (trúng đòn phím 1), `k7c-060` 18,2 %, `k7c-090` 19,1 % (săn, chủ yếu vệt kiếm sông và lưỡi furnace, ngoài phạm vi), `k7c-215` 15,6 % (trước sửa nhát chém: 18,7 %; nhóm nhát kết trung vị 12,0 → 7,0 %).
+  - Phần 4 kể bóng trúng đòn của thú là một nguồn của `k1c-008`. Bóng đó vẫn nhìn thấy nhạt, nhưng nó thuộc lớp actor nên có cả ở khung ẩn VFX và không nằm trong con số 53,6 %. Ẩn từng lớp ở `k1c-008`: hoa sen `fire-burst` (các khung đầu còn mềm, trong) gánh 50 % phần nhạt, dải lửa của vệt 6 %, chấm sáng `dot` 3 %; phần còn lại chưa tách (nhát cắt cộng sáng `cut`, khung đồ hoạ cục bộ).
+- **Điểm ảnh giống máu: không đọc thành máu.** Đá sáng gộp 0,36 %, lớn nhất 1,6 % một khung. Đá tối gộp 1,04 %, lớn nhất 7,8 % (`k1-024`): đó là viền mảnh đỏ sẫm ở đầu lưỡi lửa của hoa sen và mép nét ấn (độ sáng 0,25–0,43). Nhìn trên khung không thấy vệt máu, mực hay hộp đen; không có đường cắt cứng.
+- **Kiểm thử và build: đạt.** `pnpm test` 731/731 (81 tệp, thêm 3 bài), `tsc` và `pnpm build` xanh, `verify-kit` 73 tệp; `dist` vẫn là `main-XrAzOVU-.js`, `swords-CpZ2rKAM.js`, không có mã lab hay Fire.
+
+**Điểm nhìn, chưa sửa (cho anh và giám khảo):**
+
+- Trúng đòn phím 1 trên đá sáng còn nhạt (xem trên). Hướng: hoa sen bắt đầu từ khung đặc hơn hoặc hiện ra bằng ăn mòn như tụ lực; chấm sáng `dot` (trắng vàng × 4,2–4,5, rộng tới 1,15 m) thành lõi nhỏ cộng một quầng ≤ 0,9.
+- Vòng áp suất ở tay là một vòng cam dày đều, viền bồ hóng, như vòng nhựa; vòng lửa khi cắm kiếm là một vòng cam mảnh. Cả hai còn đơn điệu.
+- Khung đồ hoạ cục bộ của phím 1 và phím 7 là ngôi sao gai đen tâm trắng (cùng ngữ pháp với Metal), đọc như vết mực. Khung đảo màu son với vụ nổ bồ hóng cũng đọc như mực bắn.
+- Quả cầu trắng lớn ở chỗ chết và chỗ cắm kiếm (`dot` × 3–3,2, 1,3 m), và đường nóng chảy của nhát kết (lõi × 4,5) toả bloom kem trên đá sáng.
+- Vết cháy thủ tục trên đá sáng đọc như vệt bẩn nâu xám; trên đá tối thì đẹp (đường nứt than hồng).
+- Trong lab: mép tan của thú màu san hô (sắc ~14°, sáng) có thể đọc như thịt sống; bóng trúng đòn trắng hồng của thú.
+- Sống nhát chém mới hơi gợn theo mép xơ của mặt nạ; vẫn đọc là lõi nóng chảy.
+
+**Video và ảnh (cho điều phối, chưa gửi anh):**
+
+- `tmp/shots/element-fire/fixes/fire-fixed-play.mp4`: 8,17 s, camera chơi, phím 1 gõ ở 45 WPM rồi phím 7; H.264 1920×1080 60 fps, tốc độ thật, có tiếng (118 lượt; trung bình −10,8 dB, đỉnh 0,0 dB); 15,3 MiB.
+- `tmp/shots/element-fire/fixes/fire-fixed-close.mp4`: 12,0 s, phím 1 gõ ở góc nhìn gần của người chơi, phím 1 gõ với camera gần trên chỗ trúng, phím 7 với camera gần trên sân; có tiếng (129 lượt; −12,2 / −0,3 dB); 25,3 MiB.
+- Phụ đề tiếng Anh mỗi đoạn. `tmp/shots/element-fire/fixes/stills-fixed-light-dark.jpg`: cùng bố cục với `stills-fire-light-dark.jpg` (phím 1 F88, F180; phím 7 F186, F260).
+- Bằng chứng: `recheck/evidence/` (nhát chém trước và sau, bản đồ điểm ảnh nhạt và giống máu, các điểm nhìn). Khung thô đã xóa bằng tay (`tools/capture-prune` từ chối đường dẫn trong `immortality-cultivation`); server và bản xuất đã dọn.
