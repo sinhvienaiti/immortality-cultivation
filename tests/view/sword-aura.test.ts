@@ -6,6 +6,7 @@ import { METAL } from "../../src/view/skills/element-metal";
 import { elementKits } from "../../src/view/skills/elements";
 import { applySwordAuraLook, AURA_BODY_MAX, SWORD_AURA_LOOK } from "../../src/view/skills/sword-aura";
 import { applyBladeLook, SWORD_LOOK } from "../../src/view/skills/sword-material";
+import { RibbonPool } from "../../src/view/skills/fxkit";
 
 /** Hue (degrees, on sRGB) and saturation of a linear colour. */
 function hsl(c: { x: number; y: number; z: number } | readonly number[]): { h: number; s: number; l: number } {
@@ -87,5 +88,49 @@ describe("sword aura contract (SWORD_AURA §4.8)", () => {
     expect(METAL.blade.mode).toBe("steel");
     expect(SWORD_LOOK.mode.value).toBe(0);
     expect(SWORD_LOOK.heatFrom.value).toBeCloseTo(0.05);
+  });
+
+  it("SilkTail: a silk ribbon is capped at its length, widest at a quarter, and the pool's moded program swaps in and out", () => {
+    const pool = new RibbonPool(4, 40, new THREE.Texture());
+    const cam = new THREE.PerspectiveCamera(28, 16 / 9, 0.1, 300);
+    cam.position.set(0, 26, 14);
+    cam.lookAt(0, 0, -6);
+    cam.updateMatrixWorld(true);
+    pool.start(0, 0, 1, 0, 0.16, 0, 0, 0, 1, 0.01);
+    pool.setSilk(0, [0.05, 0.06, 0.2], [0.4, 0.5, 0.7], 2);
+    for (let f = 1; f <= 30; f += 1) {
+      pool.push(0, f * 0.4, 1, 0);
+      pool.update(1 / 60, cam);
+    }
+    const pos = pool.mesh.geometry.getAttribute("position");
+    // Spine points (pairs of vertices): the drawn length stays within the cap.
+    let len = 0;
+    let prev: THREE.Vector3 | null = null;
+    let widest = 0;
+    let widestAt = -1;
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    for (let k = 0; k < 40; k += 1) {
+      a.fromBufferAttribute(pos, k * 2);
+      b.fromBufferAttribute(pos, k * 2 + 1);
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      const w = a.distanceTo(b);
+      if (w > widest + 1e-6) {
+        widest = w;
+        widestAt = k;
+      }
+      if (prev !== null) len += mid.distanceTo(prev);
+      prev = mid;
+    }
+    expect(len).toBeLessThanOrEqual(2.05);
+    expect(len).toBeGreaterThan(1.5);
+    expect(widestAt).toBeGreaterThan(0);
+    expect(widest).toBeCloseTo(0.32, 1);
+    const light = pool.mesh.material;
+    pool.setModed(true);
+    expect(pool.mesh.material).not.toBe(light);
+    expect(pool.modedProgram).not.toBeNull();
+    pool.setModed(false);
+    expect(pool.mesh.material).toBe(light);
   });
 });

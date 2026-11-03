@@ -549,6 +549,26 @@ export class SwordAura {
     return n;
   }
 
+  /**
+   * The SilkTail's body (SWORD_AURA §3.A): the tassel silk's light (Clear Wind's #A9C4EA × 0.7) with 30 % of the element's
+   * body, ≤ 0.7 a channel. The deep edge is the motif's silkDeep.
+   */
+  get silkBody(): readonly number[] {
+    const l = this.silkLight;
+    const b = SWORD_AURA_LOOK.body.value;
+    const c = this.silkTmp;
+    c[0] = l[0]! * 0.7 + b.x * 0.3;
+    c[1] = l[1]! * 0.7 + b.y * 0.3;
+    c[2] = l[2]! * 0.7 + b.z * 0.3;
+    const m = Math.max(c[0], c[1], c[2], 1e-6);
+    if (m > 0.7) for (let k = 0; k < 3; k += 1) c[k] = c[k]! * (0.7 / m);
+    return c;
+  }
+
+  /** The weapon's silk light (WeaponMotif.silkLight; the lab sets it with the weapon). */
+  silkLight: readonly number[] = [0.43, 0.53, 0.7];
+  private readonly silkTmp = [0, 0, 0];
+
   /** Hides every aura mesh (a reset). */
   hide(): void {
     this.n = 0;

@@ -591,6 +591,63 @@ void main() {
   gl_FragColor = vec4(col * a, a);
 }`;
 
+/**
+ * The moded program (RibbonPool.setModed; the sword aura's SilkTail, SWORD_AURA §5.2): one premultiplied program in
+ * which each ribbon has its own look (`aMode`). Light (0): exactly the light program's colour with alpha 0, so it adds
+ * as before. Silk (1): a ribbon of the weapon's tassel silk as matter: its body (the ribbon's rim colour, ≤ 0.7) at a
+ * true alpha 0.85 with a soft sheen down the middle, its deep edge (the ribbon's colour) at a true alpha too, so it
+ * reads on pale stone; it thins and erodes down its tail.
+ */
+const MODED_RIBBON_VERTEX = /* glsl */ `
+attribute float aT;
+attribute vec4 aCol;
+attribute vec3 aRim;
+attribute float aMode;
+varying float vT;
+varying vec4 vCol;
+varying vec3 vRim;
+varying float vSide;
+varying float vMode;
+void main() {
+  vT = aT;
+  vCol = aCol;
+  vRim = aRim;
+  vMode = aMode;
+  vSide = mod(float(gl_VertexID), 2.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const MODED_RIBBON_FRAGMENT = /* glsl */ `
+uniform sampler2D map;
+uniform float uTime;
+varying float vT;
+varying vec4 vCol;
+varying vec3 vRim;
+varying float vSide;
+varying float vMode;
+void main() {
+  float s = clamp(1.0 - abs(vSide * 2.0 - 1.0), 0.0, 1.0);
+  vec4 t = texture2D(map, vec2(vT * 2.0 - uTime * 1.5, vSide));
+  if (vMode < 0.5) {
+    // The light program's arithmetic, unchanged; alpha 0 adds it over the scene as ONE, ONE did.
+    float core = pow(s, 7.0);
+    float body = s * s * (3.0 - 2.0 * s);
+    float erode = smoothstep(0.0, 0.35, t.a + (1.0 - vT) * 0.6 - vT * 0.5);
+    float a = vCol.a * erode * (1.0 - vT);
+    vec3 rgb = vRim * body * 0.95 + vCol.rgb * core * (1.0 - vT * 0.6);
+    gl_FragColor = vec4(rgb * a, 0.0);
+    return;
+  }
+  // Silk: a crisp ribbon (its edge a pixel's soft step), its deep border, a sheen line, eroded along its tail.
+  float edge = smoothstep(0.0, 0.16, s);
+  float inner = smoothstep(0.2, 0.55, s);
+  float sheen = smoothstep(0.62, 0.95, s) * (0.55 + 0.45 * sin(vT * 18.0 - uTime * 6.0));
+  float erode = smoothstep(0.0, 0.3, t.a * 0.7 + (1.0 - vT) * 0.85 - vT * 0.35);
+  float a = vCol.a * edge * erode * (1.0 - vT * vT * 0.6);
+  vec3 col = mix(vCol.rgb, vRim, inner) + vRim * sheen * 0.22;
+  gl_FragColor = vec4(min(col, vec3(0.85)) * a, a * 0.85);
+}`;
+
 /** A flame atlas for RibbonPool.setFlame: its texture and grid, and the heat ramp (linear). */
 export interface RibbonFlame {
   readonly texture: THREE.Texture;
@@ -657,6 +714,13 @@ export class RibbonPool {
   private readonly material: THREE.ShaderMaterial;
   /** The flame look (setFlame), made on first use; null: the light look. */
   private flameMaterial: THREE.ShaderMaterial | null = null;
+  /** The moded program (setModed), made on first use; each ribbon's look by `mode` (0 light, 1 silk). */
+  private modedMaterial: THREE.ShaderMaterial | null = null;
+  private readonly mode: Uint8Array;
+  /** Per ribbon: its width profile (0 the light taper, 1 the silk's: narrow, widest at a quarter, thin tail) and its cap (m; Infinity none). */
+  private readonly profile: Uint8Array;
+  private readonly maxLen: Float32Array;
+  private readonly modes: Float32Array;
   private readonly camPos = new THREE.Vector3();
   private readonly tmpA = new THREE.Vector3();
   private readonly tmpB = new THREE.Vector3();
@@ -681,12 +745,16 @@ export class RibbonPool {
     this.fadeT = new Float32Array(capacity);
     this.fadeLen = new Float32Array(capacity);
     this.fadeIn = new Float32Array(capacity);
+    this.mode = new Uint8Array(capacity);
+    this.profile = new Uint8Array(capacity);
+    this.maxLen = new Float32Array(capacity).fill(Infinity);
     this.scratch = new Float32Array(n * 4);
     const verts = capacity * n * 2;
     this.positions = new Float32Array(verts * 3);
     this.ts = new Float32Array(verts);
     this.cols = new Float32Array(verts * 4);
     this.rims = new Float32Array(verts * 3);
+    this.modes = new Float32Array(verts);
     const index: number[] = [];
     for (let r = 0; r < capacity; r += 1) {
       for (let p = 0; p < n - 1; p += 1) {
@@ -701,11 +769,13 @@ export class RibbonPool {
       new PrefixAttribute(this.ts, 1),
       new PrefixAttribute(this.cols, 4),
       new PrefixAttribute(this.rims, 3),
+      new PrefixAttribute(this.modes, 1),
     ];
     geometry.setAttribute("position", this.attrs[0]!);
     geometry.setAttribute("aT", this.attrs[1]!);
     geometry.setAttribute("aCol", this.attrs[2]!);
     geometry.setAttribute("aRim", this.attrs[3]!);
+    geometry.setAttribute("aMode", this.attrs[4]!);
     this.geometry = geometry;
     this.material = new THREE.ShaderMaterial({
       vertexShader: RIBBON_VERTEX,
@@ -772,9 +842,64 @@ export class RibbonPool {
     this.mesh.material = m;
   }
 
+  /**
+   * Draws the pool with the moded program (true; the sword aura's SilkTail: each ribbon by its own mode) or the light
+   * program (false, the default, unchanged). A pool drawn as flame stays flame (setFlame wins: Fire's SilkTail is its
+   * flame trail).
+   */
+  setModed(on: boolean): void {
+    if (this.flameMaterial !== null && this.mesh.material === this.flameMaterial) return;
+    if (!on) {
+      if (this.mesh.material === this.modedMaterial) this.mesh.material = this.material;
+      return;
+    }
+    let m = this.modedMaterial;
+    if (m === null) {
+      m = new THREE.ShaderMaterial({
+        vertexShader: MODED_RIBBON_VERTEX,
+        fragmentShader: MODED_RIBBON_FRAGMENT,
+        uniforms: { map: this.material.uniforms.map!, uTime: this.material.uniforms.uTime! },
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneMinusSrcAlphaFactor,
+      });
+      this.modedMaterial = m;
+    }
+    this.mesh.material = m;
+  }
+
+  /** The moded program (made on first setModed; prewarm compiles it). */
+  get modedProgram(): THREE.ShaderMaterial | null {
+    return this.modedMaterial;
+  }
+
+  /**
+   * Ribbon `i` as silk (the sword aura's SilkTail, drawn by the moded program): its deep edge and body colours (linear,
+   * ≤ 0.85), its alpha, the silk's width profile (`widthM` its widest) and a length cap (m). Call after start.
+   */
+  setSilk(i: number, deep: readonly number[], body: readonly number[], maxLenM: number): void {
+    this.mode[i] = 1;
+    this.profile[i] = 1;
+    this.maxLen[i] = maxLenM;
+    const c = i * 4;
+    this.colour[c] = deep[0]!;
+    this.colour[c + 1] = deep[1]!;
+    this.colour[c + 2] = deep[2]!;
+    this.rimC[i * 3] = body[0]!;
+    this.rimC[i * 3 + 1] = body[1]!;
+    this.rimC[i * 3 + 2] = body[2]!;
+  }
+
   /** Starts ribbon `i` at a point with a width and an HDR colour; it eases in over `fadeIn` s (smoothstep). */
   start(i: number, x: number, y: number, z: number, widthM: number, r: number, g: number, b: number, a: number, fadeIn = RIBBON_FADE_IN_S): void {
     this.state[i] = 1;
+    this.mode[i] = 0;
+    this.profile[i] = 0;
+    this.maxLen[i] = Infinity;
     this.age[i] = 0;
     this.fadeIn[i] = Math.max(1e-3, fadeIn);
     this.fadeT[i] = 0;
@@ -871,6 +996,7 @@ export class RibbonPool {
         for (let k = 0; k < n * 2; k += 1) this.cols[(vbase + k) * 4 + 3] = 0;
         continue;
       }
+      const silk = this.profile[r] === 1;
       let fade = 1;
       if (this.state[r] === 2) {
         this.fadeT[r] = this.fadeT[r]! + dt;
@@ -938,7 +1064,29 @@ export class RibbonPool {
         sc[m * 4 + 3] = a;
         m += 1;
       }
-      const norm = tailAge > 1e-6 ? 1 / tailAge : 0;
+      // A capped ribbon (the silk) ends at its length: cut where the polyline's length reaches it.
+      let capAge = tailAge;
+      const cap = this.maxLen[r]!;
+      if (cap < Infinity && m > 1) {
+        let acc = 0;
+        for (let i = 1; i < m; i += 1) {
+          const q0 = (i - 1) * 4;
+          const q1 = i * 4;
+          const seg = Math.hypot(sc[q1]! - sc[q0]!, sc[q1 + 1]! - sc[q0 + 1]!, sc[q1 + 2]! - sc[q0 + 2]!);
+          if (acc + seg >= cap) {
+            const u = seg > 1e-6 ? (cap - acc) / seg : 0;
+            sc[q1] = lerp(sc[q0]!, sc[q1]!, u);
+            sc[q1 + 1] = lerp(sc[q0 + 1]!, sc[q1 + 1]!, u);
+            sc[q1 + 2] = lerp(sc[q0 + 2]!, sc[q1 + 2]!, u);
+            sc[q1 + 3] = lerp(sc[q0 + 3]!, sc[q1 + 3]!, u);
+            capAge = sc[q1 + 3]!;
+            m = i + 1;
+            break;
+          }
+          acc += seg;
+        }
+      }
+      const norm = capAge > 1e-6 ? 1 / capAge : 0;
       const w0 = this.widthM[r]!;
       const c = r * 4;
       const alpha = this.colour[c + 3]! * fade;
@@ -984,7 +1132,8 @@ export class RibbonPool {
           this.tmpB.set(0, 0, 1).cross(this.tmpC).normalize();
         }
         const tt = norm > 0 ? Math.min(1, sc[q + 3]! * norm) : k === 0 ? 0 : 1;
-        const w = w0 * (1 - tt * 0.85);
+        // The silk: 0.11 → its widest at a quarter → 0.03 of 0.16 (SWORD_AURA §3.A SilkTail); else the light taper.
+        const w = silk ? w0 * (tt < 0.25 ? 0.6875 + 1.25 * tt : 1 - 1.08 * (tt - 0.25)) : w0 * (1 - tt * 0.85);
         const v = vbase + k * 2;
         this.positions[v * 3] = this.tmpA.x + this.tmpB.x * w;
         this.positions[v * 3 + 1] = this.tmpA.y + this.tmpB.y * w;
@@ -994,6 +1143,8 @@ export class RibbonPool {
         this.positions[(v + 1) * 3 + 2] = this.tmpA.z - this.tmpB.z * w;
         this.ts[v] = tt;
         this.ts[v + 1] = tt;
+        this.modes[v] = this.mode[r]!;
+        this.modes[v + 1] = this.mode[r]!;
         const va = k < m ? alpha : 0;
         for (let s = 0; s < 2; s += 1) {
           const qq = (v + s) * 4;

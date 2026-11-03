@@ -722,6 +722,7 @@ async function setWeapon(id: string): Promise<boolean> {
     // The aura's anchors: the full model's (every tier is the same GLB).
     const models = await loadSwordModels(def);
     swordAura.setAnchors(models.full.aura, models.full.pommelY);
+    if (def.motif !== undefined) swordAura.silkLight = def.motif.silkLight;
     // The pinned swords of the hero victims: the same real sword (its full model).
     victims.setSword((await loadSwordModels(def)).full);
     for (const f of weaponListeners) f(def.id);

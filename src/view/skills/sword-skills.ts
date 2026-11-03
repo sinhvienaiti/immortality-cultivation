@@ -357,6 +357,8 @@ interface Flight {
   ribbon: number;
   /** The weapon's silk trail beside the sword-light (−1 none). */
   silk: number;
+  /** Its trail is the aura's SilkTail (one silk ribbon in place of the sword-light and the silk, SWORD_AURA §4.6). */
+  tail: boolean;
   t: number;
   dur: number;
   fx: number;
@@ -716,7 +718,7 @@ export class SwordSkillFx {
     L.add(this.gate.mesh, this.gateSwords.mesh, this.heaven.mesh, this.rainStrips.mesh, this.rainMarks.mesh);
     this.heaven.mesh.renderOrder = 4;
     for (let i = 0; i < 24; i += 1) {
-      this.flights.push({ active: false, blade: 0, ribbon: 0, silk: -1, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, big: false, hit: -1, sx: 0, sy: 0, sz: 0, acc: 0, d0x: 0, d0y: 0, d0z: 0, turn: FLIGHT_TURN_S, ldx: 0, ldy: 0, ldz: 1, slot: "auto" });
+      this.flights.push({ active: false, blade: 0, ribbon: 0, silk: -1, tail: false, t: 0, dur: 0, fx: 0, fy: 0, fz: 0, tx: 0, ty: 0, tz: 0, arc: 0, target: -1, pierce: -1, power: 0, big: false, hit: -1, sx: 0, sy: 0, sz: 0, acc: 0, d0x: 0, d0y: 0, d0z: 0, turn: FLIGHT_TURN_S, ldx: 0, ldy: 0, ldz: 1, slot: "auto" });
     }
     for (let i = 0; i < EMITTERS; i += 1) this.emitters.push({ active: false, x: 0, y: 0, z: 0, r: 0, t: 0, life: 0, rate: 0, acc: 0, slot: "auto" });
     // Which pools draw each base sheet (sparks and motes in the glow's pool swap with `glow`; Low's back star is the back glow).
@@ -2081,7 +2083,17 @@ export class SwordSkillFx {
     const tr = this.kit.trail;
     this.ribbons.start(f.ribbon, fx, fy, fz, tr.widthM, tr.core[0], tr.core[1], tr.core[2], 1, Math.min(0.1, dur * 0.5));
     this.ribbons.setRim(f.ribbon, this.pal.rim[0] * tr.rimK, this.pal.rim[1] * tr.rimK, this.pal.rim[2] * tr.rimK);
-    f.silk = tr.silk ? this.startSilk(fx, fy, fz, Math.min(0.1, dur * 0.5)) : -1;
+    // The aura's SilkTail (SWORD_AURA §3.A, §4.6): one silk ribbon in the tassel's colours replaces the sword-light and
+    // the silk beside it on key 1's swords (Metal; Fire's flame trail is its SilkTail), 0.9 of the sword long.
+    const motif = this.weaponDef.motif;
+    f.tail = slot === "k1" && this.auraOn && tr.flame === undefined && motif !== undefined && motif.silk && this.swordAura!.weight("SilkTail") > 0;
+    if (f.tail && motif !== undefined) {
+      const sw = this.swordAura!.weight("SilkTail");
+      const b = this.swordAura!.silkBody;
+      this.ribbons.start(f.ribbon, fx, fy, fz, 0.16, 0, 0, 0, Math.min(1, sw), Math.min(0.1, dur * 0.5));
+      this.ribbons.setSilk(f.ribbon, motif.silkDeep, b, 0.9 * FLIGHT_SCALE * 1.1 * this.blades.span(blade));
+      f.silk = -1;
+    } else f.silk = tr.silk ? this.startSilk(fx, fy, fz, Math.min(0.1, dur * 0.5)) : -1;
     this.bladeTint(blade, 1.8);
   }
 
@@ -2742,6 +2754,8 @@ export class SwordSkillFx {
     this.hooks.frame?.(dt);
     for (const p of this.pools) p.update(dt);
     this.beams.update(dt);
+    // The aura's SilkTail needs the ribbons' moded program while it is on (every other ribbon draws as before in it).
+    this.ribbons.setModed(this.auraOn);
     this.ribbons.update(dt, this.host.camera);
     this.blades.sync();
   }
@@ -3430,7 +3444,8 @@ export class SwordSkillFx {
       this.show(f.blade, x, y, z, dx, dy, dz, FLIGHT_SCALE);
       if (f.slot === "k1") this.markAura(f.blade, AURA_FLY, 1, f.t, 0);
       const back = this.pommelBack(FLIGHT_SCALE);
-      this.ribbons.push(f.ribbon, x - dx * back, y - dy * back, z - dz * back);
+      if (f.tail) this.pushSilk(f.ribbon, x, y, z, dx, dy, dz, back, f.blade * 1.3);
+      else this.ribbons.push(f.ribbon, x - dx * back, y - dy * back, z - dz * back);
       if (f.silk >= 0) this.pushSilk(f.silk, x, y, z, dx, dy, dz, back, f.blade * 1.3);
       const travel = this.hooks.travel;
       if (u < 1 && travel !== undefined) {
@@ -3490,7 +3505,8 @@ export class SwordSkillFx {
         this.host.shake?.(f.slot === "k1" ? SHAKE_M.k1 : SHAKE_M.auto);
         f.hit = 0;
         this.bladeTint(f.blade, 2.6);
-        this.ribbons.stop(f.ribbon, 0.18);
+        // The silk tail lingers as the silk did (0.32 s); the sword-light retracts in 0.18 s.
+        this.ribbons.stop(f.ribbon, f.tail ? 0.32 : 0.18);
         if (f.silk >= 0) this.ribbons.stop(f.silk, 0.32);
         f.silk = -1;
       }

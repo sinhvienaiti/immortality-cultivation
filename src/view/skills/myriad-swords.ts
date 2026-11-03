@@ -296,6 +296,9 @@ export class MyriadSwordsFx {
   private trailK = 1;
   /** The flying swords' aura (SWORD_AURA; the host's shared owner), null or off: the layers as they were. */
   private swordAura: SwordAura | null = null;
+  /** The weapon's silk's deep edge (its tassel; null: none), and which lead blades trail the aura's SilkTail. */
+  private silkDeep: readonly number[] | null = null;
+  private readonly silk = new Uint8Array(HERO_N);
   private readonly aLead = { x: 0, z: 0 };
   /** Strikes and dives so far in this cast (the perceived-strikes check) and the lead blades' dives. */
   strikes = 0;
@@ -377,6 +380,7 @@ export class MyriadSwordsFx {
     const [models, atlas] = await Promise.all([loadSwordModels(def), loadSwordAtlas(def.impostor)]);
     this.blades.setModel(models.full, models.lod);
     this.far.setAtlas(atlas);
+    this.silkDeep = def.motif !== undefined && def.motif.silk ? def.motif.silkDeep : null;
   }
 
   /**
@@ -758,6 +762,7 @@ export class MyriadSwordsFx {
     this.hooks.frame?.(dt);
     this.drawSlash(dt);
     this.drawSwords();
+    this.ribbons.setModed(this.auraOn);
     this.ribbons.update(dt, this.host.camera);
     this.hits.update(dt);
     this.stars.update(dt);
@@ -930,6 +935,15 @@ export class MyriadSwordsFx {
     const t = this.tone;
     this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, widthM, t.trailCore[0], t.trailCore[1], t.trailCore[2], 1, 0.08);
     this.ribbons.setRim(i, t.halo[0] * 0.55, t.halo[1] * 0.55, t.halo[2] * 0.55);
+    // The aura's SilkTail (SWORD_AURA §3.A, §4.6): the lead blade trails the tassel's silk instead (Metal; Fire's flame
+    // trail is its SilkTail), 0.6 of the sword long, fluttering.
+    const A = this.swordAura;
+    const w = A !== null && A.on ? A.weight("SilkTail") : 0;
+    this.silk[i] = w > 0 && this.kit.trail.flame === undefined && this.silkDeep !== null ? 1 : 0;
+    if (this.silk[i] === 1) {
+      this.ribbons.start(i, this.px[i]!, this.py[i]!, this.pz[i]!, 0.16, 0, 0, 0, Math.min(1, w), 0.08);
+      this.ribbons.setSilk(i, this.silkDeep!, A!.silkBody, 0.6 * LEAD_M);
+    }
   }
 
   /** A lead blade's place on the crest: ahead of and above the stream, alternating sides. */
@@ -1138,7 +1152,24 @@ export class MyriadSwordsFx {
     // The lead blades' thin trails start at the pommel's end (never over the sword).
     if (i < HERO_N && this.st[i] !== S_OFF) {
       const L = this.lenM[i]! * (0.55 + 0.45 * this.sc[i]!);
-      this.ribbons.push(i, this.px[i]! - this.dx[i]! * L * 0.5, this.py[i]! - this.dy[i]! * L * 0.5, this.pz[i]! - this.dz[i]! * L * 0.5);
+      let ox = 0;
+      let oy = 0;
+      let oz = 0;
+      if (this.silk[i] === 1) {
+        // The silk flutters across the flight and a little up and down (sword-skills pushSilk's waves, world time).
+        let sx = -this.dz[i]!;
+        let sz = this.dx[i]!;
+        const sl = Math.hypot(sx, sz) || 1;
+        sx /= sl;
+        sz /= sl;
+        const ph = i * 1.3;
+        const f = Math.sin(this.t * 15 + ph) * 0.2 + Math.sin(this.t * 23 + ph * 1.7) * 0.06;
+        const v = Math.cos(this.t * 11 + ph) * 0.06;
+        ox = sx * f;
+        oy = v;
+        oz = sz * f;
+      }
+      this.ribbons.push(i, this.px[i]! - this.dx[i]! * L * 0.5 + ox, this.py[i]! - this.dy[i]! * L * 0.5 + oy, this.pz[i]! - this.dz[i]! * L * 0.5 + oz);
     }
   }
 
