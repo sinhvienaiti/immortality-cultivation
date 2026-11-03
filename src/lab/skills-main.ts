@@ -43,8 +43,8 @@ import { SCREEN_TIERS, ScreenFx, ULT_CLIMAX_FRAMES, type ImpactRole, type Screen
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { VictimDirector } from "./victims";
-import { CutIn } from "./cutin";
-import { LabSound } from "./sound";
+import { CutIn, CUTIN_ART } from "./cutin";
+import { LabSound, type SoundTake } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
@@ -602,11 +602,20 @@ const van = new VanKiemFx(
   VAN_KIEM_SWORDS[quality],
 );
 /**
- * The ultimate's cut-in (canon D58 (4)): Thiên Hà's last key starts it; the world and the typing timer hold about
- * 1 s while it plays (lab time), then the skill fires.
+ * The ultimate's cut-in (canon D58 (4)): Thiên Hà's last key starts it; the world and the typing timer hold while it
+ * plays (lab time), then the skill fires. Style C, ink and light, the owner's pick of 03/11: she gathers with eyes
+ * closed, then cuts to the shout on the callout's "天", which starts 1.08 s into callout-k5/01.ogg (retune `shoutAt`
+ * with that file); 1.7 s in all.
  */
 const cutin = new CutIn(document.body);
-const ULT_CUTIN = { name: "MILKY-WAY SWORD RAIN", hanzi: "天河劍雨", seconds: Number(params.get("cutin") ?? "0.9") || 0.9 };
+const ULT_CUTIN = {
+  name: "MILKY-WAY SWORD RAIN",
+  hanzi: "天河劍雨",
+  seconds: Number(params.get("cutin") ?? "1.7") || 1.7,
+  art: CUTIN_ART.c,
+  shoutAt: 1.08,
+};
+cutin.preload(ULT_CUTIN.art);
 const ultAim = { x: 0, z: -9 };
 function startUltimate(tx: number, tz: number): void {
   ultAim.x = tx;
@@ -1201,6 +1210,13 @@ declare global {
       bladePx(): Record<string, number>;
       /** Sound hooks: files found per event id, what was asked since reset (heard or silent), sounds started. */
       sound(): { found: Record<string, number>; asked: Record<string, number>; played: number };
+      /**
+       * Sound for fixed-step videos: from now the lab logs what it would play on its own clock instead of playing it;
+       * resolves when the files are known. Mix the log with scripts/visual/mix-lab-sound.mjs.
+       */
+      soundRecord(): Promise<void>;
+      /** The sounds logged since soundRecord(). */
+      soundTakes(): readonly SoundTake[];
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
     };
@@ -1604,6 +1620,8 @@ void (async () => {
       return out;
     },
     sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played }),
+    soundRecord: () => sound.record(),
+    soundTakes: () => sound.takes(),
     async swarm(mode) {
       const def = fx.weaponInfo;
       const models = await loadSwordModels(def);
