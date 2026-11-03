@@ -231,7 +231,13 @@ describe("ground decals", () => {
     expect(hsl.h * 360).toBeLessThan(45);
     // The ember glow it cools through stays orange (green ≥ a third of red).
     expect(fire.ground!.heat[1] / fire.ground!.heat[0]).toBeGreaterThan(0.3);
-    expect(fire.ground!.alpha).toBeLessThan(0.75);
+    // Dense to a crisp irregular edge with a charred ring (round 3: a soft see-through edge read as a dirt smudge on
+    // pale stone), yet never opaque ink.
+    expect(fire.ground!.alpha).toBeGreaterThan(0.8);
+    expect(fire.ground!.alpha).toBeLessThan(0.95);
+    expect(pool.mesh.material.fragmentShader).toContain("charRing");
+    // It outlasts the ground fire burning on it (~3 s).
+    expect(fire.ground!.life * fire.ground!.erodeFrom).toBeGreaterThan(3);
   });
 });
 

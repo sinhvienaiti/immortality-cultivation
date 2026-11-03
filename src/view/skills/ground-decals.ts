@@ -6,9 +6,11 @@
  * reads as a veil on pale stone (DRAGON_FIRE_DIAGNOSIS). An optional glowing edge cools over its life (Fire's
  * embers in the scorch), added in the same premultiplied pass. Texture: A = coverage, R = detail.
  * With no texture (null) the pool draws a procedural char instead (03/11 fixes: Kenney's black spiky scorch star read
- * as an ink splat on pale stone): a soft irregular burn (a domain-warped heart, its edge broken by noise, never a
- * star), denser at the heart and graded out into browned stone, with ember cracks and specks inside and a glowing rim
- * at its edge that cool with the decal's heat, eroding away from its thin parts at the end.
+ * as an ink splat on pale stone; round 3: its soft graded edge then read as a brown-grey dirt smudge): a burn with a
+ * crisp irregular edge (a domain-warped blob swelling in lobes, never a star), dense to that edge, a warm brown band
+ * of scorched stone streaked out from the blow, a charred ring just inside the edge, a dark soot-umber heart with
+ * ember cracks and specks, and a glowing rim at its edge, all cooling with the decal's heat; it erodes from its edge
+ * in at the end.
  * View only; no allocation per decal.
  */
 import * as THREE from "three";
@@ -73,12 +75,17 @@ float gdCells(vec2 p) {
 void main() {
   float n = gdNoise(vUv * 7.0 + vSeed * 13.7) * 0.65 + gdNoise(vUv * 17.0 - vSeed * 5.3) * 0.35;
 #ifdef PROCEDURAL
-  // A soft irregular char: a warped heart (no rays), its edge broken by two octaves of noise; R = its grain.
+  // A burn with a crisp, irregular edge (round 3: the soft graded char read as a brown-grey dirt smudge on pale
+  // stone): a domain-warped blob whose outline swells in lobes (no rays), d 0 at its heart … 1 at its edge; A = how
+  // far inside (it grows in and erodes from its edge), R = its grain.
   vec2 p = vUv * 2.0 - 1.0;
   vec2 warp = vec2(gdNoise(p * 2.2 + vSeed * 3.1), gdNoise(p * 2.2 - vSeed * 1.7 + 4.0)) - 0.5;
-  float rr = length(p + warp * 0.55);
-  float cover = 1.0 - smoothstep(0.2, 0.92, rr + (n - 0.5) * 0.3);
-  vec4 t = vec4(gdNoise(p * 11.0 + vSeed * 9.1), 0.0, 0.0, cover);
+  vec2 pw = p + warp * 0.42;
+  float rr = length(pw);
+  vec2 dirc = pw / max(rr, 1e-4);
+  float lobes = gdNoise(dirc * 2.3 + vSeed * 7.0) * 0.7 + gdNoise(dirc * 6.0 - vSeed * 2.0) * 0.3;
+  float d = rr / (0.56 + 0.32 * lobes) + (n - 0.5) * 0.07;
+  vec4 t = vec4(gdNoise(p * 11.0 + vSeed * 9.1), 0.0, 0.0, clamp(1.0 - d, 0.0, 1.0));
 #else
   vec4 t = texture2D(map, vUv);
 #endif
@@ -90,12 +97,19 @@ void main() {
   float erode = smoothstep(vAge.z, 1.0, k);
   float thr = max(0.06 + (1.0 - grow) * 0.9, mix(0.06, 1.12, erode));
 #ifdef PROCEDURAL
-  // Graded, not stamped: dense at the heart, thinning out into browned stone (low contrast on pale ground).
-  float keep = smoothstep(thr, thr + 0.22, field);
-  float a = keep * vBody.a * mix(0.3, 1.0, smoothstep(0.15, 0.75, t.a));
+  // Readable burnt stone: a crisp irregular edge, dense to it (a thin see-through rim read as a smudge), a warm brown
+  // band of scorched stone streaked out from the blow, a charred ring just inside the edge, a dark soot-umber heart.
+  float keep = smoothstep(thr, thr + 0.06, field);
+  float cover = 1.0 - smoothstep(0.95, 1.0, d);
+  float a = keep * cover * vBody.a * mix(0.78, 1.0, smoothstep(0.0, 0.45, t.a));
   if (a < 0.002) discard;
-  // The heart darker, the outskirts a lighter scorched brown.
-  vec3 body = vBody.rgb * mix(2.4, 0.85, smoothstep(0.2, 0.8, t.a)) * mix(0.8, 1.15, t.r);
+  // Scorched brown, dark enough to darken dark stone a little too (a lighter brown read as a puddle there).
+  vec3 brown = vBody.rgb * 2.6;
+  vec3 dark = vBody.rgb * 0.75;
+  float streak = gdNoise(dirc * 11.0 + rr * 0.9 + vSeed);
+  vec3 body = mix(brown * mix(0.6, 1.3, streak), dark, smoothstep(0.18, 0.62, t.a));
+  float charRing = smoothstep(0.76, 0.86, d) * (1.0 - smoothstep(0.88, 0.97, d));
+  body = mix(body, dark * 1.4, charRing * 0.65) * mix(0.85, 1.12, t.r);
   // Ember cracks in the heart and a glowing rim at the char's edge, cooling with vHeat.a (gold while hot, then
   // orange, then gone; never a dark red glow).
   // The cracks: warped cell walls, thin, broken into separate runs by noise, only in the heart.

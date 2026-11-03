@@ -107,7 +107,8 @@ export const FIRE_STREAM: StreamTone = {
  */
 // It outlasts the ground fire burning on it (~3 s, round 3: the owner's "the flames vanish a little fast"), its
 // ember cracks cooling over ~4 s.
-const SCORCH: GroundAftermath = { texture: null, life: 5.2, growIn: 0.05, erodeFrom: 0.62, body: CHAR, alpha: 0.6, heat: [1.6, 0.62, 0.12], cool: 0.55 };
+// Dense to its crisp edge (a thin see-through rim on pale stone read as a dirt smudge: round 3).
+const SCORCH: GroundAftermath = { texture: null, life: 5.2, growIn: 0.05, erodeFrom: 0.62, body: CHAR, alpha: 0.86, heat: [1.6, 0.62, 0.12], cool: 0.55 };
 const SCORCH_LINE: GroundAftermath = { ...SCORCH, life: 5.6, erodeFrom: 0.66, cool: 0.6 };
 
 /**
