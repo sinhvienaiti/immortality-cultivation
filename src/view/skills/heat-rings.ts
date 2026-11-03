@@ -1,10 +1,13 @@
 /**
  * Rings of heat as matter, not added light (03/11 fixes: Fire's pressure ring at the hand was the additive shock
  * sheet in the fire palette, pale pink-orange on light stone). A ring is a band of the element's body colour (normal
- * blend, premultiplied: it covers the stone, so it stays saturated on pale ground) on a wider soot underlay, with a
- * thin hot line down its middle that alone is added (HDR while hot). It opens fast and eased out, cools from lit to
- * body colour, and breaks up by erosion at its end (never a see-through fade). Camera-facing (a pressure ring at the
- * hand) or lying on the ground (a ring of fire round a plant).
+ * blend, premultiplied: it covers the stone, so it stays saturated on pale ground) with fire's structure (round 3: a
+ * uniform thick band read as an orange plastic ring): its width and heat vary round it, flame tongues lick outward
+ * from it (amber at the root, vermilion at the tip, each its own length, shorter as it cools), a thin hot line down
+ * its middle (alone added, HDR while hot) breaks into segments that part as it cools, a soot underlay thick along its
+ * inner edge and thin along the outer. It opens fast and eased out, the cooler arcs cool first, and it breaks up by
+ * erosion at its end (never a see-through fade). Camera-facing (a pressure ring at the hand) or lying on the ground
+ * (a ring of fire round a plant); the kit sheds embers off it.
  *
  * GPU-analytic like embers.ts: each spawn writes its slot once and the shader opens and cools it on the pool's clock.
  * One draw call, hidden while nothing burns; no allocation per frame or per spawn.
@@ -22,8 +25,10 @@ varying float vU;
 varying float vHeat;
 varying float vW;
 varying float vSeed;
+varying float vAge;
 void main() {
   float age = uTime - iPos.w;
+  vAge = age;
   float life = iRing.z;
   vUv = uv * 2.0 - 1.0;
   vU = 0.0;
@@ -37,8 +42,8 @@ void main() {
   float u = age / life;
   vU = u;
   float k = 1.0 - (1.0 - u) * (1.0 - u) * (1.0 - u);
-  // The band's radius sits at 0.8 of the quad's half-size.
-  float R = mix(iRing.x, iRing.y, k) / 0.8;
+  // The band's radius sits at RR of the quad's half-size (room outside it for the flame tongues).
+  float R = mix(iRing.x, iRing.y, k) / RR;
   vHeat = iLook.y * pow(1.0 - u, 1.2);
   float c = cos(iLook.z);
   float s = sin(iLook.z);
@@ -63,7 +68,9 @@ varying float vU;
 varying float vHeat;
 varying float vW;
 varying float vSeed;
+varying float vAge;
 float hrHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float hrHash1(float p) { return fract(sin(p * 91.7 + 17.3) * 43758.5453); }
 float hrNoise(vec2 p) {
   vec2 i = floor(p);
   vec2 f = fract(p);
@@ -73,21 +80,45 @@ float hrNoise(vec2 p) {
 void main() {
   float r = length(vUv);
   float ang = atan(vUv.y, vUv.x);
-  // Around the ring: flame-like breaks (two octaves, wrapping at ±π through the circle's own coordinates).
+  // Round the ring through the circle's own coordinates (no seam at ±π): its width and heat vary (low), its edge
+  // wavers (mid), and it shimmers as it opens.
   vec2 ring = vec2(cos(ang), sin(ang));
-  float n = hrNoise(ring * 3.0 + vSeed * 17.0) * 0.6 + hrNoise(ring * 7.0 - vSeed * 5.0 + vU * 2.0) * 0.4;
-  float w = vW * 0.8 * (1.0 - 0.45 * vU);
-  float d = abs(r - 0.8) + (n - 0.5) * w * 0.5;
-  float bodyA = 1.0 - smoothstep(w * 0.55, w * 0.85, d);
-  float sootA = (1.0 - smoothstep(w * 0.85, w * 1.35, d)) * uSootA;
-  float hot = 1.0 - smoothstep(0.0, w * 0.12, d);
-  // It breaks up and goes at its end (the thin parts of the band first).
-  float thr = smoothstep(0.5, 1.0, vU) * 1.05;
-  float keep = smoothstep(thr, thr + 0.12, n * 0.8 + (1.0 - d / max(w, 1e-4)) * 0.25);
-  float a = (bodyA + sootA * (1.0 - bodyA)) * keep;
+  float nw = hrNoise(ring * 1.8 + vSeed * 17.0);
+  float nh = hrNoise(ring * 2.6 - vSeed * 9.0 + 5.0);
+  float nm = hrNoise(ring * 7.0 - vSeed * 5.0 + vec2(vAge * 3.0, 0.0));
+  float w = vW * RR * (1.0 - 0.35 * vU) * (0.45 + 1.1 * nw);
+  float d = r - RR;
+  float dn = d + (nm - 0.5) * w * 0.5;
+  // Uneven cooling: some arcs stay lit longer than others.
+  float heat = clamp(vHeat * (0.5 + 1.0 * nh), 0.0, 1.0);
+  float bodyA = 1.0 - smoothstep(w * 0.42, w * 0.62, abs(dn));
+  // Flame tongues licking out from the band: one per sector, each its own length (shorter as it cools), tapering to a
+  // point, wavering, flickering outward.
+  float K = 26.0;
+  float sec = (ang / 6.2831853 + 0.5) * K;
+  float id = floor(sec);
+  float fs = fract(sec) - 0.5;
+  float L = w * 1.9 * (0.25 + 0.75 * hrHash1(id + vSeed * 13.0)) * (0.35 + 0.65 * heat) * (0.85 + 0.3 * nm);
+  float t = (dn - w * 0.42) / max(L, 1e-4);
+  float hw = mix(0.46, 0.04, clamp(t, 0.0, 1.0)) + (hrNoise(vec2(id * 3.1, t * 3.0 - vAge * 8.0)) - 0.5) * 0.16;
+  float tongue = step(0.0, t) * (1.0 - smoothstep(0.82, 1.0, t)) * (1.0 - smoothstep(hw - 0.08, hw, abs(fs + (nm - 0.5) * 0.2 * t)));
+  // A soot underlay: dense along the inner edge, a thin dark line at the outer edge of the band and the tongues.
+  float inner = (1.0 - smoothstep(w * 0.55, w * 1.6, -dn)) * step(dn, 0.0);
+  float outer = (1.0 - smoothstep(w * 0.62, w * 0.9, dn)) * step(0.0, dn);
+  float sootA = max(inner, outer * 0.85) * uSootA;
+  float flame = max(bodyA, tongue * 0.96);
+  // It breaks up and goes at its end, the cooler arcs and the thin parts first.
+  float thr = smoothstep(0.4, 1.0, vU) * 1.05;
+  float keep = smoothstep(thr, thr + 0.12, nm * 0.6 + (1.0 - abs(dn) / max(w, 1e-4)) * 0.2 + heat * 0.25 + 0.05);
+  float a = (flame + sootA * (1.0 - flame)) * keep;
   if (a < 0.003) discard;
-  vec3 body = mix(uBody, uLit, smoothstep(0.25, 0.85, vHeat));
-  vec3 rgb = uSoot * sootA * (1.0 - bodyA) + body * bodyA + uCore * hot * vHeat * 1.8;
+  vec3 lit = mix(uBody, uLit, smoothstep(0.2, 0.85, heat));
+  // The band lit, the tongues amber at their root cooling to vermilion at the tip.
+  vec3 fc = mix(lit, uBody, smoothstep(0.0, 0.9, t) * step(w * 0.42, dn));
+  // A thin hot line down the band, broken into segments that part as it cools.
+  float seg = smoothstep(0.32 + 0.45 * vU, 0.46 + 0.45 * vU, hrNoise(ring * 9.0 + vSeed * 3.0));
+  float hot = (1.0 - smoothstep(0.0, w * 0.12, abs(dn))) * seg * bodyA;
+  vec3 rgb = uSoot * sootA * (1.0 - flame) + fc * flame + uCore * hot * heat * 1.8;
   gl_FragColor = vec4(rgb * keep, a);
 }`;
 
@@ -140,7 +171,7 @@ export class HeatRingPool {
     const material = new THREE.ShaderMaterial({
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
-      defines: facing === "ground" ? { GROUND: "" } : {},
+      defines: facing === "ground" ? { GROUND: "", RR: "0.68" } : { RR: "0.68" },
       uniforms: {
         uTime: { value: 0 },
         uSoot: { value: new THREE.Vector3(0.02, 0.018, 0.017) },

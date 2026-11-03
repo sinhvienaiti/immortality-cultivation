@@ -392,6 +392,45 @@ class FireLayers {
     }
   }
 
+  /**
+   * `n` embers shed off a ring of fire round (x, y, z) as it opens to `r` m: in the camera's plane (the pressure ring
+   * at the hand) or on the ground (a plant's ring), thrown outward and carried up, each from where the ring is then.
+   */
+  private ringEmbers(x: number, y: number, z: number, r: number, life: number, n: number, ground: boolean): void {
+    const R = this.stage.rand;
+    const m = this.stage.camera.matrixWorld.elements;
+    for (let i = 0; i < n; i += 1) {
+      const a = R.range(0, Math.PI * 2);
+      // Where the ring is when it sheds this one (it opens eased out over its life).
+      const u = R.range(0.15, 0.6);
+      const k = 1 - (1 - u) ** 3;
+      const rr = r * (0.35 + 0.65 * k) * R.range(0.95, 1.12);
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      // The ring's plane: the camera's right and up, or the ground's x and z.
+      const ox = ground ? c : c * m[0]! + sn * m[4]!;
+      const oy = ground ? 0 : c * m[1]! + sn * m[5]!;
+      const oz = ground ? sn : c * m[2]! + sn * m[6]!;
+      const s = this.embers.reset();
+      s.x = x + ox * rr;
+      s.y = y + oy * rr + (ground ? 0.05 : 0);
+      s.z = z + oz * rr;
+      const sp = R.range(1.2, 3.0);
+      s.vx = ox * sp;
+      s.vy = oy * sp + R.range(0.6, 1.8);
+      s.vz = oz * sp;
+      s.drag = R.range(2.4, 3.4);
+      s.rise = R.range(0.8, 1.4);
+      s.sway = R.range(0.08, 0.25);
+      s.life = R.range(0.7, 1.5);
+      s.size = 0.07 + 0.12 * R.next() ** 3;
+      s.heat = R.range(0.8, 1.05);
+      s.flicker = R.range(0.25, 0.5);
+      s.delay = u * life;
+      this.embers.emit();
+    }
+  }
+
   /** `n` embers rising off burnt ground at (x, z) within `r` m (a fire dying, or the scorch still hot). */
   private risingEmbers(x: number, z: number, r: number, n: number, heat: number, delay: number): void {
     const R = this.stage.rand;
@@ -628,6 +667,7 @@ class FireLayers {
     r.width = 0.14;
     r.heat = 1;
     this.rings.emit();
+    this.ringEmbers(p.x, p.y, p.z, r.r1, r.life, this.stage.n(big ? 14 : 9), false);
     // The flame lotus erupts behind the caster (the body stays in front of its own burst).
     this.stage.camera.getWorldDirection(camF);
     const fl = Math.hypot(camF.x, camF.z) || 1;
@@ -1026,6 +1066,7 @@ class FireLayers {
     r.width = 0.11;
     r.heat = 1;
     this.groundRings.emit();
+    this.ringEmbers(a.x, 0.05, a.z, r.r1, r.life, this.stage.n(10), true);
     this.lotus(a.x - a.dx * 0.1, a.z - a.dz * 0.1, 1.5, 1.4, 1, 0.3, 0.6);
     this.scorch.spawn(a.x, a.z, 1.7, SCORCH, this.stage.rand.range(0, 6.28));
     this.emberBurst(a.x, 0.3, a.z, 0.8, 1.0);

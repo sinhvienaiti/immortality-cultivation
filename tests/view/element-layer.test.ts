@@ -8,6 +8,7 @@ import { EmberPool } from "../../src/view/skills/embers";
 import { FirePointPool } from "../../src/view/skills/fire-points";
 import { FlipbookPool, frameAt, parseFlipbookManifest, playLife, type FlipbookMeta, type FlipOptions } from "../../src/view/skills/flipbook";
 import { GroundDecalPool } from "../../src/view/skills/ground-decals";
+import { HeatRingPool } from "../../src/view/skills/heat-rings";
 import { RibbonPool, SpritePool } from "../../src/view/skills/fxkit";
 import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
 import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
@@ -880,6 +881,40 @@ describe("Fire (Sword × Fire, canon D59)", () => {
     // A full pool drops the new point, never a live one.
     for (let i = 0; i < 5; i += 1) pool.emit();
     expect(pool.dropped).toBe(1);
+  });
+
+  it("gives its rings of fire structure: room for flame tongues outside the band, and embers shed as they open (round 3)", () => {
+    const ring = new HeatRingPool(4, "camera");
+    // The band sits inside the quad with room outside it for the tongues; the shader draws tongues and a broken line.
+    expect(Number(ring.mesh.material.defines.RR)).toBeLessThan(0.75);
+    expect(ring.mesh.material.fragmentShader).toContain("tongue");
+    expect(ring.mesh.material.fragmentShader).toContain("seg");
+    const delays: number[] = [];
+    const rings: number[] = [];
+    const ee = vi.spyOn(EmberPool.prototype, "emit").mockImplementation(function (this: EmberPool) {
+      delays.push(this.spec.delay);
+      return true;
+    });
+    const re = vi.spyOn(HeatRingPool.prototype, "emit").mockImplementation(function (this: HeatRingPool) {
+      rings.push(this.spec.life);
+    });
+    try {
+      const stage = stageFor(new THREE.Group(), camera(), sheets(), []);
+      const hooks = stage.hooksOf(elementById("fire")!);
+      const at = new THREE.Vector3(0.3, 1.2, 2.8);
+      hooks.sword!.release!({ slot: "k1", skill: "k1", tier: 1, at, caster: { x: 0, z: 3, fx: 0, fz: -1 }, ringM: 2, pal: undefined as never } as never);
+      expect(rings.length).toBe(1);
+      // Embers leave the ring as it opens (delayed within its life), not all at once from the hand.
+      const shed = delays.filter((d) => d > 0.02 && d < rings[0]!);
+      expect(shed.length).toBeGreaterThanOrEqual(6);
+      delays.length = 0;
+      hooks.stream!.plant!({ x: 1, z: -5, dx: 0, dz: -1 });
+      expect(rings.length).toBe(2);
+      expect(delays.filter((d) => d > 0.02 && d < rings[1]!).length).toBeGreaterThanOrEqual(6);
+    } finally {
+      ee.mockRestore();
+      re.mockRestore();
+    }
   });
 
   it("a full flipbook pool drops a new sprite instead of cutting a live one short (03/11 recheck: key 7 cut 29 live flame lotuses)", () => {
