@@ -18,6 +18,8 @@
  * - Ô 5: needs a full Chân Nguyên and spends it; 3 volleys +30/+75/+120 in
  *   r 6 m: 10 W shared evenly, ≤ 2.5 W a beast, cluster cap 60 %, Thế −40.
  * - Ấn: its Thế is cast.ts's; Tẩy relights a captured node (formation.ts).
+ * - Trial, off by default: a header with `swordKey2: "twin-pearl"` sends ô 2 to
+ *   twin-pearl.ts (Twin Dragons, One Burning Pearl) instead of the line.
  * Ground skills use the last key's `aim` when it is on the field, else the
  * densest cluster in range (targeting.ts, canon §23.3 ties). Tích Kiếm: −8 % in
  * wave 1, +4 % a wave held, ≤ +24 % (combat.ts bucket).
@@ -33,6 +35,7 @@ import { isqrt, mmToU, msToTicks, mulDiv, mulDivSym, uToM, within } from "./fixe
 import { cleanseNode } from "./formation";
 import { postureHit } from "./posture";
 import { densestPoint, nearestToHeart, speciesDef } from "./targeting";
+import { createTwinPearlState, resolveTwinPearl, stepTwinPearl } from "./twin-pearl";
 import { createWard } from "./wards";
 import { dealSlotWord } from "./words";
 
@@ -68,7 +71,10 @@ export function createSkillsState(init: WorldInit): SkillsState {
   for (let seat = 0; seat < Math.max(1, init.seats); seat += 1) {
     seats.push({ cooldownUntil: [0, 0, 0, 0, 0, 0], bands: 0, kiemTamReadyAt: 0, tichKiemPm: 0, bandEnd: -1, autoReadyAt: 0 });
   }
-  return { seats, strikes: [], zones: [], nextId: 1 };
+  const state: SkillsState = { seats, strikes: [], zones: [], nextId: 1 };
+  // Trial key 2 (off by default): only a header that asks for it gets the key, so the default world is unchanged.
+  if (init.header.swordKey2 === "twin-pearl") state.twinPearl = createTwinPearlState();
+  return state;
 }
 
 // ── Aiming ─────────────────────────────────────────────────────────────────
@@ -213,7 +219,7 @@ export function resolveCast(world: World, cast: Cast): boolean {
       done = resolveVolley(world, cast, seat, skills, def);
       break;
     case 2:
-      done = resolveLine(world, cast, def);
+      done = world.skills.twinPearl !== undefined ? resolveTwinPearl(world, cast) : resolveLine(world, cast, def);
       break;
     case 3:
       // Hộ thân: a ward at the Cast's origin; thân pháp: `local` glides on its own `cast resolved`.
@@ -427,6 +433,7 @@ export function stepSkills(world: World): void {
   }
   strikes.length = keep;
   stepZones(world);
+  stepTwinPearl(world);
   // A full bar asks ô 5 for its word the same tick (canon §6.6; words.ts would on the next).
   for (const seat of world.seats) if (seat.chanNguyenPm >= CHAN_NGUYEN.full * 1000) dealSlotWord(world, seat.seat, 5);
 }
