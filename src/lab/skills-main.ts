@@ -1393,6 +1393,10 @@ declare global {
       showHand(on: boolean): void;
       /** Lab debugging: the fx layer's meshes now (render order, shown, instances drawn). */
       fxMeshes(): { order: number; visible: boolean; count: number }[];
+      /** Lab debugging: every named mesh in the fx layer, at any depth, that draws now (name, render order, instances). */
+      fxNamed(): { name: string; order: number; count: number }[];
+      /** Lab debugging: shows or hides every fx mesh whose name starts with `prefix` and redraws the frame (no time passes). */
+      fxShowNamed(prefix: string, on: boolean): number;
       /** Lab debugging: shows or hides a part ("swarm", "blades", every other "fx" layer, "actors") and redraws the frame. */
       debugShow(part: "swarm" | "blades" | "fx" | "actors", on: boolean): void;
       /** Forces the hand prop's jade and ridge-core levels (−1: live), for the bloom check. */
@@ -1508,10 +1512,21 @@ void (async () => {
   // The graphic frame's programs (the mask over instanced and skinned figures, the frame) compile now, not on the
   // first climax.
   screen.prewarm(view.stage.renderer);
-  // The aura's programs (mantle, tip star, the silk ribbons, the far swords' halo) compile now, aura on or off.
-  swordAura.prewarm(view.stage.renderer, view.camera);
-  fx.prewarmAura(view.stage.renderer, view.camera);
-  myriad.prewarmAura(view.stage.renderer, view.camera);
+  // The aura's programs (mantle, tip star, the silk ribbons, the far swords' halo) compile now, aura on or off, for both
+  // targets they may draw into: the post chain's buffer (bloom on: linear, no tone map in the material) and the screen
+  // (Low). Compiled for the screen only, the post chain's variant compiled on the first cast instead (+13 ms on key 1's
+  // first frame, +28 ms on key 7's, 03/11).
+  {
+    const r = view.stage.renderer;
+    const was = r.getRenderTarget();
+    for (const target of [view.stage.composer.readBuffer, null]) {
+      r.setRenderTarget(target);
+      swordAura.prewarm(r, view.camera);
+      fx.prewarmAura(r, view.camera);
+      myriad.prewarmAura(r, view.camera);
+    }
+    r.setRenderTarget(was);
+  }
   caster.onState = (kind, detail) => {
     if (kind === "clip") probe.clip(detail);
     else probe.event(kind, detail);
@@ -1665,6 +1680,26 @@ void (async () => {
         const g = (c as THREE.Mesh).geometry as THREE.InstancedBufferGeometry | undefined;
         return { order: c.renderOrder, visible: c.visible, count: g?.instanceCount ?? -1 };
       }),
+    fxNamed() {
+      const out: { name: string; order: number; count: number }[] = [];
+      view.layers.fx.traverseVisible((c) => {
+        const g = (c as THREE.Mesh).geometry as (THREE.BufferGeometry & { instanceCount?: number }) | undefined;
+        if (c.name !== "" && g !== undefined) out.push({ name: c.name, order: c.renderOrder, count: g.instanceCount ?? -1 });
+      });
+      return out;
+    },
+    fxShowNamed(prefix, on) {
+      // Hidden by name, shown back by name: a pool's own update re-shows it next frame anyway (no time passes here).
+      let n = 0;
+      view.layers.fx.traverse((c) => {
+        if (c.name !== "" && c.name.startsWith(prefix) && (c as THREE.Mesh).geometry !== undefined) {
+          c.visible = on;
+          n += 1;
+        }
+      });
+      view.render(0);
+      return n;
+    },
     debugShow(part, on) {
       // Lab debugging: hide a part and redraw this frame (no time passes).
       if (part === "swarm") {

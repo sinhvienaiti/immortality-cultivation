@@ -7,6 +7,9 @@ import { elementKits } from "../../src/view/skills/elements";
 import { applySwordAuraLook, AURA_BODY_MAX, SWORD_AURA_LOOK } from "../../src/view/skills/sword-aura";
 import { applyBladeLook, SWORD_LOOK } from "../../src/view/skills/sword-material";
 import { RibbonPool } from "../../src/view/skills/fxkit";
+import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
+import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
+import type { TargetField } from "../../src/view/skills/targets";
 import { SwordImpostors } from "../../src/view/skills/real-swords";
 import { bladeWidth, WindSilkMantle } from "../../src/view/skills/aura-mantle";
 import { AURA_FLY, AURA_LEAD, AURA_MID, AURA_WAIT, auraIdOf, FLAME_CAP, FLAME_MID_CAP, SwordAura } from "../../src/view/skills/sword-aura";
@@ -282,5 +285,108 @@ describe("sword aura contract (SWORD_AURA §4.8)", () => {
     expect(f1).toBeCloseTo(f0, 6);
     const f2 = step(1 / 60, AURA_FLY);
     expect(f2).toBeGreaterThan(f1);
+  });
+
+  // ── Replace, never stack (§4.6) ─────────────────────────────────────────────
+  function field(n: number): TargetField {
+    return {
+      size: n,
+      alive: () => true,
+      x: (i) => -4 + i * 1.2,
+      z: () => -6,
+      midY: () => 0.5,
+      radius: () => 0.4,
+      tier: () => 1,
+      nearest: (x, z, maxR, skip = -1) => {
+        let best = -1;
+        let bd = maxR;
+        for (let i = 0; i < n; i += 1) {
+          if (i === skip) continue;
+          const d = Math.hypot(-4 + i * 1.2 - x, -6 - z);
+          if (d <= bd) {
+            bd = d;
+            best = i;
+          }
+        }
+        return best;
+      },
+      inCircle: () => 0,
+      inCapsule: () => 0,
+      hit: () => false,
+    };
+  }
+  function sheets(): SwordSkillTextures {
+    const glow = new THREE.Texture();
+    const o = (): THREE.Texture => new THREE.Texture();
+    return { glow, flare: o(), star: o(), spark: glow, trace: o(), slash: o(), mote: glow, smoke: o(), splash: o(), scorch: o(), ring: o(), shock: o(), halo: o(), twirl: o() };
+  }
+  function host(layer: THREE.Object3D, cam: THREE.Camera): SwordSkillHost {
+    return { layer, camera: cam, targets: field(3), caster(out) { out.x = 0; out.z = 3; out.fx = 0; out.fz = -1; }, hand(out) { out.set(0.3, 1.2, 2.8); }, flash() {}, impulse() {}, hitStop() {}, moveCaster() {}, play() {} };
+  }
+  /** Stars and other sprites drawn now in a layer (every visible instanced mesh's instances). */
+  function liveSprites(layer: THREE.Object3D): number {
+    let n = 0;
+    layer.traverse((o) => {
+      const g = (o as THREE.Mesh).geometry as THREE.InstancedBufferGeometry | undefined;
+      if (o.visible && g !== undefined && (g as { isInstancedBufferGeometry?: boolean }).isInstancedBufferGeometry === true) n += g.instanceCount;
+    });
+    return n;
+  }
+  /** Key 1 typed to its third blade, cast, and flown `frames` frames, with the aura `on` or off. */
+  function key1(on: boolean, frames: number): { layer: THREE.Group; aura: SwordAura; mantle: WindSilkMantle } {
+    const layer = new THREE.Group();
+    const { aura, mantle, cam } = setup();
+    aura.setDirection(on ? "a" : "off");
+    const fx = new SwordSkillFx(host(layer, cam), sheets(), "high");
+    fx.setAura(aura);
+    const step = (): void => {
+      aura.begin();
+      fx.update(1 / 60);
+      aura.end(1 / 60, cam);
+    };
+    fx.setCharge("k1", 0.8, 0, -6);
+    for (let i = 0; i < 40; i += 1) step();
+    fx.cast("k1", 0, -6);
+    for (let i = 0; i < frames; i += 1) step();
+    return { layer, aura, mantle };
+  }
+
+  it("§4.6 key 1: with the aura on, its glints along the waiting blades and at the flying tip go; the mantle and the tip star wear its swords", () => {
+    const off = key1(false, 3);
+    const on = key1(true, 3);
+    expect(off.aura.count).toBe(0);
+    expect(on.aura.count).toBeGreaterThan(0);
+    // The base layers drew the glints as one-frame sprites; with the aura they are gone (fewer sprites, never more).
+    expect(liveSprites(on.layer)).toBeLessThan(liveSprites(off.layer));
+    expect((on.mantle.cards.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(on.aura.count);
+    expect((on.mantle.stars.geometry as THREE.InstancedBufferGeometry).instanceCount).toBeGreaterThan(0);
+  });
+
+  it("§4.6 key 7: with the aura on, mid swords drop their one-frame trails (the mantle's tail takes them); far swords carry the halo", () => {
+    const make = (on: boolean): { layer: THREE.Group; aura: SwordAura; fx: MyriadSwordsFx } => {
+      const layer = new THREE.Group();
+      const { aura, cam } = setup();
+      aura.setDirection(on ? "a" : "off");
+      const fx = new MyriadSwordsFx(
+        { layer, camera: cam, targets: field(12), caster(out) { out.x = 0; out.z = 3; out.fx = 0; out.fz = -1; }, hand(out) { out.set(0.3, 1.2, 2.8); }, struck() {}, phase() {}, flyby() {}, flash() {} },
+        { glow: new THREE.Texture(), slash: new THREE.Texture(), star: new THREE.Texture(), ring: new THREE.Texture(), scorch: new THREE.Texture(), noise: new THREE.Texture() },
+        { mid: 16, far: 24 },
+      );
+      fx.setAura(aura);
+      fx.cast();
+      for (let i = 0; i < 60; i += 1) {
+        aura.begin();
+        fx.update(1 / 60);
+        aura.end(1 / 60, cam);
+      }
+      return { layer, aura, fx };
+    };
+    const off = make(false);
+    const on = make(true);
+    expect(off.aura.count).toBe(0);
+    // Lead blades and mid swords wear the mantle; far swords are not pushed (their halo is in the impostors).
+    expect(on.aura.count).toBeGreaterThan(6);
+    expect(on.aura.count).toBeLessThanOrEqual(6 + 16);
+    expect(liveSprites(on.layer)).toBeLessThan(liveSprites(off.layer));
   });
 });

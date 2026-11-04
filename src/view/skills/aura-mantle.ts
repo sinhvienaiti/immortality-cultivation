@@ -915,7 +915,9 @@ export class WindSilkMantle implements AuraDrawer {
       const fr = r.releaseAge >= 0 ? r.releaseAge * 60 : 1e3;
       const reveal = fr < 1e3 ? Math.min(1, (fr + 1) / 4) : 1;
       let width = fr < 18 ? 1 + MANTLE.surge * (1 - smooth(fr / 18)) : 1;
-      let core = fr < 3 ? 0.8 : 0;
+      // The seams' cores fall off over f3–5 (fast attack, slow decay: cut on f3, the end of the flash was a 56 % drop of
+      // the aura's light in one frame on the smooth probe, 03/11).
+      let core = 0.8 * coreTail(fr);
       let shear = 0;
       let erode = 0;
       // A hit (§3.A "Bổ, trúng"): f0–2 the mantle pulls in to 0.5× with seam cores 3.0; f3–13 the plates shear fully and
@@ -927,7 +929,9 @@ export class WindSilkMantle implements AuraDrawer {
           core = 1;
         } else if (sa < 14) {
           const u = (sa - 3) / 11;
-          width *= 1.4;
+          // The flare opens over two frames while the cores fall off (no frame where both change at once by a step).
+          width *= 0.5 + 0.9 * smooth((sa - 3) / 2);
+          core = Math.max(core, coreTail(sa));
           shear = 1;
           erode = 0.15 + 0.45 * u;
         } else if (sa < 26) {
@@ -1118,6 +1122,14 @@ export function bladeWidth(anchors: AuraAnchors): number {
 function smooth(t: number): number {
   const u = t < 0 ? 0 : t > 1 ? 1 : t;
   return u * u * (3 - 2 * u);
+}
+
+/** A seam core's level `f` frames after a release or a hit: full on f0–2, then (1 − (f − 2) / 4)² (f3 0.56, f4 0.25, f5 0.06). */
+export function coreTail(f: number): number {
+  if (f < 0) return 0;
+  if (f < 3) return 1;
+  const u = 1 - (f - 2) / 4;
+  return u > 0 ? u * u : 0;
 }
 
 /** States the direction answers to (tests). */

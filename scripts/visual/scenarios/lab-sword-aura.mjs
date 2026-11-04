@@ -12,7 +12,8 @@
 // the bloom at 0 (-onnb, -offnb), the swords' geometric mask (-mask.png, aura-gates.ts), the bloom buffer's bright share
 // on and off, and the aura parts' overlap (auraParts). tmp/shots/sword-aura/tools/gates.py reads them.
 // PLAN=hz: the solo at t = 2.5 s reached in 60 Hz steps and in 120 Hz steps (same page, reset between): -60.png, -120.png.
-// PLAN=smooth: the solo every frame through its release (F55–F80) and its hit (F205–F225), on and off.
+// PLAN=smooth: the solo every frame through its release (F55–F80), its hit and rise (F205–F240, framed on the beast) and
+// its return and melt (F305–F358, framed on the hand), each frame shown and hidden (SPLIT=all by default).
 // Compare only runs of the same plan (the lab's clocks carry over from one item to the next).
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -42,7 +43,12 @@ const GATES = [
   ["solop", "solo", "play", false, [40, 100, 160, 205, 280]],
   ["soloc", "solo", "close:0,-1.9,16", false, [100, 160, 211]],
 ];
-const SMOOTH = [["solo", "solo", "close:0,-1.9,16", false, [...range(55, 80), ...range(205, 225)]]];
+// The release at the shoulder; the hit and the rise framed on the struck beast; the return to the hand and the melt.
+const SMOOTH = [
+  ["solo", "solo", "close:0,-1.9,16", false, range(55, 80)],
+  ["soloh", "solo", "close:2,-6.3,11", false, range(205, 240)],
+  ["solom", "solo", "close:0.4,2.4,10", false, range(305, 358)],
+];
 
 export default async function (page) {
   const base = process.env.BASE ?? "http://127.0.0.1:3111/skills-lab.html";
@@ -57,7 +63,10 @@ export default async function (page) {
   const planName = process.env.PLAN ?? "dev";
   const plan = { owner: OWNER, solo: SOLO, gates: GATES, smooth: SMOOTH, hz: [["solo", "solo", "close:0,-1.9,16", false, [150]]] }[planName] ?? DEV;
   const gates = planName === "gates";
-  const split = planName === "smooth" ? ["all"] : (process.env.SPLIT ?? "").split(",").filter(Boolean);
+  const split = (process.env.SPLIT ?? (planName === "smooth" ? "all" : "")).split(",").filter(Boolean);
+  // FRAMES=210-216: the plan's frames replaced (a closer look at a few moments, e.g. which part makes a jump).
+  const fr = /^(\d+)-(\d+)$/.exec(process.env.FRAMES ?? "");
+  if (fr !== null) for (const row of plan) row[4] = range(Number(fr[1]), Number(fr[2]));
   mkdirSync(out, { recursive: true });
   const shots = [];
   let loaded = "";
@@ -100,6 +109,10 @@ export default async function (page) {
         await page.eval(`window.__lab.step(${n}, ${dt})`);
         const file = join(out, `${id}-${hz}.png`);
         await page.shot(file);
+        // The same frame with the aura hidden: the aura's own light at each rate (the scene under it moves a little too).
+        await page.eval("window.__lab.auraShow('all', false)");
+        await page.shot(join(out, `${id}-${hz}-off.png`));
+        await page.eval("window.__lab.auraShow('all', true)");
         shots.push({ id, hz, file });
       }
       continue;

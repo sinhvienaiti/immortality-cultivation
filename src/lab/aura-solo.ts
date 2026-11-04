@@ -19,6 +19,9 @@ const T_RELEASE = 1.0;
 const T_STRIKE = 3.5;
 const T_HOLD = 3.65;
 const T_HAND = 5.2;
+/** The silk tail stops as the sword slows into the hand: a tail on a sword at rest piled into a pale lump above the
+ * pommel (the smooth probe's return frames, 03/11). */
+const T_SILK_END = 4.9;
 const T_END = 6.0;
 
 /** Times (s) and guard points (x, y, z; m) of the path, the caster at (0, 3) facing −z. */
@@ -177,7 +180,7 @@ export class AuraSolo {
     const hx = this.p.x - this.d.x * back;
     const hy = this.p.y - this.d.y * back;
     const hz = this.p.z - this.d.z * back;
-    if (t >= T_RELEASE && !this.silkOn && t < T_HAND) {
+    if (t >= T_RELEASE && !this.silkOn && t < T_SILK_END) {
       this.silkOn = true;
       if (aura.on && !flame) {
         this.silk.start(0, hx, hy, hz, 0.16, 0, 0, 0, 1, 0.05);
@@ -194,7 +197,7 @@ export class AuraSolo {
       const f = Math.sin(t * 15) * 0.2 + Math.sin(t * 23) * 0.06;
       const v = Math.cos(t * 11) * 0.06;
       this.silk.push(0, hx + sx * f, hy + v, hz + sz * f);
-      if (t >= T_HAND) {
+      if (t >= T_SILK_END) {
         this.silk.stop(0, 0.32);
         this.silkOn = false;
       }
