@@ -334,11 +334,12 @@ bus.on((e) => {
 // events as the body, VFX, camera and hit-stop, on the same frame. Audio starts on the first key or click.
 const sound = new LabSound(elementKits().map((k) => k.sound));
 bus.on((e) => sound.on(e));
-// The first unlock creates the AudioContext (60–120 ms on the main thread, measured 04/11): it waits until the key's
-// frame is drawn, so the first key's release and first hit are not held back (the page keeps its user activation).
+// ?key2=twin-pearl measures key-to-first-hit, and the first unlock creates the AudioContext (60–120 ms on the main
+// thread, measured 04/11): there it waits until the key's frame is drawn (Chrome keeps the page's user activation;
+// Safari may start the context suspended until the next key resumes it). Every other lab session unlocks on the key.
 let unlockQueued = false;
 const unlockAudio = (): void => {
-  if (unlockQueued) {
+  if (greybox === null || unlockQueued) {
     sound.unlock();
     return;
   }

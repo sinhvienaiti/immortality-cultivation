@@ -19,7 +19,7 @@ import type { BeastState, Cast, GateId, ReplayHeader, SimEvent, SpeciesId, World
 import { emitCast } from "../sim/cast";
 import { mToU, uToM } from "../sim/fixed";
 import { spawnBeast } from "../sim/spawn";
-import { liveSamples, skyFront, twinPearlGeometry, type TwinGeometry, type TwinPearlCast } from "../sim/twin-pearl";
+import { POOL_PARTS, liveSamples, skyFront, twinPearlGeometry, type TwinGeometry, type TwinPearlCast } from "../sim/twin-pearl";
 import { createWorld, step } from "../sim/world";
 
 const TICK_S = 1 / 60;
@@ -86,15 +86,23 @@ export interface TwinCastReport {
   lotus: number;
   maxHitsOnOne: number;
   crowsHit: number;
-  /** Effective HP dealt, west (x < 0) and east, and on the Vương. */
+  /** Effective HP dealt, west (the sim's side: gate A, or a crow at x < 0) and east, and on the Vương. */
   dealt: number;
   west: number;
   east: number;
   boss: number;
   kills: number;
-  /** Ticks from F0 to the first hit, and ms from the key to the first drawn frame showing it. */
+  /** The cast's budget left, effective HP, west and east (all parts), and what it started with. */
+  poolWest: number;
+  poolEast: number;
+  poolStart: number;
+  /**
+   * Ticks from F0 to the first hit; ms from the key's event time to the start of the frame after the one that drew it
+   * (that frame is on screen by then: an upper bound of key-to-shown), and to its render call's return (submitted).
+   */
   firstHitTick: number;
   keyToFirstHitMs: number;
+  keyToFirstHitSubmitMs: number;
 }
 
 interface Label {
@@ -418,7 +426,7 @@ export class TwinPearlGreybox {
     this.report = {
       castId: cast.actionId, startTick: world.tick, alive: counts.ground + counts.crows, aliveGround: counts.ground, crowsAlive: counts.crows,
       victims: 0, hits: 0, touch: 0, corridor: 0, lotus: 0, maxHitsOnOne: 0, crowsHit: 0, dealt: 0, west: 0, east: 0, boss: 0, kills: 0,
-      firstHitTick: -1, keyToFirstHitMs: -1,
+      poolWest: 0, poolEast: 0, poolStart: 0, firstHitTick: -1, keyToFirstHitMs: -1, keyToFirstHitSubmitMs: -1,
     };
     this.reports.push(this.report);
     this.firstHitShownPending = true;
@@ -446,6 +454,9 @@ export class TwinPearlGreybox {
       r.victims = live.victims;
       r.dealt = live.dealt;
       r.boss = live.bossDealt;
+      r.poolWest = live.pool.slice(0, POOL_PARTS).reduce((sum, v) => sum + v, 0);
+      r.poolEast = live.pool.slice(POOL_PARTS).reduce((sum, v) => sum + v, 0);
+      r.poolStart = live.poolStart.reduce((sum, v) => sum + v, 0);
       let hits = 0;
       let touch = 0;
       let corridor = 0;
@@ -470,7 +481,9 @@ export class TwinPearlGreybox {
       this.flash.set(e.beast.slot * 100_000 + e.beast.serial, this.labTime);
       if (r !== null) {
         if (r.firstHitTick < 0) r.firstHitTick = e.tick - r.startTick;
-        if (e.x < 0) r.west += e.amount;
+        // The sim's side (twin-pearl.ts sideOf): gate A west, gate B east, a crow by its x.
+        const gate = this.gates.get(e.beast.slot * 100_000 + e.beast.serial);
+        if (gate === "A" || (gate !== "B" && e.x < 0)) r.west += e.amount;
         else r.east += e.amount;
       }
     } else if (e.type === "death" && e.by === "slot2" && r !== null) r.kills += 1;
@@ -489,12 +502,19 @@ export class TwinPearlGreybox {
     this.draw();
   }
 
-  /** After the frame is drawn: the first hit of the latest cast is on screen, so its key-to-hit time is known. */
+  /**
+   * After the frame that draws the first hit of the latest cast is submitted: the submit time now, and the shown time
+   * at the start of the next frame (requestAnimationFrame's timestamp; the drawn frame is presented by then).
+   */
   afterRender(now = performance.now()): void {
     const r = this.report;
     if (!this.firstHitShownPending || r === null || this.current === null || r.firstHitTick < 0) return;
     this.firstHitShownPending = false;
-    r.keyToFirstHitMs = Math.round((now - this.current.keyAt) * 10) / 10;
+    const keyAt = this.current.keyAt;
+    r.keyToFirstHitSubmitMs = Math.round((now - keyAt) * 10) / 10;
+    requestAnimationFrame((frameStart) => {
+      r.keyToFirstHitMs = Math.round((frameStart - keyAt) * 10) / 10;
+    });
   }
 
   private beastSize(b: BeastState, out: THREE.Vector3): void {
@@ -690,7 +710,8 @@ export class TwinPearlGreybox {
       "  touch " + r.touch + " · corridor " + r.corridor + " · lotus " + r.lotus,
       "crows hit: " + r.crowsHit + " / " + r.crowsAlive + " · kills " + r.kills,
       "damage " + r.dealt + " HP · west/east " + Math.round((100 * r.west) / total) + "/" + Math.round((100 * r.east) / total) + " · Vương " + r.boss,
-      "first hit: F" + r.firstHitTick + " · key → drawn " + (r.keyToFirstHitMs < 0 ? "…" : r.keyToFirstHitMs + " ms"),
+      "budget left: west " + r.poolWest + " · east " + r.poolEast + " of " + r.poolStart + " HP",
+      "first hit: F" + r.firstHitTick + " · key → shown ≤ " + (r.keyToFirstHitMs < 0 ? "…" : r.keyToFirstHitMs + " ms") + " (submitted " + (r.keyToFirstHitSubmitMs < 0 ? "…" : r.keyToFirstHitSubmitMs + " ms") + ")",
     );
     return lines.join("\n");
   }
