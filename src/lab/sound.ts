@@ -23,6 +23,7 @@
  * the bus calls `on` on the same frame as the body, VFX, camera and hit-stop.
  */
 import type { LabEvent } from "./events";
+import { BUS_GAIN, MASTER_GAIN, SEND_LEVEL, VERB_RETURN, trimGain, type SoundBus } from "./sound-tiers";
 
 const BASE = "/art-src/lab/audio/";
 /** Every event id the lab may play (folders under BASE). */
@@ -54,8 +55,7 @@ export const SOUND_IDS = [
 ] as const;
 export type SoundId = (typeof SOUND_IDS)[number];
 
-type Bus = "combat" | "voice" | "world";
-const BUS_GAIN: Record<Bus, number> = { combat: 0.8, voice: 0.95, world: 0.85 };
+type Bus = SoundBus;
 /** Impacts merge into one sound per bucket per material (s); deaths too. */
 const IMPACT_BUCKET_S = 0.04;
 const DEATH_BUCKET_S = 0.05;
@@ -79,6 +79,8 @@ export interface SoundTake {
   readonly at: number;
   readonly url: string;
   readonly gain: number;
+  /** Offline wet multiplier: SEND_LEVEL / bus gain, since `gain` already includes the dry bus. */
+  readonly send: number;
   readonly pan: number;
   readonly rate: number;
   /** A duck of every bus to 8 % for this long (s): the hush before a finisher. */
@@ -95,6 +97,8 @@ export class LabSound {
   element = "";
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
+  private verb: DelayNode | null = null;
+  private verbReturn: GainNode | null = null;
   private readonly buses = new Map<Bus, GainNode>();
   private readonly files = new Map<string, string[]>();
   private readonly buffers = new Map<string, AudioBuffer>();
@@ -163,7 +167,7 @@ export class LabSound {
     const context = new AudioContext();
     this.context = context;
     this.master = context.createGain();
-    this.master.gain.value = 0.9;
+    this.master.gain.value = MASTER_GAIN;
     this.master.connect(context.destination);
     for (const bus of Object.keys(BUS_GAIN) as Bus[]) {
       const node = context.createGain();
@@ -171,6 +175,25 @@ export class LabSound {
       node.connect(this.master);
       this.buses.set(bus, node);
     }
+    const delay = context.createDelay();
+    delay.delayTime.value = 0.025;
+    const highpass = context.createBiquadFilter();
+    highpass.type = "highpass";
+    highpass.frequency.value = 200;
+    highpass.Q.value = -3.0103; // Web Audio low/highpass Q is in dB (linear Q = 0.7071).
+    const convolver = context.createConvolver();
+    convolver.normalize = true;
+    const lowpass = context.createBiquadFilter();
+    lowpass.type = "lowpass";
+    lowpass.frequency.value = 6500;
+    lowpass.Q.value = -3.0103;
+    const verbReturn = context.createGain();
+    verbReturn.gain.value = VERB_RETURN;
+    delay.connect(highpass).connect(convolver).connect(lowpass).connect(verbReturn).connect(this.master);
+    this.verb = delay;
+    this.verbReturn = verbReturn;
+    // An unloaded convolver is silent; the dry buses can play while the IR loads.
+    void this.buffer(BASE + "ir/hall-a.wav").then((buffer) => { if (buffer !== null) convolver.buffer = buffer; });
     this.discovered ??= this.discover();
   }
 
@@ -238,6 +261,8 @@ export class LabSound {
     this.asked[id] = (this.asked[id] ?? 0) + 1;
     // The element's take when it has one (counted under its own id too); the gap stays the event's.
     const use = this.resolve(id);
+    gain *= trimGain(use);
+    const sendLevel = SEND_LEVEL[use] ?? (use.startsWith("callout") ? 0.08 : 0);
     if (use !== id) this.asked[use] = (this.asked[use] ?? 0) + 1;
     const list = this.files.get(use);
     const recording = this.recording;
@@ -248,7 +273,7 @@ export class LabSound {
       if (this.clock - (this.lastRecorded.get(id) ?? -Infinity) < gap - 1e-6) return false;
       this.lastRecorded.set(id, this.clock);
       const url = list[this.rr++ % list.length]!;
-      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate), ...(bus === "voice" ? { voice: true } : {}) });
+      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], send: sendLevel / BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate), ...(bus === "voice" ? { voice: true } : {}) });
       this.played += 1;
       return true;
     }
@@ -268,11 +293,18 @@ export class LabSound {
     const panner = context.createStereoPanner();
     panner.pan.value = clamp(pan, -1, 1);
     source.connect(volume).connect(panner).connect(this.buses.get(bus) ?? this.master!);
+    const send = context.createGain();
+    send.gain.value = sendLevel;
+    if (this.verb !== null) panner.connect(send).connect(this.verb);
     source.start();
-    if (bus === "voice") {
-      this.voices.add(source);
-      source.onended = () => this.voices.delete(source);
-    }
+    if (bus === "voice") this.voices.add(source);
+    source.onended = () => {
+      this.voices.delete(source);
+      source.disconnect();
+      volume.disconnect();
+      panner.disconnect();
+      send.disconnect();
+    };
     this.played += 1;
     return true;
   }
@@ -294,18 +326,20 @@ export class LabSound {
   /** Ducks every bus for `seconds` (the hush before a finisher). */
   private duck(seconds: number): void {
     if (this.recording !== null) {
-      this.recording.push({ at: this.clock, url: "", gain: 0, pan: 0, rate: 1, duck: seconds });
+      this.recording.push({ at: this.clock, url: "", gain: 0, send: 0, pan: 0, rate: 1, duck: seconds });
       return;
     }
     const context = this.context;
     if (context === null) return;
     const now = context.currentTime;
-    for (const [bus, node] of this.buses) {
+    const returns: [GainNode, number][] = [...this.buses].map(([bus, node]) => [node, BUS_GAIN[bus]]);
+    if (this.verbReturn !== null) returns.push([this.verbReturn, VERB_RETURN]);
+    for (const [node, level] of returns) {
       node.gain.cancelScheduledValues(now);
       node.gain.setValueAtTime(node.gain.value, now);
-      node.gain.linearRampToValueAtTime(BUS_GAIN[bus] * 0.08, now + 0.012);
-      node.gain.setValueAtTime(BUS_GAIN[bus] * 0.08, now + seconds);
-      node.gain.linearRampToValueAtTime(BUS_GAIN[bus], now + seconds + 0.01);
+      node.gain.linearRampToValueAtTime(level * 0.08, now + 0.012);
+      node.gain.setValueAtTime(level * 0.08, now + seconds);
+      node.gain.linearRampToValueAtTime(level, now + seconds + 0.01);
     }
   }
 
@@ -397,7 +431,7 @@ export class LabSound {
   }
 
   reset(): void {
-    if (this.recording !== null) this.recording.push({ at: this.clock, url: "", gain: 0, pan: 0, rate: 1, stopVoices: true });
+    if (this.recording !== null) this.recording.push({ at: this.clock, url: "", gain: 0, send: 0, pan: 0, rate: 1, stopVoices: true });
     // A callout still sounding (up to 3 s) would shout over the next cut-in.
     for (const s of this.voices) {
       try {

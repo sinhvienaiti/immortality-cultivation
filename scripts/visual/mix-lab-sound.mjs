@@ -6,9 +6,11 @@
 // master gain (0.9, as live) and a limiter. Mux the result with the frames' video. A take's time is the lab clock at
 // the start of the frame that asked for it, so when a capture shoots each frame after its step (frame k = step k + 1
 // since soundRecord()), the offset is 0; pass --offset=<1/fps> when frame 0 is shot before the first step.
-//   node scripts/visual/mix-lab-sound.mjs <takes.json> <out.wav> [--duration=<s>] [--offset=<s>] [--root=<dir>]
+//   node scripts/visual/mix-lab-sound.mjs <takes.json> <out.wav> [--duration=<s>] [--offset=<s>] [--root=<dir>] [--ir=<file>]
 // takes.json: the array of takes; root: the folder served at "/" (default: this repo), so "/art-src/…" urls resolve.
-// Default duration: until the longest take ends (pass the video's length, frames / fps, to match a capture).
+// A send is relative to the recorded dry bus gain. Old takes have send=0. The shared wet return joins before
+// hush and master, as live; its silent full-length bed preserves afir's tail after the final take.
+// Default duration: longest take + 25 ms + IR duration with sends; otherwise longest take + 250 ms.
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -23,12 +25,21 @@ const flag = (name, fallback) => {
 };
 const [takesPath, outPath] = args.filter((a) => !a.startsWith("--"));
 if (takesPath === undefined || outPath === undefined) {
-  console.error("Usage: node scripts/visual/mix-lab-sound.mjs <takes.json> <out.wav> [--duration=<s>] [--offset=<s>] [--root=<dir>]");
+  console.error("Usage: node scripts/visual/mix-lab-sound.mjs <takes.json> <out.wav> [--duration=<s>] [--offset=<s>] [--root=<dir>] [--ir=<file>]");
   process.exit(2);
 }
 const root = resolve(flag("root", join(dirname(fileURLToPath(import.meta.url)), "..", "..")));
 const offset = Number(flag("offset", "0"));
 const takes = JSON.parse(readFileSync(takesPath, "utf8"));
+const hasWet = takes.some((t) => t.url && (t.send ?? 0) > 0);
+const irFile = resolve(flag("ir", join(root, "art-src/lab/audio/ir/hall-a.wav")));
+const irMeta = irFile.replace(/\.[^.]+$/, "") + ".json";
+let irScale = 0;
+if (hasWet) {
+  if (!existsSync(irFile) || !existsSync(irMeta)) throw new Error(`Reverb send requires IR and metadata: ${irFile}, ${irMeta}`);
+  irScale = JSON.parse(readFileSync(irMeta, "utf8")).webAudioScale;
+  if (!(irScale > 0) || !Number.isFinite(irScale)) throw new Error(`Invalid webAudioScale: ${irMeta}`);
+}
 
 const fileOf = (url) => {
   let path = url;
@@ -44,7 +55,8 @@ const probes = new Map();
 const probe = (file) => {
   if (!probes.has(file)) {
     const r = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=channels", "-of", "json", file], { encoding: "utf8" });
-    const j = r.status === 0 ? JSON.parse(r.stdout) : {};
+    if (r.status !== 0) throw new Error(`Cannot probe ${file}: ${r.stderr}`);
+    const j = JSON.parse(r.stdout);
     probes.set(file, { duration: Number(j.format?.duration ?? 0), channels: Number(j.streams?.[0]?.channels ?? 2) });
   }
   return probes.get(file);
@@ -82,7 +94,7 @@ for (const t of takes) {
   sounding.push({ ...t, file, at, end, channels, cut: end < at + len / t.rate - 1e-4 });
 }
 const lastEnd = sounding.reduce((m, t) => Math.max(m, t.end), 0);
-const duration = Number(flag("duration", String(lastEnd + 0.25)));
+const duration = Number(flag("duration", String(lastEnd + (hasWet ? 0.025 + probe(irFile).duration : 0.25))));
 
 // One input per file, split for its takes; paths go to ffmpeg as arguments, so no filter-graph escaping.
 const files = [...new Set(sounding.map((t) => t.file))];
@@ -96,6 +108,7 @@ files.forEach((f, i) => {
   next.set(f, 0);
 });
 const labels = [];
+const wetLabels = [];
 sounding.forEach((t, j) => {
   const i = files.indexOf(t.file);
   const k = next.get(t.file);
@@ -104,11 +117,24 @@ sounding.forEach((t, j) => {
   const pan = t.channels === 1 ? `aformat=channel_layouts=mono,${panMono(t.pan)}` : `aformat=channel_layouts=stereo,${panStereo(t.pan)}`;
   const len = t.end - t.at;
   const cut = t.cut ? `,atrim=end=${len.toFixed(4)},afade=t=out:st=${Math.max(0, len - 0.01).toFixed(4)}:d=0.01` : "";
-  lines.push(`[f${i}u${k}]asetrate=${Math.round(SR * t.rate)},aresample=${SR}${cut},aformat=sample_fmts=fltp,${pan},volume=${t.gain.toFixed(4)},adelay=${ms}|${ms}[t${j}]`);
+  const split = (t.send ?? 0) > 0 ? `,asplit=2[t${j}][w${j}]` : `[t${j}]`;
+  lines.push(`[f${i}u${k}]asetrate=${Math.round(SR * t.rate)},aresample=${SR}${cut},aformat=sample_fmts=fltp,${pan},volume=${t.gain},adelay=${ms}|${ms}${split}`);
+  if ((t.send ?? 0) > 0) {
+    lines.push(`[w${j}]volume=${t.send}[ws${j}]`);
+    wetLabels.push(`[ws${j}]`);
+  }
   labels.push(`[t${j}]`);
 });
 lines.push(`anullsrc=r=${SR}:cl=stereo,atrim=0:${duration.toFixed(4)}[base]`);
 labels.push("[base]");
+if (hasWet) {
+  // afir emits only as many samples as its main input: keep silence running for the full capture.
+  lines.push(`anullsrc=r=${SR}:cl=stereo,atrim=0:${duration.toFixed(4)}[wetBase]`);
+  wetLabels.push("[wetBase]");
+  lines.push(`${wetLabels.join("")}amix=inputs=${wetLabels.length}:normalize=0:duration=longest,adelay=25|25,highpass=f=200:t=q:w=0.7071[wetIn]`);
+  lines.push(`[wetIn][${files.length}:a]afir=irnorm=-1:irgain=1,volume=${irScale},lowpass=f=6500:t=q:w=0.7071,volume=0.7[wet]`);
+  labels.push("[wet]");
+}
 
 // The hush: every bus to 8 % over 12 ms, held, back over 10 ms (LabSound.duck), as a per-sample gain.
 const duckGain = ducks.map(([a, s]) => {
@@ -137,8 +163,11 @@ const dir = mkdtempSync(join(tmpdir(), "mix-lab-sound-"));
 const script = join(dir, "graph.txt");
 writeFileSync(script, lines.join(";\n"));
 const inputs = files.flatMap((f) => ["-i", f]);
+if (hasWet) inputs.push("-i", irFile);
 // ffmpeg 7.1+ reads an option's value from a file with "-/option" (-filter_complex_script is gone).
-const run = spawnSync("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", ...inputs, "-/filter_complex", script, "-map", "[out]", "-c:a", "pcm_s16le", resolve(outPath)], { encoding: "utf8", maxBuffer: 1 << 26 });
+const ffmpegArgs = ["-y", "-hide_banner", "-loglevel", "error", ...inputs, "-/filter_complex", script, "-map", "[out]", "-c:a", "pcm_s16le", resolve(outPath)];
+console.log(["ffmpeg", ...ffmpegArgs].map((v) => /^[\w./:=+,-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`).join(" "));
+const run = spawnSync("ffmpeg", ffmpegArgs, { encoding: "utf8", maxBuffer: 1 << 26 });
 rmSync(dir, { recursive: true, force: true });
 if (run.status !== 0) {
   console.error(run.stderr.slice(-1500));

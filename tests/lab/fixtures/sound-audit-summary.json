@@ -1,0 +1,183 @@
+{
+  "source": {
+    "audit": "/Volumes/SS990TPRO/htdocs/typing-game-review/captures/tu-tien/sound-audit/summary-by-event.json",
+    "releaseK7": {
+      "manifest": "/Volumes/SS990TPRO/htdocs/typing-game/games/immortality-cultivation/art-src/lab/audio/manifest.next.json",
+      "files": [
+        "/Volumes/SS990TPRO/htdocs/typing-game/games/immortality-cultivation/art-src/lab/audio/release-k7/03a.ogg"
+      ]
+    }
+  },
+  "events": [
+    {
+      "id": "callout",
+      "mMax": -10.7,
+      "tp": -1.1
+    },
+    {
+      "id": "callout-guard",
+      "mMax": -11.2,
+      "tp": -1.5
+    },
+    {
+      "id": "callout-k2",
+      "mMax": -11.2,
+      "tp": -1.4
+    },
+    {
+      "id": "callout-k4",
+      "mMax": -11.2,
+      "tp": -1.4
+    },
+    {
+      "id": "callout-k5",
+      "mMax": -10.4,
+      "tp": -2.2
+    },
+    {
+      "id": "callout-k7",
+      "mMax": -9.3,
+      "tp": -1.4
+    },
+    {
+      "id": "cast",
+      "mMax": -17,
+      "tp": -7.4
+    },
+    {
+      "id": "death",
+      "mMax": -13,
+      "tp": -2.3
+    },
+    {
+      "id": "death-fire",
+      "mMax": -11.9,
+      "tp": -1.4
+    },
+    {
+      "id": "flyby",
+      "mMax": -15.9,
+      "tp": -8.6
+    },
+    {
+      "id": "flyby-fire",
+      "mMax": -18.7,
+      "tp": -9.7
+    },
+    {
+      "id": "impact-flesh",
+      "mMax": -10.6,
+      "tp": -1.1
+    },
+    {
+      "id": "impact-flesh-fire",
+      "mMax": -11.2,
+      "tp": -1.5
+    },
+    {
+      "id": "impact-spirit",
+      "mMax": -10.2,
+      "tp": -1.6
+    },
+    {
+      "id": "impact-spirit-fire",
+      "mMax": -10.3,
+      "tp": -1.6
+    },
+    {
+      "id": "impact-stone",
+      "mMax": -10.1,
+      "tp": -1.3
+    },
+    {
+      "id": "impact-stone-fire",
+      "mMax": -10.5,
+      "tp": -1.1
+    },
+    {
+      "id": "release",
+      "mMax": -11.4,
+      "tp": -1.5
+    },
+    {
+      "id": "release-auto",
+      "mMax": -15,
+      "tp": -8.5
+    },
+    {
+      "id": "release-dash",
+      "mMax": -14.2,
+      "tp": -5.4
+    },
+    {
+      "id": "release-guard",
+      "mMax": -7.6,
+      "tp": -1.2
+    },
+    {
+      "id": "release-k1",
+      "mMax": -10.2,
+      "tp": -4.3
+    },
+    {
+      "id": "release-k1-fire",
+      "mMax": -13.5,
+      "tp": -4.6
+    },
+    {
+      "id": "release-k2",
+      "mMax": -10.2,
+      "tp": -1
+    },
+    {
+      "id": "release-k4",
+      "mMax": -9.6,
+      "tp": -1.2
+    },
+    {
+      "id": "release-k5",
+      "mMax": -8.5,
+      "tp": -1.2
+    },
+    {
+      "id": "release-k7",
+      "mMax": -8.3,
+      "tp": -2.3
+    },
+    {
+      "id": "release-k7-fire",
+      "mMax": -9.7,
+      "tp": -1.2
+    },
+    {
+      "id": "world-climax",
+      "mMax": -10.6,
+      "tp": -1
+    },
+    {
+      "id": "world-climax-fire",
+      "mMax": -8.8,
+      "tp": -1
+    },
+    {
+      "id": "world-close",
+      "mMax": -10.2,
+      "tp": -1
+    },
+    {
+      "id": "world-close-fire",
+      "mMax": -10.7,
+      "tp": -2.7
+    },
+    {
+      "id": "world-open",
+      "mMax": -11.9,
+      "tp": -2.6
+    },
+    {
+      "id": "world-open-fire",
+      "mMax": -9.2,
+      "tp": -1.2
+    }
+  ]
+}
