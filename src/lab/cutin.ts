@@ -138,7 +138,7 @@ const B_HAND_KEEP: Box = [0.43, 0.2, 0.6, 0.58];
 export const CUTIN_SHOUT_CANDIDATES: Readonly<Record<string, { readonly style: "b" | "c"; readonly shout: CutInFrame }>> = {
   c1: { style: "c", shout: frame("tt-cutin-c-shout-e1-head-skin-up2x.v2-try1.png", 3671, 1713, 0.31, 0.233, C_SHOUT_KEEP) },
   c2: { style: "c", shout: frame("tt-cutin-c-shout-e2-head-skin-up2x.v2-try1.png", 3671, 1713, 0.309, 0.237, C_SHOUT_KEEP) },
-  c3: { style: "c", shout: frame("tt-cutin-c-shout-e3-head-skin-up2x.v2-try1.png", 3671, 1713, 0.31, 0.233, C_SHOUT_KEEP) },
+  c3: { style: "c", shout: frame("tt-cutin-c-shout-e3-head-skin-up2x.v2-try1-ffup.png", 3671, 1713, 0.31, 0.233, C_SHOUT_KEEP) },
   c4: { style: "c", shout: frame("tt-cutin-c-shout-e4-head-skin-up2x.v2-try1.png", 3671, 1713, 0.311, 0.232, C_SHOUT_KEEP) },
   b1: { style: "b", shout: frame("tt-cutin-b-shout-e1-head-skin.v2-try1.png", 1823, 863, 0.287, 0.327, [[0.19, 0.1, 0.34, 0.48], B_HAND_KEEP]) },
   b2: { style: "b", shout: frame("tt-cutin-b-shout-e2-head-skin.v2-try1.png", 1823, 863, 0.287, 0.33, [[0.19, 0.1, 0.34, 0.48], B_HAND_KEEP]) },
