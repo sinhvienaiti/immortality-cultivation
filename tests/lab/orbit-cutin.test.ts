@@ -160,8 +160,8 @@ describe("lab cut-in shout candidates", () => {
     });
   });
 
-  it("uses the owner's Radiant Resolve file for C3", () => {
-    expect(CUTIN_SHOUT_CANDIDATES.c3?.shout.src).toBe("/art-src/skills/cutin/tt-cutin-c-shout-e3-head-skin-up2x.v2-try1.png");
+  it("uses the owner's Radiant Resolve file for C3, Firefly-upscaled (owner's pick, 04/11)", () => {
+    expect(CUTIN_SHOUT_CANDIDATES.c3?.shout.src).toBe("/art-src/skills/cutin/tt-cutin-c-shout-e3-head-skin-up2x.v2-try1-ffup.png");
   });
 
   it("preserves both style A frames", () => {
