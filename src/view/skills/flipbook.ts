@@ -10,6 +10,13 @@
  *     "heading": 0, "alpha": "straight" } } }
  * "clips" may stand for "flipbooks" (an object, or an array of entries with "id"), "atlas" for "file", "grid":
  * [cols, rows] for cols and rows. URLs are built from the folder and the file name, never taken from the JSON.
+ * Optional v2 fields: loopMode ("none": one pass, "stepped": held loop, "holderode": per-pixel switching loop),
+ * frameRange [first, last], controlA, controlB and timingProfile. Any of these selects the v2 shader; otherwise the
+ * original vertex/fragment shaders stay unchanged, including the crossfade across an old `loop: true` seam.
+ * In v2, `frames` is the number of frames in ONE variant: variant v starts at cell v * frames; `variants` is ignored
+ * entirely on old entries (including the existing glint atlases). `anchor` overrides pivot, and `sourceFps` records
+ * the source rate without changing playback. Neither selects v2. Mask A stores hull/ink/hot line/survival order in
+ * RGBA; mask B stores reveal order/motion influence in RG. Masks are linear data, aligned with the atlas cells.
  *
  * Modes (the kit picks one per clip; the manifest's "mode" is used when the kit names none):
  * - "rgba": straight alpha (the colour as filmed, the coverage in alpha): frames crossfade premultiplied, drawn with
@@ -34,6 +41,49 @@
 import * as THREE from "three";
 
 export type FlipbookMode = "rgba" | "fire" | "smoke" | "heat";
+export type FlipbookLoopMode = "none" | "stepped" | "holderode";
+
+export interface FlipbookTiming {
+  readonly revealTicks: number;
+  readonly holdEnd: number;
+  readonly tearEnd: number;
+  readonly tearE: number;
+  readonly erodeEnd: number;
+  readonly width: number;
+  readonly rampTicks: number;
+}
+
+export const FLIPBOOK_TIMING = {
+  // TRIAL (INTEGRATION_PLAN §2.6): reveal 0–3, hold 4–9, tear 10–20, soot and dust 20–42.
+  "impact-key1": { revealTicks: 4, holdEnd: 9, tearEnd: 20, tearE: 0.85, erodeEnd: 42, width: 0.08, rampTicks: 4 },
+} as const satisfies Readonly<Record<string, FlipbookTiming>>;
+export type FlipbookTimingName = keyof typeof FLIPBOOK_TIMING;
+export const FLIPBOOK_ERODE_WIDTH = 0.08;
+
+export type FlipbookVec3 = readonly [number, number, number];
+export type FlipbookVec4 = readonly [number, number, number, number];
+
+export interface FlipbookMaskedLook {
+  readonly ink: FlipbookVec4;
+  readonly bodyCap: number;
+  readonly hot: FlipbookVec4;
+  readonly hotLead: number;
+  readonly ramp: readonly [FlipbookVec3, FlipbookVec3, FlipbookVec3];
+  readonly soot: FlipbookVec3;
+  readonly sharpen: readonly [number, number];
+  readonly grade: FlipbookVec4;
+}
+
+export const FLIPBOOK_MASKED_LOOK: FlipbookMaskedLook = {
+  ink: [0.03, 0.022, 0.02, 0.55],
+  bodyCap: 0.88,
+  hot: [1, 0.982, 0.871, 2.2],
+  hotLead: 0.1,
+  ramp: [[1, 0.982, 0.871], [1, 0.473, 0.001], [0.693, 0.04, 0]],
+  soot: [0.03, 0.022, 0.02],
+  sharpen: [0, 0],
+  grade: [0, 0, 0, 0],
+};
 
 export interface FlipbookMeta {
   readonly id: string;
@@ -54,6 +104,29 @@ export interface FlipbookMeta {
   readonly start: number;
   /** Which way the effect travels in its cell (radians, 0 = to the right): a sprite turned along a direction undoes it. */
   readonly heading: number;
+  /** v2 playback policy; overrides `loop`. */
+  readonly loopMode?: FlipbookLoopMode;
+  /** Inclusive frame segment inside one variant (0 … frames − 1). */
+  readonly frameRange?: readonly [number, number];
+  /** v2 only: variants × frames ≤ cols × rows; variant v starts at cell v × frames. Ignored on old entries. */
+  readonly variants?: number;
+  /** Linear masks: A = hull, ink, hot line, survival order; B = reveal order, motion influence. */
+  readonly controlA?: string;
+  readonly controlB?: string;
+  /** Origin in the cell, from the top left (0–1); overrides pivot. */
+  readonly anchor?: readonly [number, number];
+  /** Source rate for tooling only; playback still uses fps. */
+  readonly sourceFps?: number;
+  /** Default reveal/erosion schedule; requires controlA. */
+  readonly timingProfile?: FlipbookTimingName;
+}
+
+export function isFlipbookV2(meta: FlipbookMeta): boolean {
+  return meta.loopMode !== undefined || meta.frameRange !== undefined || meta.controlA !== undefined || meta.controlB !== undefined || meta.timingProfile !== undefined;
+}
+
+export function flipbookLoopMode(meta: FlipbookMeta): FlipbookLoopMode {
+  return meta.loopMode ?? (meta.loop ? "stepped" : "none");
 }
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -95,6 +168,47 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
     const straight = entry.alpha === true || entry.alpha === "straight";
     const mode: FlipbookMode = entry.mode === "fire" || entry.mode === "smoke" || entry.mode === "rgba" || entry.mode === "heat" ? entry.mode : straight ? "rgba" : entry.blend === "normal" ? "smoke" : "fire";
     const md5 = typeof entry.md5 === "string" && /^[0-9a-f]{32}$/.test(entry.md5) ? "?v=" + entry.md5 : "";
+    const v2 = entry.loopMode !== undefined || entry.frameRange !== undefined || entry.controlA !== undefined || entry.controlB !== undefined || entry.timingProfile !== undefined;
+    const extra: {
+      loopMode?: FlipbookLoopMode; frameRange?: readonly [number, number]; variants?: number;
+      controlA?: string; controlB?: string; anchor?: readonly [number, number]; sourceFps?: number; timingProfile?: FlipbookTimingName;
+    } = {};
+    let loop = entry.loop === true;
+    if (entry.loopMode !== undefined) {
+      if (entry.loopMode !== "none" && entry.loopMode !== "stepped" && entry.loopMode !== "holderode") throw new Error("Invalid flipbook loopMode: " + id);
+      extra.loopMode = entry.loopMode;
+      loop = entry.loopMode !== "none";
+    } else if (v2) extra.loopMode = loop ? "stepped" : "none";
+    if (entry.frameRange !== undefined) {
+      const r = entry.frameRange;
+      if (!Array.isArray(r) || r.length !== 2 || typeof r[0] !== "number" || !Number.isInteger(r[0]) || typeof r[1] !== "number" || !Number.isInteger(r[1]) || r[0] < 0 || r[0] > r[1] || r[1] >= frames) throw new Error("Invalid flipbook frameRange: " + id);
+      extra.frameRange = [r[0], r[1]];
+    }
+    if (v2 && entry.variants !== undefined) {
+      if (!count(entry.variants, cols * rows) || entry.variants * frames > cols * rows) throw new Error("Invalid flipbook variants: " + id);
+      extra.variants = entry.variants;
+    }
+    for (const name of ["controlA", "controlB"] as const) {
+      const file = entry[name];
+      if (file === undefined) continue;
+      if (typeof file !== "string" || !FILE.test(file) || mode !== "rgba" || (name === "controlB" && entry.controlA === undefined)) throw new Error("Invalid flipbook " + name + ": " + id);
+      extra[name] = base + file + md5;
+    }
+    if (entry.anchor !== undefined) {
+      const a = entry.anchor;
+      if (!Array.isArray(a) || a.length !== 2 || typeof a[0] !== "number" || !Number.isFinite(a[0]) || a[0] < 0 || typeof a[1] !== "number" || !Number.isFinite(a[1]) || a[1] < 0) throw new Error("Invalid flipbook anchor: " + id);
+      const anchor: readonly [number, number] = a[0] > 1 || a[1] > 1 ? [a[0] / cw, a[1] / ch] : [a[0], a[1]];
+      if (anchor[0] > 1 || anchor[1] > 1) throw new Error("Invalid flipbook anchor: " + id);
+      extra.anchor = anchor;
+    }
+    if (entry.sourceFps !== undefined) {
+      if (typeof entry.sourceFps !== "number" || !Number.isFinite(entry.sourceFps) || entry.sourceFps <= 0 || entry.sourceFps > 240) throw new Error("Invalid flipbook sourceFps: " + id);
+      extra.sourceFps = entry.sourceFps;
+    }
+    if (entry.timingProfile !== undefined) {
+      if (typeof entry.timingProfile !== "string" || !Object.prototype.hasOwnProperty.call(FLIPBOOK_TIMING, entry.timingProfile) || entry.controlA === undefined) throw new Error("Invalid flipbook timingProfile: " + id);
+      extra.timingProfile = entry.timingProfile as FlipbookTimingName;
+    }
     out.set(id, {
       id,
       url: base + file + md5,
@@ -102,20 +216,27 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       rows,
       frames,
       fps,
-      loop: entry.loop === true,
+      loop,
       mode,
       aspect: cw / ch,
-      pivot: [Math.min(1, Math.max(0, px[0]!)), Math.min(1, Math.max(0, px[1]!))],
+      pivot: extra.anchor ?? [Math.min(1, Math.max(0, px[0]!)), Math.min(1, Math.max(0, px[1]!))],
       start,
       heading: typeof entry.heading === "number" && Number.isFinite(entry.heading) ? (entry.heading * Math.PI) / 180 : 0,
+      ...extra,
     });
   }
   return out;
 }
 
+export interface FlipbookControls {
+  readonly a?: THREE.Texture;
+  readonly b?: THREE.Texture;
+}
+
 interface Entry {
   meta: FlipbookMeta;
   texture: THREE.Texture;
+  controls: FlipbookControls | null;
 }
 
 /** One element folder's atlases (loaded once; pools attach as they arrive). */
@@ -158,8 +279,10 @@ export class FlipbookLibrary {
       const loader = new THREE.TextureLoader();
       await Promise.all(
         [...metas.values()].map(async (meta) => {
+          const loaded: THREE.Texture[] = [];
           try {
             const texture = await loader.loadAsync(meta.url);
+            loaded.push(texture);
             texture.colorSpace = THREE.SRGBColorSpace;
             texture.anisotropy = anisotropy;
             texture.generateMipmaps = true;
@@ -168,9 +291,24 @@ export class FlipbookLibrary {
             texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
             // Straight alpha as stored: the shader premultiplies after sampling.
             texture.premultiplyAlpha = false;
-            this.add(meta, texture);
+            const controls: { a?: THREE.Texture; b?: THREE.Texture } = {};
+            for (const [key, url] of [["a", meta.controlA], ["b", meta.controlB]] as const) {
+              if (url === undefined) continue;
+              const mask = await loader.loadAsync(url);
+              loaded.push(mask);
+              mask.colorSpace = THREE.NoColorSpace;
+              mask.premultiplyAlpha = false;
+              mask.generateMipmaps = true;
+              mask.minFilter = THREE.LinearMipmapLinearFilter;
+              mask.magFilter = THREE.LinearFilter;
+              mask.anisotropy = anisotropy;
+              mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
+              controls[key] = mask;
+            }
+            this.add(meta, texture, meta.controlA !== undefined || meta.controlB !== undefined ? controls : null);
           } catch (error) {
             console.warn("[flipbook] " + meta.url + " did not load", error);
+            for (const texture of loaded) texture.dispose();
           }
         }),
       );
@@ -179,13 +317,17 @@ export class FlipbookLibrary {
   }
 
   /** Tests and captures: an atlas from memory. */
-  add(meta: FlipbookMeta, texture: THREE.Texture): void {
-    this.entries.set(meta.id, { meta, texture });
+  add(meta: FlipbookMeta, texture: THREE.Texture, controls: FlipbookControls | null = null): void {
+    this.entries.set(meta.id, { meta, texture, controls });
     for (const listener of this.listeners) listener(meta.id);
   }
 
   reset(): void {
-    for (const entry of this.entries.values()) entry.texture.dispose();
+    for (const entry of this.entries.values()) {
+      entry.texture.dispose();
+      entry.controls?.a?.dispose();
+      entry.controls?.b?.dispose();
+    }
     this.entries.clear();
     this.loading = null;
   }
@@ -404,6 +546,147 @@ void main() {
   gl_FragColor = vec4(rgb * soft, body * vOcclude * soft);
 }`;
 
+function replaceOnce(src: string, anchor: string, text: string): string {
+  const at = src.indexOf(anchor);
+  if (at < 0 || src.indexOf(anchor, at + 1) >= 0) throw new Error("[flipbook] v2 shader anchor not found once: " + anchor.trim().slice(0, 48));
+  return src.slice(0, at) + text + src.slice(at + anchor.length);
+}
+
+export const FB_COMPOSE_GLSL = /* glsl */ `
+// FlipbookPool v2, mask A (R hull, G ink, B hot line, A survival order): its survival order recoloured through the
+// stepped ramp (uRamp0 white-gold, uRamp1 orange, uRamp2 crimson, uSoot soot).
+vec3 fbRamp(float r) {
+  vec3 c = uSoot;
+  c = mix(c, uRamp2, smoothstep(0.23, 0.27, r));
+  c = mix(c, uRamp1, smoothstep(0.48, 0.52, r));
+  return mix(c, uRamp0, smoothstep(0.73, 0.77, r));
+}
+// Ink under the body under the hot core in one fragment (INTEGRATION_PLAN §2.3), premultiplied; \`soft\` once at the end.
+// ctl = iCtl: x reveal threshold T, y erosion threshold e, z band width, w ramp mix.
+vec4 fbComposeMasked(vec4 t0, vec4 t1, vec4 m0, vec4 m1, float b0, float b1, float w, vec4 ctl, vec3 tint, float soft) {
+  vec3 pm = mix(t0.rgb * t0.a, t1.rgb * t1.a, w);
+  float aAt = mix(t0.a, t1.a, w);
+  vec3 cAt = aAt > 1e-4 ? pm / aAt : mix(t0.rgb, t1.rgb, w);
+  if (uSharpen.y > 0.0) aAt = smoothstep(uSharpen.x, uSharpen.y, aAt);
+  if (uGrade.w > 0.0) {
+    float mxc = max(cAt.r, max(cAt.g, cAt.b));
+    float wht = min(cAt.r, min(cAt.g, cAt.b)) / max(mxc, 1e-4);
+    float heart = smoothstep(uGrade.w, 1.0, wht) * smoothstep(0.93, 1.0, mxc);
+    cAt = mix(cAt, uGrade.rgb * mix(0.8, 1.0, mxc), smoothstep(0.1, 0.5, wht) * (1.0 - heart));
+  }
+  vec4 m = mix(m0, m1, w);
+  float rev = step(mix(b0, b1, w), ctl.x + 0.002);
+  float e = ctl.y;
+  float wd = max(ctl.z, 1e-4);
+  float eh = e + uHotLead * ctl.w;
+  float live = smoothstep(e, e + wd, m.a);
+  float liveH = smoothstep(eh, eh + wd, m.a);
+  float ai = m.g * uInk.a * rev * live;
+  float ab = min(aAt, m.r) * rev * live;
+  float ah = m.b * rev * liveH;
+  float r = clamp((m.a - e) / max(1.0 - e, 1e-4), 0.0, 1.0);
+  vec3 ci = uInk.rgb;
+  vec3 cb = min(mix(cAt, fbRamp(r), ctl.w) * tint, vec3(uBodyCap));
+  vec3 ch = uHot.rgb * uHot.a * tint;
+  float alpha = 1.0 - (1.0 - ai) * (1.0 - ab) * (1.0 - ah);
+  vec3 rgb = ci * ai * (1.0 - ab) * (1.0 - ah) + cb * ab * (1.0 - ah) + ch * ah;
+  return vec4(rgb * soft, alpha * soft);
+}
+`;
+
+const PICK_V1 = `  // Frames blend in time (uStep: held cels); a loop wraps to its first frame.
+  float f = uLoop > 0.5 ? mod(vFrame, uFrames) : clamp(vFrame, 0.0, uFrames - 1.0);
+  float f0 = floor(f);
+  float f1 = uLoop > 0.5 ? mod(f0 + 1.0, uFrames) : min(f0 + 1.0, uFrames - 1.0);
+  float w = uStep > 0.5 ? 0.0 : f - f0;
+`;
+
+export const FB_PICK_GLSL = /* glsl */ `  // FlipbookPool v2: the frame pair inside the clip's segment [uRange.x, uRange.x + uRange.y - 1] (frames of its
+  // variant; vVar: the variant's first cell). No loop mode crossfades the segment's last frame into its first.
+  float fbVar = floor(vVar + 0.5);
+  float fbN = max(uRange.y, 1.0);
+  float fbLast = uRange.x + fbN - 1.0;
+#if FB_LOOP == 0
+  float f = clamp(vFrame, uRange.x, fbLast);
+  float f0 = floor(f);
+  float f1 = min(f0 + 1.0, fbLast);
+  float w = uStep > 0.5 ? 0.0 : f - f0;
+#else
+  float f = uRange.x + mod(vFrame - uRange.x, fbN);
+  float f0 = clamp(floor(f), uRange.x, fbLast);
+#if FB_LOOP == 1
+  float f1 = f0;
+  float w = 0.0;
+#else
+  float f1 = f0 + 1.0 > fbLast ? uRange.x : f0 + 1.0;
+  float w = uStep > 0.5 ? 0.0 : clamp(f - f0, 0.0, 1.0);
+#endif
+#endif
+#if FB_LOOP == 2 || defined(FB_CTRL_A)
+  // Hold and erode between two frames: each pixel switches from f0 to f1 at its own moment (its survival order in
+  // mask A, else the clip's noise through a logistic), never a see-through crossfade. Always in "holderode"; with
+  // mask A also when the pool sharpens (setSharpen).
+#if FB_LOOP == 2
+  bool fbSwitch = true;
+#else
+  bool fbSwitch = uSharpen.y > 0.0;
+#endif
+  if (fbSwitch && w > 0.0) {
+#ifdef FB_CTRL_A
+    float order = texture2D(uCtlA, vxCell(f0 + fbVar, clamp(vUv, uInsetA, 1.0 - uInsetA))).a;
+#else
+    float nO = vxNoise(vUv * 6.0 + vec2(vAge.z * 13.1, vAge.z * 7.3)) * 0.65 + vxNoise(vUv * 15.0 - vec2(vAge.z * 5.7, 0.0)) * 0.35;
+    float order = 1.0 / (1.0 + exp(-8.0 * (nO - 0.5)));
+#endif
+    w = smoothstep(-0.08, 0.08, w - mix(0.08, 0.92, order));
+  }
+#endif
+  f0 += fbVar;
+  f1 += fbVar;
+`;
+
+export const FB_MASKED_GLSL = /* glsl */ `#ifdef FB_CTRL_A
+    vec2 uvA = clamp(vUv, uInsetA, 1.0 - uInsetA);
+    vec4 m0 = texture2D(uCtlA, vxCell(f0, uvA));
+    vec4 m1 = texture2D(uCtlA, vxCell(f1, uvA));
+#ifdef FB_CTRL_B
+    vec2 uvB = clamp(vUv, uInsetB, 1.0 - uInsetB);
+    float b0 = texture2D(uCtlB, vxCell(f0, uvB)).r;
+    float b1 = texture2D(uCtlB, vxCell(f1, uvB)).r;
+#else
+    float b0 = 0.0;
+    float b1 = 0.0;
+#endif
+    gl_FragColor = fbComposeMasked(t0, t1, m0, m1, b0, b1, w, vCtl, vTint, soft);
+    return;
+#endif
+`;
+
+const VERTEX_V2 = replaceOnce(replaceOnce(replaceOnce(VERTEX,
+  "attribute vec2 iLift;\n", "attribute vec2 iLift;\nattribute vec4 iCtl;\nattribute float iVar;\n"),
+  "varying vec4 vAge;\n", "varying vec4 vAge;\nvarying vec4 vCtl;\nvarying float vVar;\n"),
+  "  vAge = iAge;\n", "  vAge = iAge;\n  vCtl = iCtl;\n  vVar = iVar;\n");
+
+const FRAGMENT_V2 = replaceOnce(replaceOnce(replaceOnce(replaceOnce(replaceOnce(FRAGMENT,
+  "uniform vec4 uGrade;\n", `uniform vec4 uGrade;
+uniform vec2 uRange;
+uniform sampler2D uCtlA;
+uniform sampler2D uCtlB;
+uniform vec2 uInsetA;
+uniform vec2 uInsetB;
+uniform vec4 uInk;
+uniform float uBodyCap;
+uniform vec4 uHot;
+uniform float uHotLead;
+uniform vec3 uRamp0;
+uniform vec3 uRamp1;
+uniform vec3 uRamp2;
+`),
+  "varying vec4 vAge;\n", "varying vec4 vAge;\nvarying vec4 vCtl;\nvarying float vVar;\n"),
+  "void main() {\n", FB_COMPOSE_GLSL + "void main() {\n"),
+  PICK_V1, FB_PICK_GLSL),
+  "  if (uMode < 0.5) {\n", "  if (uMode < 0.5) {\n" + FB_MASKED_GLSL);
+
 export interface FlipOptions {
   /** Seconds it lives (default: one pass of the clip at `rate`; a loop: one second). ONE_FRAME: drawn this frame only. */
   life?: number;
@@ -455,9 +738,190 @@ export interface FlipOptions {
    * (or held part-shown) keeps its matte instead of turning see-through (the alpha law; `alpha` fades it).
    */
   erode?: number;
+  /**
+   * A clip declaring controlA: reveal/erosion schedule (name or table), overriding timingProfile; ignored without
+   * controlA. Its default life is (erodeEnd + 1) / 60 s in every pool, including pools without mask A (playLife always
+   * matches spawn's life). Only an rgba pool attached with controls.a applies reveal/erosion, ignores cool and defaults
+   * fadeOut to 0. Other pools retain the old cool, erode and fadeOut behavior.
+   */
+  timing?: FlipbookTimingName | FlipbookTiming;
+  /** v2 variants: clamped index, starting at cell v × frames; omitted: round-robin, reset by clear. Old clips ignore it. */
+  variant?: number;
 }
 
 const WHITE = new THREE.Color(1, 1, 1);
+const EMPTY_OPTIONS: FlipOptions = {};
+
+const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x));
+const mix = (a: number, b: number, w: number): number => a * (1 - w) + b * w;
+function smoothstep(lo: number, hi: number, x: number): number {
+  const t = clamp((x - lo) / (hi - lo), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+export function flipbookTick(ageS: number): number {
+  return Math.max(0, Math.floor(ageS * 60 + 1e-3));
+}
+
+export function revealThreshold(tick: number, revealTicks = 4): number {
+  return clamp((tick + 1) / revealTicks, 0, 1);
+}
+
+export function erodeThreshold(tick: number, t: FlipbookTiming): number {
+  if (tick <= t.holdEnd) return -t.width;
+  if (tick <= t.tearEnd) {
+    const x = (tick - t.holdEnd) / (t.tearEnd - t.holdEnd);
+    return -t.width + (t.tearE + t.width) * (1 - (1 - x) ** 2);
+  }
+  if (tick < t.erodeEnd) return t.tearE + (1 - t.tearE) * (tick - t.tearEnd) / (t.erodeEnd - t.tearEnd);
+  return 1;
+}
+
+export function rampMixAt(tick: number, t: FlipbookTiming): number {
+  return clamp((tick - t.holdEnd) / t.rampTicks, 0, 1);
+}
+
+/** Only manifest controlA enables a schedule; pool mask availability does not change its default life. */
+export function flipbookTimingOf(meta: FlipbookMeta, o: FlipOptions): FlipbookTiming | null {
+  if (meta.controlA === undefined) return null;
+  const t = o.timing ?? meta.timingProfile;
+  if (typeof t === "string") return Object.prototype.hasOwnProperty.call(FLIPBOOK_TIMING, t) ? FLIPBOOK_TIMING[t] : null;
+  return t ?? null;
+}
+
+export function flipbookControl(age: number, life: number, cool: number, erode: number, timing: FlipbookTiming | null, out: { [i: number]: number }, at = 0): void {
+  let T = 1, wd = FLIPBOOK_ERODE_WIDTH, e = -wd, mix = 0;
+  if (timing !== null) {
+    const tick = flipbookTick(age);
+    T = revealThreshold(tick, timing.revealTicks); wd = timing.width; e = erodeThreshold(tick, timing); mix = rampMixAt(tick, timing);
+  } else if (cool > 0) {
+    // The old cool fraction now erodes through mask A's survival order.
+    const burn = Math.min(1, Math.max(0, (age / life - cool) / Math.max(0.05, 1 - cool)));
+    e = -wd + burn * (1 + wd); mix = Math.min(1, burn * 4);
+  }
+  // The old erode amount still removes the thin parts first, now the low A.a values.
+  if (erode > 0) e = Math.max(e, -wd + erode * (1 + wd));
+  out[at] = T; out[at + 1] = e; out[at + 2] = wd; out[at + 3] = mix;
+}
+
+export function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/** Frame pair before per-pixel switching and the variant cell offset; matches FB_PICK_GLSL. */
+export function flipbookFramePair(vFrame: number, lo: number, count: number, loop: FlipbookLoopMode, step: boolean, out: { f0: number; f1: number; w: number }): void {
+  const n = Math.max(count, 1);
+  const last = lo + n - 1;
+  if (loop === "none") {
+    const f = clamp(vFrame, lo, last);
+    out.f0 = Math.floor(f);
+    out.f1 = Math.min(out.f0 + 1, last);
+    out.w = step ? 0 : f - out.f0;
+  } else {
+    const x = vFrame - lo;
+    const f = lo + (x - n * Math.floor(x / n));
+    out.f0 = clamp(Math.floor(f), lo, last);
+    if (loop === "stepped") {
+      out.f1 = out.f0;
+      out.w = 0;
+    } else {
+      out.f1 = out.f0 + 1 > last ? lo : out.f0 + 1;
+      out.w = step ? 0 : clamp(f - out.f0, 0, 1);
+    }
+  }
+}
+
+export function flipbookSwitch(w: number, order: number): number {
+  return w > 0 ? smoothstep(-0.08, 0.08, w - mix(0.08, 0.92, order)) : w;
+}
+
+/** Ink, body, then hot core, returned premultiplied. */
+export function composeLayers(ai: number, ab: number, ah: number, ci: FlipbookVec3, cb: FlipbookVec3, ch: FlipbookVec3, out: { [i: number]: number }): void {
+  const alpha = 1 - (1 - ai) * (1 - ab) * (1 - ah);
+  for (let k = 0; k < 3; k += 1) out[k] = ci[k]! * ai * (1 - ab) * (1 - ah) + cb[k]! * ab * (1 - ah) + ch[k]! * ah;
+  out[3] = alpha;
+}
+
+export interface FlipbookMaskedSample {
+  /** Atlas samples as read by the shader: linear RGB, straight alpha. */
+  readonly t0: FlipbookVec4;
+  readonly t1: FlipbookVec4;
+  readonly m0: FlipbookVec4;
+  readonly m1: FlipbookVec4;
+  readonly b0: number;
+  readonly b1: number;
+  readonly w: number;
+  readonly ctl: FlipbookVec4;
+  readonly tint: FlipbookVec3;
+  readonly soft: number;
+}
+
+/** CPU counterpart of fbComposeMasked; atlas RGB must already be decoded from sRGB. */
+export function composeFlipbookMasked(s: FlipbookMaskedSample, look: FlipbookMaskedLook, out: { [i: number]: number }): void {
+  const { t0, t1, m0, m1, w, ctl, tint, soft } = s;
+  const pmR = mix(t0[0] * t0[3], t1[0] * t1[3], w);
+  const pmG = mix(t0[1] * t0[3], t1[1] * t1[3], w);
+  const pmB = mix(t0[2] * t0[3], t1[2] * t1[3], w);
+  let aAt = mix(t0[3], t1[3], w);
+  let cR = aAt > 1e-4 ? pmR / aAt : mix(t0[0], t1[0], w);
+  let cG = aAt > 1e-4 ? pmG / aAt : mix(t0[1], t1[1], w);
+  let cB = aAt > 1e-4 ? pmB / aAt : mix(t0[2], t1[2], w);
+  if (look.sharpen[1] > 0) aAt = smoothstep(look.sharpen[0], look.sharpen[1], aAt);
+  if (look.grade[3] > 0) {
+    const mxc = Math.max(cR, Math.max(cG, cB));
+    const wht = Math.min(cR, Math.min(cG, cB)) / Math.max(mxc, 1e-4);
+    const heart = smoothstep(look.grade[3], 1, wht) * smoothstep(0.93, 1, mxc);
+    const gain = mix(0.8, 1, mxc);
+    const gradeW = smoothstep(0.1, 0.5, wht) * (1 - heart);
+    cR = mix(cR, look.grade[0] * gain, gradeW);
+    cG = mix(cG, look.grade[1] * gain, gradeW);
+    cB = mix(cB, look.grade[2] * gain, gradeW);
+  }
+  const mr = mix(m0[0], m1[0], w);
+  const mg = mix(m0[1], m1[1], w);
+  const mb = mix(m0[2], m1[2], w);
+  const ma = mix(m0[3], m1[3], w);
+  const rev = ctl[0] + 0.002 < mix(s.b0, s.b1, w) ? 0 : 1;
+  const e = ctl[1];
+  const wd = Math.max(ctl[2], 1e-4);
+  const eh = e + look.hotLead * ctl[3];
+  const live = smoothstep(e, e + wd, ma);
+  const liveH = smoothstep(eh, eh + wd, ma);
+  const ai = mg * look.ink[3] * rev * live;
+  const ab = Math.min(aAt, mr) * rev * live;
+  const ah = mb * rev * liveH;
+  const r = clamp((ma - e) / Math.max(1 - e, 1e-4), 0, 1);
+  const alpha = 1 - (1 - ai) * (1 - ab) * (1 - ah);
+  for (let k = 0; k < 3; k += 1) {
+    let ramp = look.soot[k]!;
+    ramp = mix(ramp, look.ramp[2][k]!, smoothstep(0.23, 0.27, r));
+    ramp = mix(ramp, look.ramp[1][k]!, smoothstep(0.48, 0.52, r));
+    ramp = mix(ramp, look.ramp[0][k]!, smoothstep(0.73, 0.77, r));
+    const ci = look.ink[k]!;
+    const cAt = k === 0 ? cR : k === 1 ? cG : cB;
+    const cb = Math.min(mix(cAt, ramp, ctl[3]) * tint[k]!, look.bodyCap);
+    const ch = look.hot[k]! * look.hot[3] * tint[k]!;
+    const rgb = ci * ai * (1 - ab) * (1 - ah) + cb * ab * (1 - ah) + ch * ah;
+    out[k] = rgb * soft;
+  }
+  out[3] = alpha * soft;
+}
+
+export function blendPremultiplied(src: FlipbookVec4, dst: FlipbookVec3, out: { [i: number]: number }): void {
+  for (let k = 0; k < 3; k += 1) out[k] = src[k]! + dst[k]! * (1 - src[3]);
+}
+
+/** Exclusive end inside one variant. Old metadata: frames. */
+function frameEnd(meta: FlipbookMeta): number {
+  return meta.frameRange !== undefined ? meta.frameRange[1] + 1 : meta.frames;
+}
+
+function firstOf(meta: FlipbookMeta, o: FlipOptions): number {
+  if (o.frame !== undefined) return o.frame;
+  const lo = meta.frameRange?.[0] ?? 0;
+  if (meta.loop) return lo;
+  return Math.min(frameEnd(meta) - 1, Math.max(lo, meta.start));
+}
 
 /** `life` for a sprite drawn on this frame only (a head or a core the caller redraws every frame). */
 export const ONE_FRAME = 1e-4;
@@ -471,18 +935,23 @@ export function frameAt(first: number, fps: number, slowFrom: number, slowFps: n
 
 /** The frame a one-shot's linger starts at (FlipOptions.slowFrom inside its frames), or −1 for none. */
 function slowFromOf(meta: FlipbookMeta, o: FlipOptions): number {
-  const first = o.frame ?? (meta.loop ? 0 : meta.start);
-  const last = Math.min(meta.frames, o.until !== undefined ? o.until + 1 : meta.frames);
+  const first = firstOf(meta, o);
+  const last = Math.min(frameEnd(meta), o.until !== undefined ? o.until + 1 : frameEnd(meta));
   return o.slowFrom !== undefined && o.slowRate !== undefined && o.slowFrom > first && o.slowFrom < last ? o.slowFrom : -1;
 }
 
-/** Seconds a sprite spawned with `o` lives: its `life`, else one pass of the clip at its rate (and its linger's). */
+/**
+ * Seconds a sprite spawned with `o` lives: its life, else a controlA schedule's (erodeEnd + 1) / 60 in every pool,
+ * even without an attached mask A; otherwise one pass at its rate (and its linger's). Reveal/erosion needs a masked pool.
+ */
 export function playLife(meta: FlipbookMeta, o: FlipOptions): number {
   if (o.life !== undefined) return o.life;
+  const timing = flipbookTimingOf(meta, o);
+  if (timing !== null) return (timing.erodeEnd + 1) / 60;
   const rate = o.rate ?? 1;
   if (meta.loop || rate <= 0) return 1;
-  const first = o.frame ?? meta.start;
-  const last = Math.min(meta.frames, o.until !== undefined ? o.until + 1 : meta.frames);
+  const first = firstOf(meta, o);
+  const last = Math.min(frameEnd(meta), o.until !== undefined ? o.until + 1 : frameEnd(meta));
   const fps = Math.max(1e-3, meta.fps * rate);
   const slow = slowFromOf(meta, o);
   if (slow < 0) return Math.max(1 / 60, (last - first) / fps);
@@ -505,6 +974,15 @@ export class FlipbookPool {
   private readonly iDir: Float32Array;
   private readonly iAge: Float32Array;
   private readonly iLift: Float32Array;
+  private readonly iCtl: Float32Array;
+  private readonly iVar: Float32Array;
+  private readonly ctlAttribute: THREE.InstancedBufferAttribute;
+  private readonly varAttribute: THREE.InstancedBufferAttribute;
+  private readonly varCell: Float32Array;
+  private readonly timings: (FlipbookTiming | null)[];
+  private v2Key: string | null = null;
+  private masked = false;
+  private variantTurn = 0;
   /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode, slowFrom, slowFps */
   private readonly state: Float32Array;
   private static readonly STRIDE = 35;
@@ -518,7 +996,7 @@ export class FlipbookPool {
     readonly mode: FlipbookMode,
     readonly capacity: number,
     renderOrder: number,
-    blank: THREE.Texture,
+    private readonly blank: THREE.Texture,
   ) {
     this.iPos = new Float32Array(capacity * 3);
     this.iData = new Float32Array(capacity * 4);
@@ -526,6 +1004,12 @@ export class FlipbookPool {
     this.iDir = new Float32Array(capacity * 4);
     this.iAge = new Float32Array(capacity * 4);
     this.iLift = new Float32Array(capacity * 2);
+    this.iCtl = new Float32Array(capacity * 4);
+    this.iVar = new Float32Array(capacity);
+    this.ctlAttribute = new THREE.InstancedBufferAttribute(this.iCtl, 4).setUsage(THREE.DynamicDrawUsage);
+    this.varAttribute = new THREE.InstancedBufferAttribute(this.iVar, 1).setUsage(THREE.DynamicDrawUsage);
+    this.varCell = new Float32Array(capacity);
+    this.timings = new Array<FlipbookTiming | null>(capacity).fill(null);
     this.state = new Float32Array(capacity * FlipbookPool.STRIDE);
     const base = new THREE.PlaneGeometry(1, 1);
     const geometry = new THREE.InstancedBufferGeometry();
@@ -549,18 +1033,30 @@ export class FlipbookPool {
         uStep: { value: 0 },
         uSoftM: { value: 0.8 },
         uVignette: { value: 0 },
-        uSoot: { value: new THREE.Vector3(0.03, 0.022, 0.02) },
+        uSoot: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.soot) },
         // The heat ramp (mode "heat"): Gemini's vermilion #D93800, amber #FFB703 and white-gold #FFFDF0 (linear).
         uHeatDeep: { value: new THREE.Vector3(0.693, 0.04, 0) },
         uHeatAmber: { value: new THREE.Vector3(1, 0.473, 0.001) },
         uHeatCore: { value: new THREE.Vector3(1, 0.982, 0.871) },
         uTaper: { value: 0 },
         uBlur: { value: 0 },
-        uSharpen: { value: new THREE.Vector2(0, 0) },
-        uGrade: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uSharpen: { value: new THREE.Vector2(...FLIPBOOK_MASKED_LOOK.sharpen) },
+        uGrade: { value: new THREE.Vector4(...FLIPBOOK_MASKED_LOOK.grade) },
         uPivot: { value: new THREE.Vector2(0.5, 0.5) },
         uAspect: { value: 1 },
         uHeading: { value: 0 },
+        uRange: { value: new THREE.Vector2(0, 1) },
+        uCtlA: { value: blank },
+        uCtlB: { value: blank },
+        uInsetA: { value: new THREE.Vector2(0.004, 0.004) },
+        uInsetB: { value: new THREE.Vector2(0.004, 0.004) },
+        uInk: { value: new THREE.Vector4(...FLIPBOOK_MASKED_LOOK.ink) },
+        uBodyCap: { value: FLIPBOOK_MASKED_LOOK.bodyCap },
+        uHot: { value: new THREE.Vector4(...FLIPBOOK_MASKED_LOOK.hot) },
+        uHotLead: { value: FLIPBOOK_MASKED_LOOK.hotLead },
+        uRamp0: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[0]) },
+        uRamp1: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[1]) },
+        uRamp2: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[2]) },
       },
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
@@ -589,7 +1085,7 @@ export class FlipbookPool {
   }
 
   /** Gives the pool its atlas (FlipbookLibrary.watch). */
-  attach(meta: FlipbookMeta, texture: THREE.Texture): void {
+  attach(meta: FlipbookMeta, texture: THREE.Texture, controls: FlipbookControls | null = null): void {
     this.meta = meta;
     const u = this.mesh.material.uniforms;
     u.uMap!.value = texture;
@@ -599,6 +1095,66 @@ export class FlipbookPool {
     (u.uPivot!.value as THREE.Vector2).set(meta.pivot[0], 1 - meta.pivot[1]);
     u.uAspect!.value = meta.aspect;
     u.uHeading!.value = meta.heading;
+    const material = this.mesh.material;
+    const geometry = this.mesh.geometry;
+    if (!isFlipbookV2(meta)) {
+      if (this.v2Key !== null) {
+        material.vertexShader = VERTEX;
+        material.fragmentShader = FRAGMENT;
+        material.defines = {};
+        geometry.deleteAttribute("iCtl");
+        geometry.deleteAttribute("iVar");
+        u.uCtlA!.value = u.uCtlB!.value = this.blank;
+        this.masked = false;
+        this.v2Key = null;
+        material.needsUpdate = true;
+      }
+      return;
+    }
+    const loop = flipbookLoopMode(meta);
+    this.masked = this.mode === "rgba" && controls?.a !== undefined;
+    const reveal = this.masked && controls?.b !== undefined;
+    const [lo, hi] = meta.frameRange ?? [0, meta.frames - 1];
+    (u.uRange!.value as THREE.Vector2).set(lo, hi - lo + 1);
+    u.uCtlA!.value = this.masked ? controls!.a : this.blank;
+    u.uCtlB!.value = reveal ? controls!.b : this.blank;
+    maskInset(u.uInsetA!.value as THREE.Vector2, controls?.a, meta);
+    maskInset(u.uInsetB!.value as THREE.Vector2, controls?.b, meta);
+    const key = loop + "|" + this.masked + "|" + reveal;
+    if (key !== this.v2Key) {
+      material.vertexShader = VERTEX_V2;
+      material.fragmentShader = FRAGMENT_V2;
+      material.defines = { FB_LOOP: loop === "none" ? 0 : loop === "stepped" ? 1 : 2 };
+      if (this.masked) material.defines.FB_CTRL_A = 1;
+      if (reveal) material.defines.FB_CTRL_B = 1;
+      if (!geometry.hasAttribute("iCtl")) geometry.setAttribute("iCtl", this.ctlAttribute);
+      if (!geometry.hasAttribute("iVar")) geometry.setAttribute("iVar", this.varAttribute);
+      material.needsUpdate = true;
+      this.v2Key = key;
+    }
+  }
+
+  setInk(r: number, g: number, b: number, alpha: number): void {
+    (this.mesh.material.uniforms.uInk!.value as THREE.Vector4).set(r, g, b, alpha);
+  }
+
+  setHot(r: number, g: number, b: number, gain: number): void {
+    (this.mesh.material.uniforms.uHot!.value as THREE.Vector4).set(r, g, b, gain);
+  }
+
+  setRamp(hot: readonly number[], mid: readonly number[], low: readonly number[]): void {
+    const u = this.mesh.material.uniforms;
+    (u.uRamp0!.value as THREE.Vector3).set(hot[0]!, hot[1]!, hot[2]!);
+    (u.uRamp1!.value as THREE.Vector3).set(mid[0]!, mid[1]!, mid[2]!);
+    (u.uRamp2!.value as THREE.Vector3).set(low[0]!, low[1]!, low[2]!);
+  }
+
+  set bodyCap(v: number) {
+    this.mesh.material.uniforms.uBodyCap!.value = v;
+  }
+
+  set hotLead(v: number) {
+    this.mesh.material.uniforms.uHotLead!.value = v;
   }
 
   /** Soft fade distance against the ground (m). */
@@ -662,6 +1218,7 @@ export class FlipbookPool {
 
   /** Seconds one pass of the clip lasts at `rate`. */
   clipS(rate = 1): number {
+    if (this.meta !== null && isFlipbookV2(this.meta)) return (frameEnd(this.meta) - firstOf(this.meta, EMPTY_OPTIONS)) / (this.meta.fps * Math.max(0.05, rate));
     return this.meta === null ? 0.5 : (this.meta.frames - this.meta.start) / (this.meta.fps * Math.max(0.05, rate));
   }
 
@@ -690,10 +1247,22 @@ export class FlipbookPool {
     this.cursor = (i + 1) % this.capacity;
     const rate = options.rate ?? 1;
     const fps = meta.fps * rate;
-    const first = options.frame ?? (meta.loop ? 0 : meta.start);
+    const first = firstOf(meta, options);
     const slowFrom = slowFromOf(meta, options);
     const slowFps = slowFrom >= 0 ? meta.fps * Math.max(0.01, options.slowRate!) : 0;
+    const timing = this.masked ? flipbookTimingOf(meta, options) : null;
     const life = playLife(meta, options);
+    const vars = this.v2Key !== null ? meta.variants ?? 1 : 1;
+    let v = 0;
+    if (vars > 1) {
+      if (options.variant !== undefined && Number.isFinite(options.variant)) v = Math.min(vars - 1, Math.max(0, Math.floor(options.variant)));
+      else {
+        v = this.variantTurn % vars;
+        this.variantTurn += 1;
+      }
+    }
+    this.timings[i] = timing;
+    this.varCell[i] = v * meta.frames;
     const tint = options.tint ?? WHITE;
     const k = options.intensity ?? 1;
     const dir = options.dir ?? null;
@@ -717,7 +1286,7 @@ export class FlipbookPool {
     st[o + 15] = options.drag ?? 0;
     st[o + 16] = options.gravity ?? 0;
     st[o + 17] = options.fadeIn ?? 0;
-    st[o + 18] = options.fadeOut ?? (this.mode === "rgba" && (options.cool ?? 0) > 0 ? 0 : Math.min(0.12, life * 0.3));
+    st[o + 18] = options.fadeOut ?? (timing !== null || (this.mode === "rgba" && (options.cool ?? 0) > 0) ? 0 : Math.min(0.12, life * 0.3));
     st[o + 19] = options.ground ?? -1e5;
     st[o + 20] = options.occlude ?? 0.5;
     st[o + 21] = tint.r * k;
@@ -779,6 +1348,10 @@ export class FlipbookPool {
       this.iAge[n * 4 + 3] = st[o + 32]!;
       this.iLift[n * 2] = st[o + 30]!;
       this.iLift[n * 2 + 1] = st[o + 31]!;
+      if (this.v2Key !== null) {
+        flipbookControl(age, life, st[o + 28]!, st[o + 32]!, this.timings[i]!, this.iCtl, n * 4);
+        this.iVar[n] = this.varCell[i]!;
+      }
       n += 1;
       const keep = Math.exp(-st[o + 15]! * dt);
       st[o + 3] = st[o + 3]! * keep;
@@ -796,9 +1369,14 @@ export class FlipbookPool {
     this.mesh.visible = n > 0;
     if (n === 0) return;
     for (const name of ATTRS) geometry.getAttribute(name).needsUpdate = true;
+    if (this.v2Key !== null) {
+      this.ctlAttribute.needsUpdate = true;
+      this.varAttribute.needsUpdate = true;
+    }
   }
 
   clear(): void {
+    this.variantTurn = 0;
     for (let i = 0; i < this.capacity; i += 1) this.state[i * FlipbookPool.STRIDE + 11] = 0;
     this.live = 0;
     this.dropped = 0;
@@ -814,6 +1392,13 @@ export class FlipbookPool {
 }
 
 const ATTRS = ["iPos", "iData", "iColor", "iDir", "iAge", "iLift"] as const;
+
+function maskInset(out: THREE.Vector2, texture: THREE.Texture | undefined, meta: FlipbookMeta): void {
+  const image: unknown = texture?.image;
+  if (record(image) && typeof image.width === "number" && typeof image.height === "number" && image.width > 0 && image.height > 0) {
+    out.set(Math.max(0.004, 0.5 * meta.cols / image.width), Math.max(0.004, 0.5 * meta.rows / image.height));
+  } else out.set(0.004, 0.004);
+}
 
 export interface FlipbookPoolOptions {
   /** Draw mode (default: the manifest's, else "rgba"). */
@@ -851,7 +1436,7 @@ export class FlipbookPlayer {
         lib.watch((id) => {
           const entry = lib!.get(id);
           const pool = this.pools.get(folder + "/" + id);
-          if (entry !== null && pool !== undefined) pool.attach(entry.meta, entry.texture);
+          if (entry !== null && pool !== undefined) pool.attach(entry.meta, entry.texture, entry.controls);
         }),
       );
       void lib.load();
@@ -867,7 +1452,7 @@ export class FlipbookPlayer {
     const lib = this.library(folder);
     const entry = lib.get(id);
     pool = new FlipbookPool(id, opts.mode ?? entry?.meta.mode ?? "rgba", opts.capacity ?? 24, opts.renderOrder ?? 12, this.blank);
-    if (entry !== null) pool.attach(entry.meta, entry.texture);
+    if (entry !== null) pool.attach(entry.meta, entry.texture, entry.controls);
     this.pools.set(key, pool);
     this.group.add(pool.mesh);
     return pool;
