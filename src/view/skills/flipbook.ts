@@ -68,6 +68,8 @@ export interface FlipbookMaskedLook {
   readonly bodyCap: number;
   readonly hot: FlipbookVec4;
   readonly hotLead: number;
+  /** Strength 0–1: r = min(r, mix(1, 0.4, rampCool * smoothstep(0.2, 0.85, e))); default 0. */
+  readonly rampCool: number;
   readonly ramp: readonly [FlipbookVec3, FlipbookVec3, FlipbookVec3];
   readonly soot: FlipbookVec3;
   readonly sharpen: readonly [number, number];
@@ -79,6 +81,7 @@ export const FLIPBOOK_MASKED_LOOK: FlipbookMaskedLook = {
   bodyCap: 0.88,
   hot: [1, 0.982, 0.871, 2.2],
   hotLead: 0.1,
+  rampCool: 0,
   ramp: [[1, 0.982, 0.871], [1, 0.473, 0.001], [0.693, 0.04, 0]],
   soot: [0.03, 0.022, 0.02],
   sharpen: [0, 0],
@@ -585,6 +588,7 @@ vec4 fbComposeMasked(vec4 t0, vec4 t1, vec4 m0, vec4 m1, float b0, float b1, flo
   float ab = min(aAt, m.r) * rev * live;
   float ah = m.b * rev * liveH;
   float r = clamp((m.a - e) / max(1.0 - e, 1e-4), 0.0, 1.0);
+  if (uRampCool > 0.0) r = min(r, mix(1.0, 0.40, uRampCool * smoothstep(0.2, 0.85, e)));
   vec3 ci = uInk.rgb;
   vec3 cb = min(mix(cAt, fbRamp(r), ctl.w) * tint, vec3(uBodyCap));
   vec3 ch = uHot.rgb * uHot.a * tint;
@@ -678,6 +682,7 @@ uniform vec4 uInk;
 uniform float uBodyCap;
 uniform vec4 uHot;
 uniform float uHotLead;
+uniform float uRampCool;
 uniform vec3 uRamp0;
 uniform vec3 uRamp1;
 uniform vec3 uRamp2;
@@ -890,7 +895,8 @@ export function composeFlipbookMasked(s: FlipbookMaskedSample, look: FlipbookMas
   const ai = mg * look.ink[3] * rev * live;
   const ab = Math.min(aAt, mr) * rev * live;
   const ah = mb * rev * liveH;
-  const r = clamp((ma - e) / Math.max(1 - e, 1e-4), 0, 1);
+  let r = clamp((ma - e) / Math.max(1 - e, 1e-4), 0, 1);
+  if (look.rampCool > 0) r = Math.min(r, mix(1, 0.4, look.rampCool * smoothstep(0.2, 0.85, e)));
   const alpha = 1 - (1 - ai) * (1 - ab) * (1 - ah);
   for (let k = 0; k < 3; k += 1) {
     let ramp = look.soot[k]!;
@@ -1054,6 +1060,7 @@ export class FlipbookPool {
         uBodyCap: { value: FLIPBOOK_MASKED_LOOK.bodyCap },
         uHot: { value: new THREE.Vector4(...FLIPBOOK_MASKED_LOOK.hot) },
         uHotLead: { value: FLIPBOOK_MASKED_LOOK.hotLead },
+        uRampCool: { value: FLIPBOOK_MASKED_LOOK.rampCool },
         uRamp0: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[0]) },
         uRamp1: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[1]) },
         uRamp2: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[2]) },
@@ -1155,6 +1162,11 @@ export class FlipbookPool {
 
   set hotLead(v: number) {
     this.mesh.material.uniforms.uHotLead!.value = v;
+  }
+
+  /** Masked v2 strength 0–1: r = min(r, mix(1, 0.4, rampCool * smoothstep(0.2, 0.85, e))); default 0. */
+  set rampCool(v: number) {
+    this.mesh.material.uniforms.uRampCool!.value = v;
   }
 
   /** Soft fade distance against the ground (m). */

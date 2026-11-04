@@ -317,6 +317,61 @@ describe("4. premultiplied composition", () => {
   });
 });
 
+describe("274. masked body ramp cooling", () => {
+  function rampAt(r: number, look: FlipbookMaskedLook): number[] {
+    const smooth = (lo: number, hi: number) => {
+      const t = Math.max(0, Math.min(1, (r - lo) / (hi - lo)));
+      return t * t * (3 - 2 * t);
+    };
+    return look.soot.map((soot, k) => {
+      let color = soot;
+      for (const [target, lo, hi] of [
+        [look.ramp[2], 0.23, 0.27], [look.ramp[1], 0.48, 0.52], [look.ramp[0], 0.73, 0.77],
+      ] as const) color += (target[k]! - color) * smooth(lo, hi);
+      return Math.min(color, look.bodyCap);
+    });
+  }
+
+  it("keeps the Test 4 surviving ramp cap exactly with default and explicit zero cooling", () => {
+    expect(FLIPBOOK_MASKED_LOOK.rampCool).toBe(0);
+    const s = sample({ ctl: [1, 0.819256, 0.08, 1] });
+    const implicit: number[] = [], explicit: number[] = [];
+    composeFlipbookMasked(s, FLIPBOOK_MASKED_LOOK, implicit);
+    composeFlipbookMasked(s, { ...FLIPBOOK_MASKED_LOOK, rampCool: 0 }, explicit);
+    expect(implicit).toEqual([0.88, 0.88, 0.871, 1]);
+    expect(explicit).toEqual(implicit);
+  });
+
+  const t05 = (0.5 - 0.2) / (0.85 - 0.2);
+  const weight05 = t05 * t05 * (3 - 2 * t05);
+  it.each([[0.5, 1 * (1 - weight05) + 0.4 * weight05], [0.9, 0.4]])("caps the last survivor at e=%s to ramp r=%s", (e, r) => {
+    const look = { ...FLIPBOOK_MASKED_LOOK, rampCool: 1 };
+    const out: number[] = [];
+    composeFlipbookMasked(sample({ ctl: [1, e!, 0.08, 1] }), look, out);
+    close(out, [...rampAt(r!, look), 1], 1e-6);
+  });
+
+  it("inserts the exact cooling line only in v2 and restores both legacy shader hashes", () => {
+    const p = pool(parse({ controlA: "a.png" }), "rgba", 1, { a: texMask() });
+    const u = p.mesh.material.uniforms;
+    expect(u.uRampCool!.value).toBe(FLIPBOOK_MASKED_LOOK.rampCool);
+    const line = "  if (uRampCool > 0.0) r = min(r, mix(1.0, 0.40, uRampCool * smoothstep(0.2, 0.85, e)));";
+    expect(p.mesh.material.fragmentShader).toContain(
+      "  float r = clamp((m.a - e) / max(1.0 - e, 1e-4), 0.0, 1.0);\n" + line,
+    );
+    expect(p.mesh.material.fragmentShader.split("uniform float uRampCool;\n")).toHaveLength(2);
+    p.rampCool = 1;
+    expect(u.uRampCool!.value).toBe(1);
+    p.attach(parse(), new THREE.Texture());
+    oldShader(p);
+    expect(p.mesh.material.vertexShader).not.toContain("uRampCool");
+    expect(p.mesh.material.fragmentShader).not.toContain("uRampCool");
+    expect(u.uRampCool!.value).toBe(1);
+    p.attach(parse({ controlA: "a.png" }), new THREE.Texture(), { a: texMask() });
+    expect(u.uRampCool!.value).toBe(1);
+  });
+});
+
 describe("5–8. ticks, reveal, erosion and body luminance", () => {
   it("maps the specified seconds to ticks", () => {
     expect([0, 1 / 60, 0.5, 42 / 60, -0.1].map(flipbookTick)).toEqual([0, 1, 30, 42, 0]);
