@@ -99,8 +99,15 @@ export const CUTIN_ART: Readonly<Record<"a" | "b" | "c", CutInArt>> = {
     shout: frame("tt-cutin-a-shout.v1-try1.png", 1821, 864, 0.26, 0.38),
   },
   b: {
-    gather: frame("tt-cutin-b-gather.v1-try1.png", 1916, 821, 0.29, 0.21),
-    shout: frame("tt-cutin-b-shout.v1-try1.png", 1823, 863, 0.3, 0.32),
+    // Anchored between her eyes, face and hand boxes measured on the files (owner preview, 03/11 evening).
+    gather: frame("tt-cutin-b-gather.v1-try1.png", 1916, 821, 0.308, 0.195, [
+      [0.23, 0.04, 0.37, 0.42],
+      [0.31, 0.3, 0.4, 0.62],
+    ]),
+    shout: frame("tt-cutin-b-shout.v1-try1.png", 1823, 863, 0.284, 0.322, [
+      [0.19, 0.1, 0.34, 0.45],
+      [0.62, 0.2, 0.75, 0.62],
+    ]),
   },
   // The owner's pick, upscaled 2x with Firefly Upscaler (Adobe model; the 1836 px originals showed soft on screen).
   // Anchored between her eyes in both frames, so her eyes hold still through the cut; face and hand
@@ -115,6 +122,28 @@ export const CUTIN_ART: Readonly<Record<"a" | "b" | "c", CutInArt>> = {
       [0.43, 0.25, 0.556, 0.554],
     ]),
   },
+};
+
+/**
+ * Elegant shout-face candidates (owner preview, 03/11 evening: the shout read angry). Each is the current shout
+ * with only her head swapped for a ChatGPT face edit, so body, seal and sword are the same pixels. The anchor is the
+ * current one plus the eye-midpoint shift measured on the file; the face box reaches her chin.
+ * Skin matched to the gather frame of the same style (owner 03/11 evening: "nên nhất quán nước da"): a
+ * deterministic CIELAB transfer on her skin only (tmp/shots/cutin/shout-faces/tools/skinmatch.py), mean skin
+ * deltaE2000 <= 1.1 to the gather; PNG so nothing outside the skin changes (the gather frames are untouched).
+ * B's hand box is measured on the skin mask (the old [0.62, 0.2, 0.75, 0.62] sat right of her hand).
+ */
+const C_SHOUT_KEEP: readonly Box[] = [[0.24, 0.12, 0.38, 0.4], [0.43, 0.25, 0.556, 0.554]];
+const B_HAND_KEEP: Box = [0.43, 0.2, 0.6, 0.58];
+export const CUTIN_SHOUT_CANDIDATES: Readonly<Record<string, { readonly style: "b" | "c"; readonly shout: CutInFrame }>> = {
+  c1: { style: "c", shout: frame("tt-cutin-c-shout-e1-head-skin-up2x.v2-try1.png", 3671, 1713, 0.31, 0.233, C_SHOUT_KEEP) },
+  c2: { style: "c", shout: frame("tt-cutin-c-shout-e2-head-skin-up2x.v2-try1.png", 3671, 1713, 0.309, 0.237, C_SHOUT_KEEP) },
+  c3: { style: "c", shout: frame("tt-cutin-c-shout-e3-head-skin-up2x.v2-try1.png", 3671, 1713, 0.31, 0.233, C_SHOUT_KEEP) },
+  c4: { style: "c", shout: frame("tt-cutin-c-shout-e4-head-skin-up2x.v2-try1.png", 3671, 1713, 0.311, 0.232, C_SHOUT_KEEP) },
+  b1: { style: "b", shout: frame("tt-cutin-b-shout-e1-head-skin.v2-try1.png", 1823, 863, 0.287, 0.327, [[0.19, 0.1, 0.34, 0.48], B_HAND_KEEP]) },
+  b2: { style: "b", shout: frame("tt-cutin-b-shout-e2-head-skin.v2-try1.png", 1823, 863, 0.287, 0.33, [[0.19, 0.1, 0.34, 0.48], B_HAND_KEEP]) },
+  // Radiant Resolve in B (03/11 evening, one ChatGPT try); eyes about 1 px right and 1 px down of the current shout's.
+  b3: { style: "b", shout: frame("tt-cutin-b-shout-e3-head-skin.v2-try1.png", 1823, 863, 0.2845, 0.3235, [[0.19, 0.1, 0.34, 0.49], B_HAND_KEEP]) },
 };
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

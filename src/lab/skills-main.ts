@@ -43,6 +43,7 @@ import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import type { Quality } from "../content/types";
 import { CameraZoom } from "../view/camera-zoom";
+import { LabOrbit } from "./orbit";
 import { createRenderer, placeCamera } from "../view/renderer";
 import { K5_MAX, SwordSkillFx, type SwordSkillHost, type SwordSlot, type SwordSkillTextures } from "../view/skills/sword-skills";
 import { loadSwordModels, loadWeaponModel, standInModel, type BladeSet } from "../view/skills/blades";
@@ -57,7 +58,7 @@ import { SCREEN_TIERS, ScreenFx, ULT_CLIMAX_FRAMES, type ImpactRole, type Screen
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { VictimDirector } from "./victims";
-import { CutIn, CUTIN_ART } from "./cutin";
+import { CutIn, CUTIN_ART, CUTIN_SHOUT_CANDIDATES } from "./cutin";
 import { LabSound, type SoundTake } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
@@ -205,6 +206,8 @@ let lastKeyStamp = 0;
 const camBase = new THREE.Vector3();
 // Player zoom (canon D57): the whole field by default, wheel or = / - toward a close view on Lam, Z toggles.
 const zoom = new CameraZoom();
+/** O: an orbit view all round the field (lab only; owner preview 03/11). */
+const freeOrbit = new LabOrbit(view.stage.renderer.domElement);
 /** A fixed camera set by __lab.camera (not "play"): the zoom leaves it alone until "play" again. */
 let customCamera = false;
 const kick = new CameraKick();
@@ -691,8 +694,16 @@ function setAura(id: AuraId): AuraId {
  */
 const cutin = new CutIn(document.body);
 const ULT_HOLD = Number(params.get("cutin") ?? "1.7") || 1.7;
+/** ?cutinArt=a|b|c picks the painting style (owner preview, 03/11 evening: he asked to try B, the anime cel). */
+/** ?cutinShout=c1..c4|b1..b3 swaps only the shout frame for an elegant-face candidate, skin matched to the gather (owner preview, 03/11 evening). */
+const SHOUT_ID = params.get("cutinShout") ?? "c3"; // the owner picked C3 (03/11 night)
+const SHOUT_PICK = CUTIN_SHOUT_CANDIDATES[Object.hasOwn(CUTIN_SHOUT_CANDIDATES, SHOUT_ID) ? SHOUT_ID : "c3"];
+const ART_PARAM = (["a", "b", "c"] as const).find((k) => k === params.get("cutinArt"));
+const CUTIN_STYLE = ART_PARAM ?? SHOUT_PICK?.style ?? "c";
+if (SHOUT_PICK && SHOUT_PICK.style !== CUTIN_STYLE) console.warn(`cutinShout is a style ${SHOUT_PICK.style} candidate; cutinArt=${CUTIN_STYLE} keeps its own shout`);
+const ART_BASE = SHOUT_PICK && SHOUT_PICK.style === CUTIN_STYLE ? { ...CUTIN_ART[CUTIN_STYLE], shout: SHOUT_PICK.shout } : CUTIN_ART[CUTIN_STYLE];
 /** Holds this short (scenarios pass ?cutin=0.05 to skip the cut-in) show no painting and no cut. */
-const ULT_ART = ULT_HOLD >= 0.6 ? CUTIN_ART.c : undefined;
+const ULT_ART = ULT_HOLD >= 0.6 ? ART_BASE : undefined;
 const ULT_CUTIN = {
   name: "MILKY-WAY SWORD RAIN",
   hanzi: "天河劍雨",
@@ -1105,6 +1116,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "=" || e.key === "+") zoom.zoomIn();
   else if (e.key === "-" || e.key === "_") zoom.zoomOut();
   else if (e.key === "z" || e.key === "Z") zoom.toggle();
+  else if (e.key === "o" || e.key === "O") freeOrbit.toggle();
   else if (e.key === "a" || e.key === "A") setAura(swordAura.direction === "off" ? "a" : "off");
 });
 window.addEventListener(
@@ -1136,6 +1148,7 @@ if (params.get("ui") !== "0") {
     ["W", "Next sword"],
     ["E", "Next element"],
     ["Z", "Zoom: close view / whole field (wheel, = and - too)"],
+    ["O", "Orbit: drag to turn the view all round (O again: play camera)"],
     ["A", "Sword aura on / off"],
   ];
   if (greybox !== null) {
@@ -1287,6 +1300,8 @@ function frame(dt: number): void {
   zoom.holdWide(cutin.active || myriad.running || fx.isRunning("k5"));
   if (!customCamera && !followShown) {
     zoom.update(view.camera, view.fit, 0, caster.x, caster.z, dt);
+    // O: re-aim the zoom's pose round the field before the kick and the shake are added on top (owner preview, 03/11).
+    freeOrbit.apply(view.camera, dt);
     camBase.copy(view.camera.position);
   } else if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
   kick.update(dt);
