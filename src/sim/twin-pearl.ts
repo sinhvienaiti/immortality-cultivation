@@ -21,6 +21,16 @@
  * A beast takes at most one hit of each kind (touch, corridor, lotus), at
  * least 20 ticks apart, so ≤ 3 a cast; the Vương takes ≤ 1.5 W a cast.
  *
+ * Each dragon holds its side (west: gate A, and crows at x < 0; east: gate B,
+ * and crows at x ≥ 0): its own falloff ladder (today's key 2: 100 %, −15 % each
+ * next distinct beast, floor 40 %) and its own share of the cast's budget,
+ * split by part (touch, ground corridor, sky, lotus; content `pool`), spent
+ * first come. Each tick the beasts every live volume holds are gathered in one
+ * pass and struck in one order (kind, then nearest the heart, then the smaller
+ * beastId), so neither lane is favoured by the order the volumes are listed in.
+ * The whole cast is one area hit: a swarm cluster loses at most 60 % of its HP
+ * to it (canon §7.2), as it does to today's line.
+ *
  * Lanes come from the flow field (field.ts): each ground gate's route is its
  * chain of waypoints to the heart edge; the meeting point is the midpoint of
  * the two routes' last bends (M0a: the bends round the Trận Trụ at (∓5.25;
@@ -32,10 +42,10 @@ import { kiemSkill } from "../content/data/school-kiem";
 import { TWIN_PEARL, TWIN_PEARL_END_TICK, type SwordKey2 } from "../content/data/twin-pearl";
 import { FIELD } from "../content/rules";
 import type { BeastState, Cast, FlowField, Grade, PointU, StageDef, World } from "../content/types";
-import { createAreaHit, damageBeast, wHpOf, type AreaHit } from "./combat";
+import { createAreaHit, damageBeast, scaleHit, wHpOf, type AreaHit } from "./combat";
 import { cellAt, cellCenterX, cellCenterZ, gatePoint, heartDistance } from "./field";
 import { dist2, isqrt, mmToU, mulDiv, mulDivSym, unitPm, within } from "./fixed";
-import { postureHit } from "./posture";
+import { damageImmune, postureHit } from "./posture";
 
 declare module "../content/types" {
   interface ReplayHeader {
@@ -51,17 +61,27 @@ declare module "../content/types" {
 /** Hit kinds, in the order a tick applies them. */
 export type TwinKind = "touch" | "corridor" | "lotus";
 const KIND_BIT: Readonly<Record<TwinKind, number>> = { touch: 1, corridor: 2, lotus: 4 };
+const KIND_ORDER: Readonly<Record<TwinKind, number>> = { touch: 0, corridor: 1, lotus: 2 };
+
+/** Budget parts of one side (TwinPearlCast.pool index: side × POOL_PARTS + part). */
+export const POOL_TOUCH = 0;
+export const POOL_CORRIDOR = 1;
+export const POOL_SKY = 2;
+export const POOL_LOTUS = 3;
+export const POOL_PARTS = 4;
 
 /** One beast's book in one cast. */
 export interface TwinVictim {
   readonly slot: number;
   readonly serial: number;
+  /** 0 west (gate A, or a crow at x < 0), 1 east. */
+  readonly side: number;
   hits: number;
   /** Tick offset (from F0) of its last hit. */
   last: number;
   /** KIND_BIT of the kinds it took. */
   kinds: number;
-  /** Today's key-2 falloff for its place among this cast's victims, ‰ (100 %, −15 % each next, floor 40 %). */
+  /** Today's key-2 falloff for its place among its side's victims this cast, ‰ (100 %, −15 % each next, floor 40 %). */
   readonly factorPm: number;
 }
 
@@ -88,11 +108,21 @@ export interface TwinPearlCast {
   bossDealt: number;
   /** Effective HP dealt this cast (reports). */
   dealt: number;
-  /** Distinct beasts hit so far (the next one's falloff place). */
+  /** Distinct beasts hit so far, both sides (reports). */
   victims: number;
+  /** Distinct beasts hit so far on each side (the next one's falloff place on that side). */
+  readonly sideVictims: number[];
+  /** The budget left, effective HP, per side and part (index side × POOL_PARTS + POOL_*). */
+  readonly pool: number[];
+  /** The budget the cast started with, same layout (reports). */
+  readonly poolStart: readonly number[];
+  /** The whole cast is one area hit (the 60 % swarm-cluster cap, canon §7.2). */
+  readonly area: AreaHit;
   /** Touch boxes of lanes A and B (set on F1). */
   readonly touch: TwinTouch[];
   readonly book: TwinVictim[];
+  /** book index + 1 by beast slot (0: none); the entry's serial is checked, a reused slot starts a new entry. */
+  readonly bookAt: number[];
 }
 
 export interface TwinPearlState {
@@ -299,12 +329,17 @@ export function liveSamples(lane: TwinLane, t: number, out: { first: number; las
 
 const span = { first: 0, last: -1 };
 
+/** Within the body radius of one of lane's samples first … last (a span from liveSamples). */
+function inSpan(lane: TwinLane, first: number, last: number, x: number, z: number): boolean {
+  const r2 = BODY_R * BODY_R;
+  for (let i = first; i <= last; i += 1) if (dist2(x, z, lane.sx[i]!, lane.sz[i]!) <= r2) return true;
+  return false;
+}
+
 /** In lane's body capsule or its 0.9 s trail at tick offset t (ground band checked by the caller). */
 export function inBody(lane: TwinLane, x: number, z: number, t: number): boolean {
   liveSamples(lane, t, span);
-  const r2 = BODY_R * BODY_R;
-  for (let i = span.first; i <= span.last; i += 1) if (dist2(x, z, lane.sx[i]!, lane.sz[i]!) <= r2) return true;
-  return false;
+  return inSpan(lane, span.first, span.last, x, z);
 }
 
 /** The tail's sweep front on this side's sky route at tick offset t, or false outside F30–F50. */
@@ -373,7 +408,7 @@ export function volumesAt(geo: TwinGeometry, cast: TwinPearlCast | null, x: numb
 
 // ── Casting ────────────────────────────────────────────────────────────────
 
-/** Today's key-2 falloff for the n-th distinct victim, ‰ (data/school-kiem.ts: −15 % each next, floor 40 %). */
+/** Today's key-2 falloff for the n-th distinct victim of a side, ‰ (data/school-kiem.ts: −15 % each next, floor 40 %). */
 function falloffPm(order: number): number {
   const effect = kiemSkill(2).effect;
   if (effect.kind !== "line") return 1000;
@@ -387,16 +422,38 @@ function postureOf(kind: TwinKind): number {
   return effect.kind === "line" ? mulDiv(effect.posture, TWIN_PEARL.sharesPct[kind], 100) : 0;
 }
 
+/** The dragon that holds `beast`: 0 west (gate A), 1 east (gate B); a crow, or any other, by its x (west below 0). */
+export function sideOf(beast: BeastState): number {
+  if (beast.gate === "A") return 0;
+  if (beast.gate === "B") return 1;
+  return beast.x < 0 ? 0 : 1;
+}
+
+/** The cast's budget (effective HP) per side and part: M_q and the bucket as on every hit, no element (content `pool`). */
+export function twinPearlPool(world: World, seat: number, grade: Grade): number[] {
+  const pool = TWIN_PEARL.pool;
+  const shares = TWIN_PEARL.sharesPct;
+  const side = scaleHit(world, seat, wHpOf(world, pool.sideW100), grade, "slot2", null);
+  const one = [0, 0, 0, 0];
+  one[POOL_TOUCH] = mulDiv(side, shares.touch, 100);
+  one[POOL_CORRIDOR] = mulDiv(side, shares.corridor, 100);
+  one[POOL_SKY] = scaleHit(world, seat, wHpOf(world, pool.skyW100), grade, "slot2", null);
+  one[POOL_LOTUS] = mulDiv(side, shares.lotus, 100);
+  return [...one, ...one];
+}
+
 /**
- * Key 2 under the flag: resolves when any beast lives (the skill covers both lanes and both sky routes), else
- * false and nothing changes (the Cast stays held). The hits start this tick (F0) in stepTwinPearl.
+ * Key 2 under the flag: resolves when a beast that can take damage lives (the skill covers both lanes and both sky
+ * routes; the Vương's roar is immune, canon §10.5), else false and nothing changes (the Cast stays held). The hits
+ * start this tick (F0) in stepTwinPearl.
  */
 export function resolveTwinPearl(world: World, cast: Cast): boolean {
   const state = world.skills.twinPearl;
   if (state === undefined) return false;
-  if (!world.beasts.list.some((beast) => beast.alive)) return false;
+  if (!world.beasts.list.some((beast) => beast.alive && !damageImmune(world, beast))) return false;
   const effect = kiemSkill(2).effect;
   if (effect.kind !== "line") return false;
+  const pool = twinPearlPool(world, cast.seat, cast.quality);
   state.casts.push({
     castId: cast.actionId,
     seat: cast.seat,
@@ -407,11 +464,16 @@ export function resolveTwinPearl(world: World, cast: Cast): boolean {
     bossDealt: 0,
     dealt: 0,
     victims: 0,
+    sideVictims: [0, 0],
+    pool,
+    poolStart: pool.slice(),
+    area: createAreaHit(),
     touch: [
       { on: 0, x: 0, z: 0, dx: 0, dz: 0 },
       { on: 0, x: 0, z: 0, dx: 0, dz: 0 },
     ],
     book: [],
+    bookAt: [],
   });
   return true;
 }
@@ -471,8 +533,10 @@ function pickTouches(world: World, cast: TwinPearlCast, geo: TwinGeometry): void
 }
 
 function bookOf(cast: TwinPearlCast, beast: BeastState): TwinVictim | null {
-  for (const entry of cast.book) if (entry.slot === beast.slot && entry.serial === beast.serial) return entry;
-  return null;
+  const at = cast.bookAt[beast.slot] ?? 0;
+  if (at === 0) return null;
+  const entry = cast.book[at - 1]!;
+  return entry.serial === beast.serial ? entry : null;
 }
 
 /** May `beast` take a hit of `kind` at tick offset t (≤ 3 a cast, one of each kind, ≥ 20 ticks apart, the Vương under his cap)? */
@@ -483,12 +547,22 @@ export function mayHit(cast: TwinPearlCast, beast: BeastState, kind: TwinKind, t
   return entry.hits < TWIN_PEARL.maxHits && (entry.kinds & KIND_BIT[kind]) === 0 && t - entry.last >= TWIN_PEARL.rehitTicks;
 }
 
-/** One hit of `kind` on `beast` (checked by mayHit); `half` for the lotus outside its petals. */
-function hit(world: World, cast: TwinPearlCast, beast: BeastState, kind: TwinKind, t: number, area: AreaHit, half: boolean): void {
+/**
+ * One hit of `kind` on `beast` (checked by mayHit) from its side's `part` of the budget, at most what is left there;
+ * `half` for the lotus outside its petals. A spent part leaves the beast as it was (no book entry, no Thế).
+ */
+function hit(world: World, cast: TwinPearlCast, beast: BeastState, kind: TwinKind, part: number, half: boolean, t: number): void {
   let entry = bookOf(cast, beast);
+  const side = entry !== null ? entry.side : sideOf(beast);
+  const at = side * POOL_PARTS + part;
+  const left = cast.pool[at]!;
+  if (left <= 0) return;
   if (entry === null) {
-    entry = { slot: beast.slot, serial: beast.serial, hits: 0, last: -1, kinds: 0, factorPm: falloffPm(cast.victims) };
+    entry = { slot: beast.slot, serial: beast.serial, side, hits: 0, last: -1, kinds: 0, factorPm: falloffPm(cast.sideVictims[side]!) };
     cast.book.push(entry);
+    while (cast.bookAt.length <= beast.slot) cast.bookAt.push(0);
+    cast.bookAt[beast.slot] = cast.book.length;
+    cast.sideVictims[side] = cast.sideVictims[side]! + 1;
     cast.victims += 1;
   }
   entry.hits += 1;
@@ -496,48 +570,93 @@ function hit(world: World, cast: TwinPearlCast, beast: BeastState, kind: TwinKin
   entry.kinds |= KIND_BIT[kind];
   const p = mulDiv(cast.baseHp, TWIN_PEARL.sharesPct[kind], 100);
   const factorPm = half ? mulDiv(entry.factorPm, TWIN_PEARL.lotus.outsidePm, 1000) : entry.factorPm;
-  const by = { seat: cast.seat, source: "slot2" as const, grade: cast.grade, factorPm, area };
-  const dealt = damageBeast(world, beast, p, "typed", beast.boss ? { ...by, limit: cast.bossCap - cast.bossDealt } : by);
+  const bossLeft = cast.bossCap - cast.bossDealt;
+  const limit = beast.boss && bossLeft < left ? bossLeft : left;
+  const dealt = damageBeast(world, beast, p, "typed", { seat: cast.seat, source: "slot2", grade: cast.grade, factorPm, area: cast.area, limit });
+  cast.pool[at] = left - dealt;
   cast.dealt += dealt;
   if (beast.boss) cast.bossDealt += dealt;
   const posture = postureOf(kind);
   if (posture > 0) postureHit(world, beast, posture, "slot2");
 }
 
-/** Live beasts of one volume this tick, nearest the heart first (ties: smaller beastId): the falloff's order. */
-function victimsOf(world: World, test: (beast: BeastState) => boolean): BeastState[] {
-  const out: { beast: BeastState; d: number }[] = [];
-  for (const beast of world.beasts.list) if (beast.alive && test(beast)) out.push({ beast, d: heartDistance(world, beast) });
-  out.sort((p, q) => p.d - q.d || p.beast.serial - q.beast.serial);
-  return out.map((item) => item.beast);
+/** A beast some volume holds this tick: what it may take, and its place in the tick's one order. */
+interface Candidate {
+  beast: BeastState;
+  kind: TwinKind;
+  part: number;
+  half: boolean;
+  /** Distance to the heart along its route (field.ts heartDistance), u. */
+  d: number;
 }
 
-/** One volume's hits this tick: one area hit (the 60 % swarm-cluster cap) over the beasts inside that may take `kind`. */
-function strikeVolume(world: World, cast: TwinPearlCast, kind: TwinKind, t: number, test: (beast: BeastState) => boolean, half: (beast: BeastState) => boolean = () => false): void {
-  const victims = victimsOf(world, (beast) => test(beast) && mayHit(cast, beast, kind, t));
-  if (victims.length === 0) return;
-  const area = createAreaHit();
-  for (const beast of victims) if (beast.alive) hit(world, cast, beast, kind, t, area, half(beast));
-}
+const candidates: Candidate[] = [];
+const spareCandidates: Candidate[] = [];
+const spanA = { first: 0, last: -1 };
+const spanB = { first: 0, last: -1 };
+const frontA = { x: 0, z: 0 };
+const frontB = { x: 0, z: 0 };
 
+const byTickOrder = (p: Candidate, q: Candidate): number => KIND_ORDER[p.kind] - KIND_ORDER[q.kind] || p.d - q.d || p.beast.serial - q.beast.serial;
+
+/**
+ * One tick of a cast: every beast the live volumes hold (one pass, each beast's first kind it may still take, in the
+ * order touch, corridor, lotus), then the hits in one order for both lanes and both skies: kind, nearest the heart,
+ * smaller beastId.
+ */
 function stepCast(world: World, cast: TwinPearlCast, t: number): void {
   const geo = twinPearlGeometry(world);
   const [laneA, laneB] = geo.lanes;
-  const ground = (beast: BeastState): boolean => inGroundBand(beast.y);
-  if (t === TWIN_PEARL.hold.tick) strikeVolume(world, cast, "touch", t, (b) => ground(b) && inHold(b.x, b.z));
   if (t === TWIN_PEARL.touch.fromTick) pickTouches(world, cast, geo);
-  if (t >= TWIN_PEARL.touch.fromTick && t <= TWIN_PEARL.touch.toTick) {
-    for (const touch of cast.touch) if (touch.on !== 0) strikeVolume(world, cast, "touch", t, (b) => ground(b) && inTouch(touch, b.x, b.z));
+  const hold = t === TWIN_PEARL.hold.tick;
+  const touch = t >= TWIN_PEARL.touch.fromTick && t <= TWIN_PEARL.touch.toTick;
+  liveSamples(laneA, t, spanA);
+  liveSamples(laneB, t, spanB);
+  const body = spanA.last >= spanA.first || spanB.last >= spanB.first;
+  const skyA = skyFront(laneA, t, frontA);
+  const skyB = skyFront(laneB, t, frontB);
+  const lotus = t >= TWIN_PEARL.lotus.fromTick && t <= TWIN_PEARL.lotus.toTick;
+  if (!hold && !touch && !body && !skyA && !skyB && !lotus) return;
+  const [touchA, touchB] = cast.touch;
+  for (const beast of world.beasts.list) {
+    if (!beast.alive || damageImmune(world, beast)) continue;
+    const x = beast.x;
+    const z = beast.z;
+    const ground = inGroundBand(beast.y);
+    let kind: TwinKind | null = null;
+    let part = 0;
+    let half = false;
+    if (ground && ((hold && inHold(x, z)) || (touch && (inTouch(touchA!, x, z) || inTouch(touchB!, x, z)))) && mayHit(cast, beast, "touch", t)) {
+      kind = "touch";
+      part = POOL_TOUCH;
+    } else if (ground && body && (inSpan(laneA, spanA.first, spanA.last, x, z) || inSpan(laneB, spanB.first, spanB.last, x, z)) && mayHit(cast, beast, "corridor", t)) {
+      kind = "corridor";
+      part = POOL_CORRIDOR;
+    } else if (inSkyBand(beast.y) && ((skyA && within(x, z, frontA.x, frontA.z, SKY_R)) || (skyB && within(x, z, frontB.x, frontB.z, SKY_R))) && mayHit(cast, beast, "corridor", t)) {
+      kind = "corridor";
+      part = POOL_SKY;
+    } else if (ground && lotus) {
+      const region = lotusRegion(geo, x, z);
+      if (region !== 0 && mayHit(cast, beast, "lotus", t)) {
+        kind = "lotus";
+        part = POOL_LOTUS;
+        half = region === 1;
+      }
+    }
+    if (kind === null) continue;
+    const item = spareCandidates.pop() ?? { beast, kind, part, half, d: 0 };
+    item.beast = beast;
+    item.kind = kind;
+    item.part = part;
+    item.half = half;
+    item.d = heartDistance(world, beast);
+    candidates.push(item);
   }
-  if (t >= TWIN_PEARL.heads.fromTick) {
-    for (const lane of [laneA, laneB]) strikeVolume(world, cast, "corridor", t, (b) => ground(b) && inBody(lane, b.x, b.z, t));
-  }
-  for (const lane of [laneA, laneB]) {
-    if (skyFront(lane, t, front)) strikeVolume(world, cast, "corridor", t, (b) => inSkyBand(b.y) && inSky(lane, b.x, b.z, t));
-  }
-  if (t >= TWIN_PEARL.lotus.fromTick && t <= TWIN_PEARL.lotus.toTick) {
-    strikeVolume(world, cast, "lotus", t, (b) => ground(b) && lotusRegion(geo, b.x, b.z) !== 0, (b) => lotusRegion(geo, b.x, b.z) === 1);
-  }
+  if (candidates.length === 0) return;
+  candidates.sort(byTickOrder);
+  for (const item of candidates) if (item.beast.alive) hit(world, cast, item.beast, item.kind, item.part, item.half, t);
+  for (const item of candidates) spareCandidates.push(item);
+  candidates.length = 0;
 }
 
 /** Steps every live cast (stepSkills, after the strikes and zones); a cast is dropped after its last hitting tick. */

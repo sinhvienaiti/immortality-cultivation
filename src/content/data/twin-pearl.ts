@@ -16,8 +16,10 @@
  * split today's key-2 damage on that beast (school-kiem.ts Nhất Tuyến Xuyên
  * Vân: 2.5 W on the first beast, −15 % each next distinct beast, floor 40 %,
  * Thế −20) as 15 / 45 / 40 %; the lotus deals half outside its two long petals
- * and the hold zone. The Vương takes at most `bossCapW100` a cast (cast id =
- * the Cast's actionId).
+ * and the hold zone. Each dragon holds its own side (west: gate A and crows at
+ * x < 0; east: gate B and crows at x ≥ 0) with its own falloff and its own
+ * share of the cast's budget (`pool`). The Vương takes at most `bossCapW100` a
+ * cast (cast id = the Cast's actionId).
  * Owner: Lane 4 (trial, behind a flag).
  */
 
@@ -57,6 +59,15 @@ export const TWIN_PEARL = {
   lotus: { fromTick: 51, toTick: 71, radiusMm: 9000, petalLengthMm: 13_000, petalHalfWidthMm: 2200, outsidePm: 500 },
   /** Each kind's share of the beast's key-2 damage, %; Thế (posture) splits the same way. */
   sharesPct: { touch: 15, corridor: 45, lotus: 40 },
+  /**
+   * The cast's damage budget, W × 100, scaled by the Cast's M_q and the seat's bucket (as every hit is) and spent as
+   * effective HP (like ô 4's 4 W a cast; ô 5 shares a 10 W pool). Each side gets `sideW100` for its ground beasts and
+   * its part of the hold zone, split touch / corridor / lotus as `sharesPct`, and `skyW100` for its sky sweep. A hit
+   * takes from its side's part first come (F0 hold strike, F1 touches, the heads from the meeting point out, the lotus),
+   * at most what is left; a spent part hits no more beasts this cast. Trial: each side carries today's key-2 damage on
+   * its first beast (2.5 W), each sky sweep one crow's HP (Hỏa Nha, 0.8 W).
+   */
+  pool: { sideW100: 250, skyW100: 80 },
   maxHits: 3,
   rehitTicks: 20,
   /** The Vương's cap a cast, W × 100 (trial: 60 % of one beast's 2.5 W). */

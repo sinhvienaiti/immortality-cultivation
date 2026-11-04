@@ -35,6 +35,7 @@ import { MECHANISM_DEFS } from "../content/data/mechanisms";
 import { SCHOOL_KIEM, TAM_PHAP } from "../content/data/school-kiem";
 import { THANH_THACH_AI } from "../content/data/stage-m0a";
 import { TELEGRAPHS } from "../content/data/telegraphs";
+import { TWIN_PEARL, type SwordKey2 } from "../content/data/twin-pearl";
 import { AUDIO, DEFAULT_TIER, GAME_ID, NEW_WORDS, PRESETS, RULES, SIM, TT_BUDGETS, contentHash, type KeyAction } from "../content/rules";
 import type {
   BeastRef,
@@ -120,7 +121,7 @@ export interface MatchDeps {
   readonly ledger: () => NewWordLedger;
   readonly buildDeck: typeof buildDeck;
   readonly kPm: (profile: SeatProfile) => number;
-  readonly rulesHash: (stage: StageDef) => string;
+  readonly rulesHash: (stage: StageDef, variant?: { readonly swordKey2?: SwordKey2 }) => string;
 }
 
 export interface LoadedMatch {
@@ -138,10 +139,14 @@ export function newWordAllowance(remaining: number, dueCount: number): number {
 /**
  * Hash of every rule and data table a replay depends on: rules.ts, the stage
  * (with its waves) and each data file. A replay whose hash differs was made
- * under other rules.
+ * under other rules. A header with a trial variant (`swordKey2`) adds that
+ * variant's table, so its replays are covered too; without one the parts and
+ * the hash are what they were.
  */
-export function matchRulesHash(stage: StageDef): string {
-  return contentHash([RULES, stage, BEASTS, GENERALS, ELITE_TRAITS, BOSSES, TELEGRAPHS, SCHOOL_KIEM, TAM_PHAP, MECHANISM_DEFS, CONSUMABLE_DEFS, SHOP_ITEMS]);
+export function matchRulesHash(stage: StageDef, variant: { readonly swordKey2?: SwordKey2 } = {}): string {
+  const parts: unknown[] = [RULES, stage, BEASTS, GENERALS, ELITE_TRAITS, BOSSES, TELEGRAPHS, SCHOOL_KIEM, TAM_PHAP, MECHANISM_DEFS, CONSUMABLE_DEFS, SHOP_ITEMS];
+  if (variant.swordKey2 === "twin-pearl") parts.push(TWIN_PEARL);
+  return contentHash(parts);
 }
 
 /** canon §23.2 header, field order fixed (it is hashed by the replay tools). */

@@ -1,22 +1,24 @@
 // Twin Dragons, One Burning Pearl (sim/twin-pearl.ts, content/data/twin-pearl.ts), Kiếm key 2's grey box behind the
-// header flag `swordKey2: "twin-pearl"`: the flag off leaves today's world; the lanes from the flow field; the volumes
-// (hold, touch, head capsules and trail, sky sweep, lotus) at their frames; ≤ 3 hits a beast (one of each kind, ≥ 20
-// ticks apart); the Vương's cap per cast id; determinism and no floats in hashed state.
+// header flag `swordKey2: "twin-pearl"`: the flag off leaves today's world (pinned hashes from 1a78a82); the lanes from
+// the flow field; the volumes (hold, touch, head capsules and trail, sky sweep, lotus) at their frames, each checked by
+// the hits it deals; ≤ 3 hits a beast (one of each kind, ≥ 20 ticks apart); each side's falloff and budget; one
+// swarm-cluster cap per cast; the Thế split; mirror symmetry; the Vương's cap per cast id; determinism and no floats.
 import { describe, expect, it } from "vitest";
 import { kiemSkill } from "../../src/content/data/school-kiem";
 import { TWIN_PEARL, TWIN_PEARL_END_TICK } from "../../src/content/data/twin-pearl";
 import { FIELD } from "../../src/content/rules";
 import type { BeastState, World } from "../../src/content/types";
-import { createReplayHeader } from "../../src/app/app";
+import { createReplayHeader, matchRulesHash } from "../../src/app/app";
 import { wHpOf } from "../../src/sim/combat";
 import { emitCast } from "../../src/sim/cast";
-import { mToU, uToM } from "../../src/sim/fixed";
+import { gatePoint } from "../../src/sim/field";
+import { mToU, mmToU, mulDiv, mulDivSym, uToM } from "../../src/sim/fixed";
 import { HASH_SKIP, hashWorldHex, hashedFloats } from "../../src/sim/hash";
 import { createSkillsState, resolveCast, stepSkills } from "../../src/sim/skills";
-import { inBody, lotusRegion, twinPearlGeometry, volumesAt } from "../../src/sim/twin-pearl";
+import { POOL_CORRIDOR, POOL_LOTUS, POOL_PARTS, POOL_SKY, POOL_TOUCH, inBody, lotusRegion, twinPearlGeometry, twinPearlPool, volumesAt, type TwinPearlCast } from "../../src/sim/twin-pearl";
 import { spawnBeast } from "../../src/sim/spawn";
 import { createWorld, step } from "../../src/sim/world";
-import { addBeast, advance, castOf, makeWorld, testHeader, THANH_THACH_AI } from "./combat-fixture";
+import { addBeast, addCluster, advance, castOf, makeWorld, setTamNhan, testHeader, THANH_THACH_AI } from "./combat-fixture";
 
 const HOLD = 1;
 const TOUCH = 2;
@@ -251,6 +253,8 @@ describe("hits: ≤ 3 a beast a cast, one of each kind, ≥ 20 ticks apart", () 
     const start = world.tick;
     expect(resolveCast(world, castOf(world, 2))).toBe(true);
     const cast = world.skills.twinPearl!.casts[0]!;
+    // The hit caps alone: no budget limit in this crowd (the budget has its own tests).
+    cast.pool.fill(10 ** 9);
     advance(world, 100, [stepSkills]);
     let three = 0;
     for (const beast of beasts) {
@@ -263,8 +267,9 @@ describe("hits: ≤ 3 a beast a cast, one of each kind, ≥ 20 ticks apart", () 
     const entries = cast.book;
     expect(entries.length).toBe(beasts.length);
     for (const entry of entries) expect(entry.hits).toBeLessThanOrEqual(3);
-    // Falloff by first contact: 100 %, 85 %, 70 %, 55 %, then the 40 % floor.
-    expect(entries.map((e) => e.factorPm).slice(0, 6)).toEqual([1000, 850, 700, 550, 400, 400]);
+    // Each side's own falloff by first contact: 100 %, 85 %, 70 %, 55 %, then the 40 % floor.
+    for (const side of [0, 1]) expect(entries.filter((e) => e.side === side).map((e) => e.factorPm).slice(0, 6)).toEqual([1000, 850, 700, 550, 400, 400]);
+    expect(cast.sideVictims[0]! + cast.sideVictims[1]!).toBe(cast.victims);
   });
 
   it("a crow takes the sky sweep only; the ground under it is not hit by the sky", () => {
@@ -334,5 +339,239 @@ describe("determinism (same seed, same result) and integer state", () => {
     expect(b.hash).toBe(a.hash);
     expect(a.floats).toEqual([]);
     expect(run(12).hits).not.toBe(a.hits);
+  });
+});
+
+describe("each volume is checked by the hits it deals (review 04/11: a mutation of any of these fails a test)", () => {
+  const hitsOf = (of: ReturnType<typeof makeWorld>["of"], beast: BeastState, start: number) => slot2Hits(of, beast).map((h) => [h.tick - start, h.amount]);
+
+  it("F0 hold strike: a beast in front of the formation centre takes its touch on F0, then the full lotus", () => {
+    const { world, of } = twinWorld();
+    setTamNhan(world, false);
+    const beast = addBeast(world, "thiet-giap-tru", { x: 0, z: -4, gate: "A" });
+    const start = world.tick;
+    expect(resolveCast(world, castOf(world, 2, { quality: "good" }))).toBe(true);
+    advance(world, 100, [stepSkills]);
+    const p = wHpOf(world, 250);
+    expect(hitsOf(of, beast, start)).toEqual([[0, mulDiv(p, 15, 100)], [51, mulDiv(p, 40, 100)]]);
+  });
+
+  it("lane B has its own touch box, head and petal: the mirror of lane A's beast takes the same three hits", () => {
+    const { world, of } = twinWorld();
+    const beast = addBeast(world, "thiet-giap-tru", { x: 2.4, z: -10.1, gate: "B" });
+    const start = world.tick;
+    expect(resolveCast(world, castOf(world, 2))).toBe(true);
+    advance(world, 100, [stepSkills]);
+    expect(slot2Hits(of, beast).map((h) => h.tick - start)).toEqual([1, 21, 51]);
+  });
+
+  it("the lotus deals half outside its petals and the hold zone (a lone beast 6 m north of the meeting point)", () => {
+    const { world, of } = twinWorld();
+    setTamNhan(world, false);
+    const beast = addBeast(world, "thiet-giap-tru", { x: 0, z: -15.25, gate: "A" });
+    const geo = twinPearlGeometry(world);
+    expect(lotusRegion(geo, beast.x, beast.z)).toBe(1);
+    const start = world.tick;
+    expect(resolveCast(world, castOf(world, 2, { quality: "good" }))).toBe(true);
+    advance(world, 100, [stepSkills]);
+    const p = wHpOf(world, 250);
+    // Its touch box is round it (its lane's nearest beast); no head passes within 1.4 m; the lotus at half.
+    expect(hitsOf(of, beast, start)).toEqual([[1, mulDiv(p, 15, 100)], [51, mulDiv(mulDiv(p, 40, 100), TWIN_PEARL.lotus.outsidePm, 1000)]]);
+  });
+
+  it("the sky sweep never hits the ground: a crow pulled down under the sweep takes nothing, one in the air takes it", () => {
+    const { world, of } = twinWorld();
+    const corner = twinPearlGeometry(world).lanes[0].skyFrom;
+    const down = spawnBeast(world, "hoa-nha", "sky", { wave: 0, x: corner.x / 2, z: corner.z / 2 });
+    down.y = 0;
+    const up = spawnBeast(world, "hoa-nha", "sky", { wave: 0, x: corner.x / 2, z: corner.z / 2 + mToU(0.5) });
+    expect(resolveCast(world, castOf(world, 2))).toBe(true);
+    advance(world, 100, [stepSkills]);
+    expect(slot2Hits(of, down)).toHaveLength(0);
+    expect(slot2Hits(of, up)).toHaveLength(1);
+  });
+
+  it("each hit carries its share of today's Thế −20 (touch 3, corridor 9, lotus 8) on a beast with Thế", () => {
+    const { world, of } = twinWorld();
+    setTamNhan(world, false);
+    const beast = addBeast(world, "lang-dau-dan", { x: -2.4, z: -10.1, gate: "A" });
+    expect(beast.posture!.value).toBe(60);
+    const start = world.tick;
+    expect(resolveCast(world, castOf(world, 2, { quality: "good" }))).toBe(true);
+    advance(world, 100, [stepSkills]);
+    expect(slot2Hits(of, beast).map((h) => h.tick - start)).toEqual([1, 21, 51]);
+    // After each hit: the split Thế, plus 1 for each whole W of typed damage so far (posture.ts, 1 W = 90 HP at K0):
+    // 34 HP (none), 135 HP (1), 225 HP (2).
+    const after = (t: number) => of("posture").filter((e) => e.tick === start + t && e.beast.slot === beast.slot).map((e) => e.value).pop();
+    expect([after(1), after(21), after(51)]).toEqual([57, 47, 38]);
+  });
+
+  it("the whole cast is one area hit: a swarm cluster loses at most 60 % of its HP to it (today's line: one hit, 60 %)", () => {
+    const { world } = twinWorld();
+    const rats = addCluster(world, 6, -0.75, -4);
+    const hp = rats.reduce((sum, r) => sum + r.hp, 0);
+    expect(resolveCast(world, castOf(world, 2, { quality: "flash" }))).toBe(true);
+    world.skills.twinPearl!.casts[0]!.pool.fill(10 ** 9);
+    advance(world, 100, [stepSkills]);
+    const left = rats.reduce((sum, r) => sum + (r.alive ? r.hp : 0), 0);
+    expect(hp - left).toBe(Math.floor((hp * 60) / 100));
+    expect(rats.filter((r) => r.alive).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("each dragon holds its side: its own falloff and budget, mirror-symmetric whatever the order", () => {
+  /** A mirrored crowd: beasts on lane A's S samples and their mirror on lane B, plus a crow over each sky route. */
+  function mirrored(eastFirst: boolean) {
+    const made = twinWorld();
+    const { world } = made;
+    const lane = twinPearlGeometry(world).lanes[0];
+    const corner = lane.skyFrom;
+    const pairs: [BeastState, BeastState][] = [];
+    for (let k = 2; k < lane.sx.length; k += 4) {
+      const place = (side: number): BeastState =>
+        spawnBeast(world, k % 8 === 2 ? "nham-vien" : "thiet-giap-tru", side === 0 ? "A" : "B", { wave: 0, x: side === 0 ? lane.sx[k]! : -lane.sx[k]!, z: lane.sz[k]! });
+      const first = place(eastFirst ? 1 : 0);
+      const second = place(eastFirst ? 0 : 1);
+      pairs.push(eastFirst ? [second, first] : [first, second]);
+    }
+    const crows = [
+      spawnBeast(world, "hoa-nha", "sky", { wave: 0, x: corner.x / 2, z: corner.z / 2 }),
+      spawnBeast(world, "hoa-nha", "sky", { wave: 0, x: -corner.x / 2, z: corner.z / 2 }),
+    ];
+    pairs.push(eastFirst ? [crows[1]!, crows[0]!] : [crows[0]!, crows[1]!]);
+    if (eastFirst) pairs.forEach((p) => p.reverse());
+    const start = world.tick;
+    expect(resolveCast(world, castOf(world, 2))).toBe(true);
+    const cast = world.skills.twinPearl!.casts[0]!;
+    advance(world, 100, [stepSkills]);
+    const dealt = (b: BeastState) => slot2Hits(made.of, b).map((h) => [h.tick - start, h.amount].join(":")).join(",");
+    return { pairs, dealt, cast };
+  }
+
+  it("a mirrored crowd takes mirrored hits: the same ticks and amounts on both sides, an even split", () => {
+    const { pairs, dealt, cast } = mirrored(false);
+    let west = 0;
+    let east = 0;
+    for (const [w, e] of pairs) {
+      expect(dealt(e)).toBe(dealt(w));
+      west += cast.book.filter((v) => v.slot === w.slot).length;
+      east += cast.book.filter((v) => v.slot === e.slot).length;
+    }
+    expect(west).toBe(east);
+    expect(cast.sideVictims[0]).toBe(cast.sideVictims[1]);
+    for (let part = 0; part < POOL_PARTS; part += 1) expect(cast.pool[part]).toBe(cast.pool[POOL_PARTS + part]);
+  });
+
+  it("spawning the east side first changes nothing on either side", () => {
+    const a = mirrored(false);
+    const b = mirrored(true);
+    expect(b.pairs.map(([w, e]) => [b.dealt(w), b.dealt(e)])).toEqual(a.pairs.map(([w, e]) => [a.dealt(w), a.dealt(e)]));
+    expect(b.cast.dealt).toBe(a.cast.dealt);
+  });
+});
+
+describe("the cast's budget (content pool): per side and part, M_q and the bucket like every hit, spent first come", () => {
+  it("each side gets 2.5 W split 15 / 45 / 40 and 0.8 W for its sky; a Chớp's M_q (1.25) grows it", () => {
+    const { world } = twinWorld();
+    setTamNhan(world, false);
+    const good = twinPearlPool(world, 0, "good");
+    const side = wHpOf(world, TWIN_PEARL.pool.sideW100);
+    const one = [mulDiv(side, 15, 100), mulDiv(side, 45, 100), wHpOf(world, TWIN_PEARL.pool.skyW100), mulDiv(side, 40, 100)];
+    expect(good).toEqual([...one, ...one]);
+    expect([one[POOL_TOUCH], one[POOL_CORRIDOR], one[POOL_SKY], one[POOL_LOTUS]]).toEqual([34, 101, 72, 90]);
+    const flash = twinPearlPool(world, 0, "flash");
+    for (let i = 0; i < good.length; i += 1) expect(flash[i]).toBe(i % POOL_PARTS === POOL_SKY ? mulDiv(72, 1250, 1000) : mulDiv(mulDiv(side, 1250, 1000), [15, 45, 0, 40][i % POOL_PARTS]!, 100));
+  });
+
+  it("a crowd on lane A: no part deals past its budget, the spent corridor leaves later beasts unhit, the east keeps its whole budget", () => {
+    const { world, of } = twinWorld();
+    const lane = twinPearlGeometry(world).lanes[0];
+    const beasts: BeastState[] = [];
+    for (let k = 1; k < lane.sx.length; k += 2) beasts.push(spawnBeast(world, "thiet-giap-tru", "A", { wave: 0, x: lane.sx[k]!, z: lane.sz[k]! }));
+    expect(resolveCast(world, castOf(world, 2))).toBe(true);
+    const cast: TwinPearlCast = world.skills.twinPearl!.casts[0]!;
+    advance(world, 100, [stepSkills]);
+    for (let i = 0; i < cast.pool.length; i += 1) expect(cast.pool[i]!).toBeGreaterThanOrEqual(0);
+    expect(cast.dealt).toBeLessThanOrEqual(cast.poolStart.reduce((sum, v) => sum + v, 0));
+    expect(cast.dealt).toBe(of("hit").filter((h) => h.source === "slot2").reduce((sum, h) => sum + h.amount, 0));
+    // The west corridor is spent within a few beasts from the meeting point; the rest of the lane takes no corridor hit.
+    expect(cast.pool[POOL_CORRIDOR]).toBeLessThan(mulDiv(cast.baseHp, 45 * 400, 100 * 1000));
+    const corridorHit = new Set(cast.book.filter((v) => v.kinds & 2).map((v) => v.slot));
+    expect(corridorHit.size).toBeGreaterThan(0);
+    expect(corridorHit.size).toBeLessThan(beasts.length);
+    // Nothing on the east: its budget is untouched.
+    for (let part = 0; part < POOL_PARTS; part += 1) expect(cast.pool[POOL_PARTS + part]).toBe(cast.poolStart[POOL_PARTS + part]);
+  });
+});
+
+describe("the cast resolves only on a beast that can take damage (review 04/11)", () => {
+  it("a roaring Vương alone holds the Cast; a beast beside him lets it resolve, and the roar keeps him out of the book", () => {
+    const { world, of } = twinWorld();
+    const boss = spawnBeast(world, "thiet-boi-lang-vuong", "A", { wave: 0, x: mToU(-2), z: mToU(-5) });
+    boss.mode = "roar";
+    boss.modeUntil = world.tick + 200;
+    expect(resolveCast(world, castOf(world, 2))).toBe(false);
+    const rat = addBeast(world, "thach-thu", { x: 2, z: -5, gate: "B" });
+    expect(resolveCast(world, castOf(world, 2))).toBe(true);
+    const cast = world.skills.twinPearl!.casts[0]!;
+    advance(world, 10, [stepSkills]);
+    // He stands in the hold zone: the F0 strike passed him by, so he holds no falloff place and no kind of hit.
+    expect(cast.book.map((v) => v.slot)).not.toContain(boss.slot);
+    expect(cast.book.map((v) => v.slot)).toContain(rat.slot);
+    advance(world, 90, [stepSkills]);
+    expect(slot2Hits(of, rat).length).toBeGreaterThan(0);
+    expect(slot2Hits(of, boss)).toHaveLength(0);
+    expect(world.skills.twinPearl!.casts).toHaveLength(0);
+  });
+});
+
+describe("the replay header's rulesHash covers the trial table only when the header asks for it", () => {
+  it("no variant: the hash is today's; twin-pearl: another, stable", () => {
+    expect(matchRulesHash(THANH_THACH_AI, {})).toBe(matchRulesHash(THANH_THACH_AI));
+    expect(matchRulesHash(THANH_THACH_AI, { swordKey2: "twin-pearl" })).not.toBe(matchRulesHash(THANH_THACH_AI));
+    expect(matchRulesHash(THANH_THACH_AI, { swordKey2: "twin-pearl" })).toBe(matchRulesHash(THANH_THACH_AI, { swordKey2: "twin-pearl" }));
+  });
+});
+
+describe("the flag off: world hashes pinned on 1a78a82 (before the grey box)", () => {
+  /** A scripted fight with key 2 (today's line), key 4 and key 1 casts; world hash and beasts alive every 300 ticks. */
+  function scripted(seed: number, swordKey2 = false): string[] {
+    const header = swordKey2 ? { ...testHeader({ seed }), swordKey2: "twin-pearl" as const } : testHeader({ seed });
+    const world = createWorld(THANH_THACH_AI, seed, header);
+    world.phaseEndsAt = -1;
+    const rng = world.rng.spawn;
+    const tide = (): void => {
+      for (let k = 0; k < 36; k += 1) {
+        const gate = k % 2 === 0 ? "A" : "B";
+        const from = gatePoint(world.stage, gate);
+        const f = rng.int(150, 900);
+        spawnBeast(world, k % 3 === 0 ? "phong-lang" : "thach-thu", gate, { wave: -1, x: mulDivSym(from.x, f, 1000) + rng.int(-15_000, 15_000), z: mulDivSym(from.z, f, 1000) });
+      }
+      spawnBeast(world, "hoa-nha", "sky", { wave: -1 });
+      spawnBeast(world, "hoa-nha", "sky", { wave: -1, x: mmToU(17_000), z: mmToU(-16_000) });
+    };
+    const out: string[] = [];
+    let action = 0;
+    for (let tick = 0; tick < 1200; tick += 1) {
+      if (tick % 400 === 0) tide();
+      const slot = tick % 500 === 20 ? 2 : tick % 240 === 100 ? 4 : tick % 90 === 7 ? 1 : 0;
+      if (slot !== 0) {
+        action += 1;
+        emitCast(world, { seat: 0, slot, actionId: action, wordId: "w" + action, tick: world.tick, channel: "typing", quality: "good", origin: { x: 0, z: mmToU(3000) }, aim: null, state: "held", heldUntil: -1, target: null, node: null });
+      }
+      step(world, []);
+      world.events.drain();
+      world.formation.heart = world.formation.heartMax;
+      if ((tick + 1) % 300 === 0) out.push(hashWorldHex(world) + "@" + world.beasts.live);
+    }
+    return out;
+  }
+
+  it("default headers give the same world, tick for tick, as the commit before the grey box", () => {
+    // Computed by this same script on a clean export of 1a78a82 (04/11/2026) and on the current tree: identical.
+    expect(scripted(5)).toEqual(["844c012d@22", "1cb00f08@36", "527f8f69@58", "7b865d13@35"]);
+    expect(scripted(9)).toEqual(["aa8ae3cc@23", "4ba2160f@38", "753240f5@56", "29c48d76@34"]);
+    // The script does reach key 2: with the flag on, the same fight differs.
+    expect(scripted(5, true)).not.toEqual(scripted(5));
   });
 });
