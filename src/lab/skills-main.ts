@@ -27,6 +27,7 @@
  * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
  * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
  * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
+ * ?slash=tongues keeps Fire key 7's old finisher tongues for A/B (default: the owner's Firefly strip).
  * Sword aura (docs/games/tu-tien/skills/SWORD_AURA.md §5.1): ?aura=off|a (default off: today's look; a =
  * wind-silk-mantle), the panel's Aura list, A toggles it, __lab.aura(id) sets it, __lab.auraLayer(name, on, intensity)
  * switches one layer (MantleSheath, MantleHull, SilkTail, MantleHalo, TipStar); ?motion=reduce (resolveReducedMotion)
@@ -823,6 +824,7 @@ const BLADE_HEAT = params.get("bladeHeat");
 // SWORD_AURA §5.5: ?riverSheath=1 puts the Fire round's removed flame cards back on key 7's river (the "burning planks"
 // comparison sheet only).
 FIRE_LAB.riverSheath = params.get("riverSheath") === "1";
+FIRE_LAB.slashTongues = params.get("slash") === "tongues";
 /** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
 async function setElement(id: string): Promise<boolean> {
   const kit = elementById(id);

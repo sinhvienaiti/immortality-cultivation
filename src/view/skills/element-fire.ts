@@ -90,7 +90,7 @@ const SLASH_DEEP = lin("#E8560E");
  * Lab-only comparisons (the skills lab sets them; the game never does): `riverSheath` puts the flame cards back on key
  * 7's river swords (the "burning planks" the Fire round removed), for SWORD_AURA §5.5's comparison sheet only.
  */
-export const FIRE_LAB = { riverSheath: false };
+export const FIRE_LAB = { riverSheath: false, slashTongues: false };
 
 /** Folder of the kit's clips (art-src/lab/vfx/fire/manifest.json). */
 const FOLDER = "fire";
@@ -271,6 +271,19 @@ class FireLayers {
     this.seams = stage.beams(24, 13);
     this.flameSlash = new FlameSlash(15);
     this.flameSlash.setRamp(CHAR, SLASH_DEEP, AMBER, WHITE_GOLD);
+    if (!FIRE_LAB.slashTongues) {
+      const strip = stage.texture("aura/strips/strip-fire-sheath.rgba.png");
+      strip.colorSpace = THREE.SRGBColorSpace;
+      strip.wrapS = THREE.RepeatWrapping;
+      strip.wrapT = THREE.ClampToEdgeWrapping;
+      strip.generateMipmaps = true;
+      strip.minFilter = THREE.LinearMipmapLinearFilter;
+      strip.magFilter = THREE.LinearFilter;
+      strip.premultiplyAlpha = false;
+      strip.needsUpdate = true;
+      // No projected length is available to FlameSlash.set: use the ticket's three-period fallback.
+      this.flameSlash.setStrip(strip, 3, 0.5);
+    }
     stage.layer.add(this.flameSlash.mesh);
     this.groundRings = stage.heatRings(16, "ground", 6);
     this.groundRings.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
