@@ -7,6 +7,8 @@
 // layer), numbers to OUT_DIR/fire-<PHASE>.json; make sheets, then delete raw.
 //   BASE=http://127.0.0.1:3071/skills-lab.html PHASE=fire-mid ELEMENT=fire [GROUND=#d6d0c2] [ONLY=k1,k7] [PLAN=fixes|linger] \
 //   OUT_DIR=tmp/shots/element-fire node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-fire.mjs --width=1920 --height=1080
+//   PLAN=brush LAYERS=brush,flash,lotus,point SCREEN=0 WORLD=1 OUT_DIR=tmp/shots/element-fire \
+//   node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-fire.mjs --width=1920 --height=1080
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -48,6 +50,20 @@ const LINGER = [
   ["k7f", "k7", "close:-4,-7,13", false, 192, AFTER_HIT],
 ];
 
+/** PLAN=brush (ticket 264): key 1's first hit at the brush's own ages (hit-stop frames do not age it; past ~26 the second blow lands). */
+const BRUSH_AGES = [0, 1, 2, 3, 4, 6, 9, 12, 15, 18, 21, 24];
+const BRUSH_PLAN = [
+  ["k1b", "k1", "close:-0.3,-5.6,10", false, "age", BRUSH_AGES],
+  ["k1bp", "k1", "play", false, "age", BRUSH_AGES],
+];
+
+const LAYER_PREFIX = {
+  brush: "flipbook-fire-impact-k1-r2",
+  flash: "fx-fire-flash",
+  lotus: "flipbook-fire-burst",
+  point: "fx-fire-points",
+};
+
 export default async function (page) {
   const base = process.env.BASE ?? "http://127.0.0.1:3071/skills-lab.html";
   const phase = process.env.PHASE ?? "fire";
@@ -59,11 +75,13 @@ export default async function (page) {
   const out = join(root, `raw-${phase}`);
   const only = process.env.ONLY ? process.env.ONLY.split(",") : null;
   const world = process.env.WORLD === "1";
+  const screenOff = process.env.SCREEN === "0";
+  const layers = process.env.LAYERS ? process.env.LAYERS.split(",") : [];
   mkdirSync(out, { recursive: true });
   const shots = [];
   const releases = [];
   let loaded = "";
-  const plan = process.env.PLAN === "fixes" ? FIXES : process.env.PLAN === "linger" ? LINGER : PLAN;
+  const plan = process.env.PLAN === "brush" ? BRUSH_PLAN : process.env.PLAN === "fixes" ? FIXES : process.env.PLAN === "linger" ? LINGER : PLAN;
   for (const item of plan) {
     const [id, slot, cam, typed] = item;
     // A linger item: [.., hit ("hit": the first impact event, or a frame after the key), offsets after it].
@@ -79,9 +97,19 @@ export default async function (page) {
       }
       // Textures and atlases load after `ready`: wait, then draw.
       await sleep(2500);
+      if (plan === BRUSH_PLAN && element === "fire" && !qs.includes("impact=lotus")) {
+        let ready = false;
+        for (let i = 0; i < 80; i += 1) {
+          ready = await page.eval("!!window.__lab.fireImpact?.().ready");
+          if (ready) break;
+          await sleep(250);
+        }
+        if (!ready) throw new Error("brushfire clip not loaded (art-src/lab/vfx/fire/impact-k1-r2/manifest.json)");
+      }
       loaded = url;
     }
     await page.eval("window.__lab.reset()");
+    if (screenOff) await page.eval("window.__lab.post({ screen: false })");
     await page.eval("window.__lab.camera('play')");
     if (cam === "zoom") await page.eval("window.__lab.zoom(1)");
     if (cam.startsWith("close:")) {
@@ -96,7 +124,14 @@ export default async function (page) {
     let at = 0;
     let maxNonFinite = 0;
     let hit = 0;
-    if (hitAt === "hit") {
+    if (hitAt === "age") {
+      while (at < 120 && (await page.eval("window.__lab.fireImpact().ageTicks")) < 0) {
+        await page.eval("window.__lab.step(1)");
+        at += 1;
+      }
+      if ((await page.eval("window.__lab.fireImpact().ageTicks")) < 0) throw new Error("no key-1 hit");
+      hit = at;
+    } else if (hitAt === "hit") {
       // Step to the frame the first blow lands (the lab's impact event), at most 120 frames.
       while (at < 120 && (await page.eval("window.__lab.events().impact")) === 0) {
         await page.eval("window.__lab.step(1)");
@@ -105,12 +140,24 @@ export default async function (page) {
       hit = at;
     } else if (typeof hitAt === "number") hit = hitAt;
     const offsets = hitAt === null ? null : frames;
-    if (hitAt !== null) frames = frames.map((f) => hit + f);
+    if (hitAt !== null && hitAt !== "age") frames = frames.map((f) => hit + f);
     for (let fi = 0; fi < frames.length; fi += 1) {
-      const f = frames[fi];
-      if (f > at) await page.eval(`window.__lab.step(${f - at})`);
-      at = Math.max(at, f);
-      const name = offsets === null ? String(f).padStart(3, "0") : "h" + String(offsets[fi]).padStart(3, "0");
+      let f = frames[fi];
+      let age;
+      if (hitAt === "age") {
+        age = await page.eval("window.__lab.fireImpact().ageTicks");
+        for (let step = 0; step < 60 && age < f; step += 1) {
+          await page.eval("window.__lab.step(1)");
+          at += 1;
+          age = await page.eval("window.__lab.fireImpact().ageTicks");
+        }
+        if (age < f) throw new Error(`brushfire age ${f} not reached`);
+        f = at;
+      } else {
+        if (f > at) await page.eval(`window.__lab.step(${f - at})`);
+        at = Math.max(at, f);
+      }
+      const name = hitAt === "age" ? "a" + String(offsets[fi]).padStart(2, "0") : offsets === null ? String(f).padStart(3, "0") : "h" + String(offsets[fi]).padStart(3, "0");
       const file = join(out, `${id}-${name}.png`);
       await page.shot(file);
       const bright = await page.eval("window.__lab.bright()");
@@ -120,15 +167,29 @@ export default async function (page) {
         await page.shot(file.replace(/\.png$/, "-world.png"));
         await page.eval("window.__lab.debugShow('fx', true)");
       }
+      if (layers.length > 0) {
+        try {
+          for (const layer of layers) {
+            const prefix = LAYER_PREFIX[layer];
+            if (prefix === undefined) throw new Error(`unknown LAYERS entry: ${layer}`);
+            await page.eval(`window.__lab.fxSolo(${JSON.stringify(prefix)})`);
+            await page.shot(file.replace(/\.png$/, `-${layer}.png`));
+          }
+          await page.eval("window.__lab.fxSolo('-none-')");
+          await page.shot(file.replace(/\.png$/, "-base.png"));
+        } finally {
+          await page.eval("window.__lab.fxSolo(null)");
+        }
+      }
       maxNonFinite = Math.max(maxNonFinite, bright.nonFinite ?? 0);
-      shots.push({ id, slot, cam, typed, frame: f, hit: hitAt === null ? undefined : hit, file, bright: { pixels: bright.pixels, share: bright.share, max: bright.max, nonFinite: bright.nonFinite }, screen: await page.eval("window.__lab.screen()") });
+      shots.push({ id, slot, cam, typed, frame: f, hit: hitAt === null ? undefined : hit, age, file, bright: { pixels: bright.pixels, share: bright.share, max: bright.max, nonFinite: bright.nonFinite }, screen: await page.eval("window.__lab.screen()"), fire: await page.eval("window.__lab.fireImpact ? window.__lab.fireImpact() : null"), named: await page.eval("window.__lab.fxNamed()") });
     }
     const m = await page.eval("window.__lab.metrics()");
     const rel = (m.releases ?? []).map((x) => ({ slot: x.slot, keyToVfxMs: x.keyToVfxMs, keyToBodyMs: x.keyToBodyMs }));
     releases.push({ id, releases: rel, maxNonFinite, before });
   }
   const info = { weapon: await page.eval("window.__lab.weapon()"), element: await page.eval("window.__lab.element()"), sound: await page.eval("window.__lab.sound()") };
-  const report = { phase, element, qs, ground: process.env.GROUND ?? "default", info, releases, shots };
+  const report = { phase, element, qs, ground: process.env.GROUND ?? "default", screen: screenOff ? false : undefined, info, releases, shots };
   writeFileSync(join(root, `fire-${phase}.json`), JSON.stringify(report, null, 1));
   return { phase, info, shots: shots.length, releases };
 }

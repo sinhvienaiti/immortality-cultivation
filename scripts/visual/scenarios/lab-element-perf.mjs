@@ -33,6 +33,12 @@ export default async function (page) {
     await sleep(250);
   }
   await sleep(1500);
+  if (process.env.ELEMENT === "fire" && !qs.includes("impact=lotus")) {
+    for (let i = 0; i < 80; i += 1) {
+      if (await page.eval("!!window.__lab.fireImpact?.().ready")) break;
+      await sleep(250);
+    }
+  }
   const rows = { idle: [], key1: [], key7Hunt: [], key7Finish: [], k5: [] };
   let gpu = "";
   for (let run = 0; run < runs; run += 1) {
@@ -75,7 +81,8 @@ export default async function (page) {
   const pick = (k, f) => median(rows[k].map((s) => s[f]));
   const sum = (k) => ({ mean: pick(k, "mean"), p50: pick(k, "p50"), p95: pick(k, "p95"), max: pick(k, "max"), cpuP95: pick(k, "cpuP95"), drawCalls: rows[k][0].drawCalls, triangles: rows[k][0].triangles });
   const info = { element: await page.eval("typeof window.__lab.element === 'function' ? window.__lab.element() : 'none'") };
-  const report = { q, width: page.width, height: page.height, dpr: 1, runs, gpu, element: info.element, qs, ceilingP95Ms: 11.5, idle: sum("idle"), key1: sum("key1"), key7Hunt: sum("key7Hunt"), key7Finish: sum("key7Finish"), k5Waves: sum("k5"), runsRaw: rows };
+  const fire = await page.eval("window.__lab.fireImpact ? window.__lab.fireImpact() : null");
+  const report = { q, width: page.width, height: page.height, dpr: 1, runs, gpu, element: info.element, impact: fire?.mode ?? null, brushReady: fire?.ready ?? false, qs, ceilingP95Ms: 11.5, idle: sum("idle"), key1: sum("key1"), key7Hunt: sum("key7Hunt"), key7Finish: sum("key7Finish"), k5Waves: sum("k5"), runsRaw: rows };
   if (process.env.OUT) {
     const out = resolve(process.env.OUT);
     mkdirSync(dirname(out), { recursive: true });

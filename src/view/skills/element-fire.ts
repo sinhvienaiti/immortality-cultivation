@@ -16,6 +16,9 @@
  *   beast (real alpha, its white-hot base graded to gold matter: solid and saturated on pale and dark stone), spark
  *   rays and loose embers, a cut as a molten crescent of matter; key 7's river strikes stay thin (a small point,
  *   sparks, embers) so the field-wide river never turns into flame soup, its lead blades take the lotus;
+ *   key 1's hit, version 2: the brushfire card (masked flipbook, its own folder), a flash and a light at age 0,
+ *   sparks and embers kept; no lotus, fire point, code scorch or ground fire on that blow;
+ *   FIRE_LAB.impact = "lotus" puts the old hit back;
  * - aftermath: burnt ground with a crisp irregular edge and cooling ember cracks, a low ground fire that burns down
  *   over ~3 s by erosion into embers and char, a few dark smoke wisps (normal blend), embers rising for a while; key
  *   7's finisher leaves a burning scar along its cut (scorch, a low flame line, ground fires, a gold molten seam);
@@ -86,11 +89,76 @@ const CUT_BODY: Rgb = [0.86, 0.3, 0.025];
 /** The flame slash's deep body: a vermilion kept off red (hue ~21°). */
 const SLASH_DEEP = lin("#E8560E");
 
+/** Linear gold-white of key 1's hit flash (the fire point's own core colour; a white HDR core read as a white ball). */
+const FLASH = lin("#FFE2A0");
+
+/**
+ * Key 1's hit, version 2 (ticket 264; INTEGRATION_PLAN CX-H): the owner's brushfire clip (04/11/2026, ~22:00) as a masked
+ * one-shot card rooted at the strike, a flash and a light at age 0. TRIAL numbers, tuned in the lab.
+ */
+export const BRUSH = {
+  folder: "fire/impact-k1-r2",
+  id: "fire-impact-k1-r2",
+  /** Cell height (m) × the blow's s: the fan is about 0.54 × that tall and 0.69 × that wide above the root. */
+  size: 3.0,
+  /** Share of the turn toward the blow's screen direction the fan takes, and its cap (rad): flames never hang down. */
+  follow: 0.6,
+  maxTurn: (50 * Math.PI) / 180,
+  lift: 0.7,
+  softM: 0.2,
+  rampCool: 1,
+  capacity: 24,
+  renderOrder: 12,
+  /** The flash at the strike root: m (× s), s, gain on FLASH (HDR, so only its centre reaches the bloom). */
+  flash: { size0: 0.6, size1: 0.5, life: 0.07, gain: 2 },
+  /** The impact light's intensity; × bigLight on the third, big blow. */
+  light: 4,
+  bigLight: 1.5,
+} as const;
+
+export interface FireAudit {
+  brush: number; flash: number; light: number;
+  lotus: number; point: number; scorch: number; groundFire: number;
+  missing: number;
+  /** stage.time at the first and the latest key-1 hit since the last reset (−1: none). */
+  firstAt: number; lastAt: number;
+}
+
 /**
  * Lab-only comparisons (the skills lab sets them; the game never does): `riverSheath` puts the flame cards back on key
  * 7's river swords (the "burning planks" the Fire round removed), for SWORD_AURA §5.5's comparison sheet only.
  */
-export const FIRE_LAB = { riverSheath: false };
+export const FIRE_LAB = {
+  riverSheath: false,
+  /** ?impact=brush|lotus (ticket 264); "lotus" restores key 1's old hit exactly as before the ticket. */
+  impact: "brush" as "brush" | "lotus",
+  /** What key 1's hits have drawn since the last reset; the lab reads it through __lab.fireImpact, the game never does. */
+  audit: { brush: 0, flash: 0, light: 0, lotus: 0, point: 0, scorch: 0, groundFire: 0, missing: 0, firstAt: -1, lastAt: -1 } as FireAudit,
+};
+
+/** Clears the lab's key-1 hit counters and timestamps. */
+export function resetFireAudit(): void {
+  const a = FIRE_LAB.audit;
+  a.brush = a.flash = a.light = a.lotus = a.point = a.scorch = a.groundFire = a.missing = 0;
+  a.firstAt = a.lastAt = -1;
+}
+
+let warnedBrush = false;
+
+/**
+ * Screen angle (rad) of key 1's brushfire card for a blow along ground direction (dx, dz) (ticket 264): the blow as the
+ * camera sees it (`view` = the camera's matrixWorldInverse, its rotation part), the painted fan's `heading` turned
+ * `follow` of the way toward it, at most `maxTurn` either way. A blow along the view axis (or none) keeps the painting (0).
+ */
+export function brushRotation(dx: number, dz: number, view: THREE.Matrix4, heading: number, follow: number, maxTurn: number): number {
+  const e = view.elements;
+  const x = e[0]! * dx + e[8]! * dz;
+  const y = e[1]! * dx + e[9]! * dz;
+  if (x * x + y * y < 1e-10) return 0;
+  let d = Math.atan2(y, x) - heading;
+  d -= Math.PI * 2 * Math.round(d / (Math.PI * 2));
+  return Math.max(-maxTurn, Math.min(maxTurn, d * follow));
+}
 
 /** Folder of the kit's clips (art-src/lab/vfx/fire/manifest.json). */
 const FOLDER = "fire";
@@ -195,6 +263,10 @@ class FireLayers {
   private readonly ground: FlipbookPool;
   private readonly sheath: FlipbookPool;
   private readonly line: FlipbookPool;
+  /** Key 1's masked brushfire card, kept in its own media folder. */
+  private readonly brush: FlipbookPool;
+  /** Key 1's short gold-white flash at the strike root. */
+  private readonly flash: SpritePool;
   /** Ember dots, pinpoints and shed sparks (additive thin light). */
   private readonly motes: SpritePool;
   /** Where a blow lands, a beast dies or a sword is planted: a white-gold core in a star of flame tongues. */
@@ -238,6 +310,9 @@ class FireLayers {
     this.ground = P.pool(FOLDER, "fire-ground", { mode: "rgba", capacity: 32, renderOrder: 11 });
     this.sheath = P.pool(FOLDER, "dragonhold-flame-trail", { mode: "heat", capacity: 200, renderOrder: 11 });
     this.line = P.pool(FOLDER, "fire-trail", { mode: "rgba", capacity: 24, renderOrder: 11 });
+    this.brush = P.pool(BRUSH.folder, BRUSH.id, { mode: "rgba", capacity: BRUSH.capacity, renderOrder: BRUSH.renderOrder });
+    this.brush.softM = BRUSH.softM;
+    this.brush.rampCool = BRUSH.rampCool;
     // Flames burn out toward warm char, not violet soot: a dying orange mixed toward violet passed through maroon.
     for (const p of [this.burst, this.charge, this.ground, this.line]) p.setSoot(CHAR[0] * 1.3, CHAR[1] * 1.3, CHAR[2] * 1.3);
     this.sheath.setHeatRamp(VERMILION, AMBER, WHITE_GOLD);
@@ -257,6 +332,8 @@ class FireLayers {
     this.ground.setGrade(LOTUS_GOLD, 0.9);
     this.line.softM = 0.2;
     const T = stage.textures;
+    this.flash = stage.pool(16, T.glow, "add", "camera", 14, { crop: 0.6 });
+    this.flash.mesh.name = "fx-fire-flash";
     this.groundInk = stage.pool(8, T.glow, "ink", "ground", 3, { crop: 0.64 });
     this.scorch = stage.decals(SCORCH.texture, 64, 4);
     this.smoke = stage.pool(96, stage.texture("smoke_07"), "ink", "camera", 9, { fadeIn: 0.15 });
@@ -504,10 +581,12 @@ class FireLayers {
   }
 
   /** The aftermath on the ground at (x, z): scorch, a low ground fire dying into embers, smoke wisps, rising embers. */
-  private burnGround(x: number, z: number, r: number, life: number, rate: number, big: boolean): void {
+  private burnGround(x: number, z: number, r: number, life: number, rate: number, big: boolean, fire = true): void {
     const R = this.stage.rand;
-    this.scorch.spawn(x, z, (big ? 2.4 : 1.9) * r, SCORCH, R.range(0, 6.28), R.range(0.85, 1.2));
-    this.groundFire(x, z, (big ? 1.0 : 0.72) * r, 0);
+    if (fire) {
+      this.scorch.spawn(x, z, (big ? 2.4 : 1.9) * r, SCORCH, R.range(0, 6.28), R.range(0.85, 1.2));
+      this.groundFire(x, z, (big ? 1.0 : 0.72) * r, 0);
+    }
     // As the ground fire burns down, embers rise off it.
     this.risingEmbers(x, z, 0.45 * r, this.stage.n(big ? 14 : 9), 0.78, 1.9);
     for (let k = 0; k < (big ? 3 : 2); k += 1) this.wisp(x, z, 0.9 * r, k * 0.18);
@@ -760,6 +839,24 @@ class FireLayers {
   impact(a: ImpactArgs): boolean {
     const p = a.at;
     const s = a.scale * (a.big ? 1.3 : 1);
+    const k1 = a.slot === "k1";
+    if (k1) {
+      if (FIRE_LAB.audit.firstAt < 0) FIRE_LAB.audit.firstAt = this.stage.time;
+      FIRE_LAB.audit.lastAt = this.stage.time;
+      if (FIRE_LAB.impact === "brush") {
+        if (this.brush.ready) {
+          this.brushHit(a, s);
+          return true;
+        }
+        FIRE_LAB.audit.missing += 1;
+        if (!warnedBrush) {
+          warnedBrush = true;
+          console.warn("[element-fire] fire-impact-k1-r2 not loaded (art-src/lab/vfx/fire/impact-k1-r2/manifest.json): key 1 hits fall back to the lotus");
+        }
+      }
+      FIRE_LAB.audit.lotus += 1;
+      FIRE_LAB.audit.point += 1;
+    }
     // Pinpoint, then the lotus opens at the beast (in front of it: the beast burns), sparks and embers fly.
     this.point(p.x, p.y, p.z, 0.75 * s, 0.22, 0.3, 1, 11);
     // It starts from a denser frame (frame 1 is a thin fringe), at the same rate.
@@ -770,6 +867,33 @@ class FireLayers {
     for (let i = 0; i < n; i += 1) this.ember(p.x, p.y, p.z, a.dx, a.dz, 7, 1.0);
     if (a.big) this.stage.accent(p.x, p.y, p.z, 0.3);
     return true;
+  }
+
+  /** Key 1's hit, version 2 (ticket 264): the brushfire card, the age-0 flash and light; sparks and embers as before until CX-F. */
+  private brushHit(a: ImpactArgs, s: number): void {
+    const p = a.at;
+    const o = flip();
+    o.rot = brushRotation(a.dx, a.dz, this.stage.camera.matrixWorldInverse, this.brush.meta!.heading, BRUSH.follow, BRUSH.maxTurn);
+    o.ground = 0;
+    o.lift = BRUSH.lift;
+    this.brush.spawn(v.set(p.x, p.y, p.z), BRUSH.size * s, o);
+    const f = this.flash.spec.reset();
+    f.x = p.x; f.y = p.y; f.z = p.z;
+    f.life = BRUSH.flash.life;
+    f.size0 = BRUSH.flash.size0 * s;
+    f.size1 = BRUSH.flash.size1 * s;
+    f.r = FLASH[0] * BRUSH.flash.gain; f.g = FLASH[1] * BRUSH.flash.gain; f.b = FLASH[2] * BRUSH.flash.gain;
+    this.flash.emit();
+    this.stage.light(p.x, p.y, p.z, a.pal.flash, BRUSH.light * (a.big ? BRUSH.bigLight : 1));
+    // Until CX-F (ticket 262): the spark rays and the thrown embers, exactly as the old hit draws them.
+    this.sparkRays(p.x, p.y, p.z, 1.5 * s, 1.35);
+    this.emberBurst(p.x, p.y, p.z, 1.1 * s, 1.0);
+    const n = this.stage.n(8 + Math.round(6 * a.power));
+    for (let i = 0; i < n; i += 1) this.ember(p.x, p.y, p.z, a.dx, a.dz, 7, 1.0);
+    if (a.big) this.stage.accent(p.x, p.y, p.z, 0.3);
+    FIRE_LAB.audit.brush += 1;
+    FIRE_LAB.audit.flash += 1;
+    FIRE_LAB.audit.light += 1;
   }
 
   cut(a: CutArgs): boolean {
@@ -805,6 +929,15 @@ class FireLayers {
   }
 
   aftermath(a: AftermathArgs): boolean {
+    if (a.slot === "k1" && FIRE_LAB.impact === "brush" && this.brush.ready) {
+      // The brushfire burns down to embers on its own (owner 04/11): no code scorch, no ground fire; the wisps and the rising embers stay.
+      this.burnGround(a.x, a.z, a.r, a.life, a.rate, false, false);
+      return true;
+    }
+    if (a.slot === "k1") {
+      FIRE_LAB.audit.scorch += 1;
+      FIRE_LAB.audit.groundFire += 1;
+    }
     this.burnGround(a.x, a.z, a.r, a.life, a.rate, false);
     return true;
   }
@@ -872,6 +1005,7 @@ class FireLayers {
   }
 
   reset(): void {
+    resetFireAudit();
     for (const e of this.emitters) e.on = false;
     this.chargeAcc = this.shedAcc = this.waitAcc = this.midShedAcc = 0;
     SWORD_LOOK.time.value = 0;

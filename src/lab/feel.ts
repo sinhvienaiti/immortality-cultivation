@@ -212,6 +212,7 @@ export class HitStop {
 export class FlashLights {
   private readonly lights: THREE.PointLight[] = [];
   private readonly anchor: THREE.Vector3[] = [];
+  private readonly fresh: boolean[];
   private readonly tmp = new THREE.Vector3();
 
   constructor(
@@ -219,6 +220,7 @@ export class FlashLights {
     count: number,
     private readonly nearM = 2.5,
   ) {
+    this.fresh = new Array<boolean>(count).fill(false);
     for (let i = 0; i < count; i += 1) {
       const l = new THREE.PointLight(0xffffff, 0, 14, 2);
       parent.add(l);
@@ -227,7 +229,11 @@ export class FlashLights {
     }
   }
 
-  flash(at: THREE.Vector3, camera: THREE.Vector3, colour: THREE.ColorRepresentation, intensity: number): void {
+  /**
+   * `fresh` draws a light at full strength on the frame it is asked (VFX_STANDARD.md §3.1 rule 5): its first update
+   * does not age it. Existing callers keep false and the original decay.
+   */
+  flash(at: THREE.Vector3, camera: THREE.Vector3, colour: THREE.ColorRepresentation, intensity: number, fresh = false): void {
     if (this.lights.length === 0) return;
     let pick = -1;
     let best = Infinity;
@@ -252,14 +258,28 @@ export class FlashLights {
     }
     const l = this.lights[pick]!;
     l.intensity = Math.max(l.intensity, Math.min(12, intensity));
+    if (fresh) this.fresh[pick] = true;
   }
 
   update(dt: number): void {
     const k = Math.exp(-7 * dt);
-    for (const l of this.lights) l.intensity = l.intensity * k < 0.01 ? 0 : l.intensity * k;
+    for (let i = 0; i < this.lights.length; i += 1) {
+      if (this.fresh[i]) {
+        this.fresh[i] = false;
+        continue;
+      }
+      const l = this.lights[i]!;
+      l.intensity = l.intensity * k < 0.01 ? 0 : l.intensity * k;
+    }
   }
 
   reset(): void {
     for (const l of this.lights) l.intensity = 0;
+    this.fresh.fill(false);
+  }
+
+  /** Lab-only readback, in creation order. */
+  levels(): number[] {
+    return this.lights.map((l) => l.intensity);
   }
 }

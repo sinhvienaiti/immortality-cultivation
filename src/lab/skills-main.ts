@@ -71,7 +71,7 @@ import type { FlipbookMode } from "../view/skills/flipbook";
 import { runFlipbookProbe, type FlipbookProbeReport } from "./flipbook-probe";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
-import { FIRE_FURNACE_BLADE, FIRE_LAB } from "../view/skills/element-fire";
+import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, type FireAudit } from "../view/skills/element-fire";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -816,13 +816,19 @@ for (const m of swordAura.meshes) view.layers.fx.add(m);
 // The aura's solo flight (__lab.auraSolo, §5.1): one sword on a fixed 6 s script.
 const auraSolo = new AuraSolo(view.layers.fx, textures.trace);
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
-const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k) });
+const lightAt = new THREE.Vector3();
+const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k), light: (x, y, z, colour, intensity) => lights.flash(lightAt.set(x, y, z), view.camera.position, colour, intensity, true) });
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
 const BLADE_HEAT = params.get("bladeHeat");
 // SWORD_AURA §5.5: ?riverSheath=1 puts the Fire round's removed flame cards back on key 7's river (the "burning planks"
 // comparison sheet only).
 FIRE_LAB.riverSheath = params.get("riverSheath") === "1";
+// INTEGRATION_PLAN CX-H (ticket 264): ?impact=lotus puts key 1's old Fire hit back (the lotus, the fire point, the code
+// scorch and the ground fire); the default is the brushfire card.
+const IMPACT = params.get("impact");
+FIRE_LAB.impact = IMPACT === "lotus" ? "lotus" : "brush";
+if (IMPACT !== null && IMPACT !== "lotus" && IMPACT !== "brush") console.warn(`[lab] ?impact=${IMPACT}: brush or lotus; brush is used`);
 /** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
 async function setElement(id: string): Promise<boolean> {
   const kit = elementById(id);
@@ -1251,6 +1257,7 @@ if (params.get("ui") !== "0") {
 }
 
 // Loop.
+let lastWorldDt = 0;
 function frame(dt: number): void {
   // Hit-stop: part frames counted, an eased exit (feel.ts). The world runs on per-second rates and
   // time-sampled trails, so a variable rAF step shows the same motion at 60 and 120 Hz (appendix C §2.7).
@@ -1261,6 +1268,7 @@ function frame(dt: number): void {
   // The cut-in holds the world (and the typing timer, which runs on world time); its last frame fires the ultimate.
   if (cutin.update(dt)) fireUltimate();
   const world = cutin.active ? 0 : screen.advance(dt);
+  lastWorldDt = world;
   // The ultimate's held darkening ends a moment after its climax (key 7 sets its own from its phases).
   if (ultDark && ultDarkEnd >= 0 && labTime >= ultDarkEnd) {
     ultDark = false;
@@ -1327,6 +1335,8 @@ function frame(dt: number): void {
 const savedCamPos = new THREE.Vector3();
 /** The fx layers' own visibility while __lab.debugShow("fx", false) hides them. */
 const fxShown = new Map<THREE.Object3D, boolean>();
+/** Mesh visibility kept independently while __lab.fxSolo isolates a layer on the current frame. */
+const soloShown = new Map<THREE.Object3D, boolean>();
 /** The orbit view's angles (view("orbit")): yaw from the south, pitch above level, degrees; its centre: the right hand or the held sword's middle. */
 const orbit = { yawDeg: 30, pitchDeg: 25, onSword: false };
 const savedCamQuat = new THREE.Quaternion();
@@ -1458,6 +1468,10 @@ declare global {
       fxMeshes(): { order: number; visible: boolean; count: number }[];
       /** Lab debugging: every named mesh in the fx layer, at any depth, that draws now (name, render order, instances). */
       fxNamed(): { name: string; order: number; count: number }[];
+      /** Key 1's Fire hit mode, clip readiness, hit counters, drawn age (ticks) and impact-light levels (ticket 264). */
+      fireImpact(mode?: "brush" | "lotus"): { mode: "brush" | "lotus"; ready: boolean; audit: FireAudit; ageTicks: number; lights: number[] };
+      /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
+      fxSolo(prefix: string | null): number;
       /** Lab debugging: shows or hides every fx mesh whose name starts with `prefix` and redraws the frame (no time passes). */
       fxShowNamed(prefix: string, on: boolean): number;
       /** Lab debugging: shows or hides a part ("swarm", "blades", every other "fx" layer, "actors") and redraws the frame. */
@@ -1762,6 +1776,34 @@ void (async () => {
         if (c.name !== "" && g !== undefined) out.push({ name: c.name, order: c.renderOrder, count: g.instanceCount ?? -1 });
       });
       return out;
+    },
+    fireImpact(mode) {
+      if (mode !== undefined) FIRE_LAB.impact = mode;
+      const audit = { ...FIRE_LAB.audit };
+      return {
+        mode: FIRE_LAB.impact,
+        ready: stage.flipbooks.loaded(BRUSH.folder).includes(BRUSH.id),
+        audit,
+        ageTicks: audit.firstAt < 0 ? -1 : Math.round((stage.time - audit.firstAt - lastWorldDt) * 60),
+        lights: lights.levels(),
+      };
+    },
+    fxSolo(prefix) {
+      let n = 0;
+      view.layers.fx.traverse((c) => {
+        if ((c as THREE.Mesh).geometry === undefined) return;
+        if (prefix === null) {
+          const shown = soloShown.get(c);
+          if (shown !== undefined) c.visible = shown;
+        } else {
+          if (!soloShown.has(c)) soloShown.set(c, c.visible);
+          c.visible = c.name !== "" && c.name.startsWith(prefix) && soloShown.get(c)!;
+        }
+        if (c.visible) n += 1;
+      });
+      if (prefix === null) soloShown.clear();
+      view.render(0);
+      return n;
     },
     fxShowNamed(prefix, on) {
       // Hidden by name, shown back by name: a pool's own update re-shows it next frame anyway (no time passes here).

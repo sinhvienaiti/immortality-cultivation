@@ -33,6 +33,11 @@ export interface ElementStageOptions {
    * effects answer it (the lab: screen-fx.ts warm). Absent: none.
    */
   readonly accent?: (x: number, y: number, z: number, strength: number) => void;
+  /**
+   * A kit's impact light (ticket 264): at (x, y, z), `colour` (CSS hex), `intensity`, at full strength on the frame it is
+   * asked (the host's point-light pool; the lab: FlashLights, drawn before it ages). Absent: none.
+   */
+  readonly light?: (x: number, y: number, z: number, colour: string, intensity: number) => void;
 }
 
 const NO_HOOKS: ElementHooks = {};
@@ -54,6 +59,7 @@ export class ElementStage {
   time = 0;
   private readonly resolve: (name: string) => THREE.Texture;
   private readonly onAccent: ((x: number, y: number, z: number, strength: number) => void) | null;
+  private readonly onLight: ((x: number, y: number, z: number, colour: string, intensity: number) => void) | null;
   private readonly sprites: SpritePool[] = [];
   private readonly ribbonPools: RibbonPool[] = [];
   private readonly beamPools: BeamPool[] = [];
@@ -72,6 +78,7 @@ export class ElementStage {
     this.textures = opts.textures;
     this.resolve = opts.texture;
     this.onAccent = opts.accent ?? null;
+    this.onLight = opts.light ?? null;
     this.flipbooks = new FlipbookPlayer(opts.vfxBase);
     this.layer.add(this.flipbooks.group);
   }
@@ -102,6 +109,11 @@ export class ElementStage {
   /** A kit's screen accent on a big blow at (x, y, z), strength 0–1 (the host's, when it gave one). */
   accent(x: number, y: number, z: number, strength: number): void {
     this.onAccent?.(x, y, z, strength);
+  }
+
+  /** A kit's impact light at (x, y, z) (the host's, when it gave one). */
+  light(x: number, y: number, z: number, colour: string, intensity: number): void {
+    this.onLight?.(x, y, z, colour, intensity);
   }
 
   /** A loaded clip's atlas and layout in `folder` (a flame trail's band), or null before it arrives. */
