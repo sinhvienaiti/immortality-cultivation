@@ -146,6 +146,15 @@ function clusterLeft(world: World, area: AreaHit, cluster: number): number {
   return left;
 }
 
+/** Reads a cluster's remaining area cap without reserving it. */
+export function areaClusterLeft(world: World, area: AreaHit, cluster: number): number {
+  const at = area.clusters.indexOf(cluster);
+  if (at >= 0) return area.left[at]!;
+  let hp = 0;
+  for (const mate of world.beasts.list) if (mate.alive && mate.cluster === cluster) hp += mate.hp;
+  return Math.floor((hp * DAMAGE.clusterCapPct) / 100);
+}
+
 function clusterTake(area: AreaHit, cluster: number, amount: number): void {
   const at = area.clusters.indexOf(cluster);
   if (at >= 0) area.left[at] = area.left[at]! - amount;

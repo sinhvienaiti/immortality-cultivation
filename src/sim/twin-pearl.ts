@@ -1,50 +1,16 @@
 /**
- * Twin Dragons, One Burning Pearl (`twin-pearl`): Kiếm key 2's grey box
- * (docs/games/tu-tien/skills/DRAGON_SKILL.md §3 A, §6 step 1), numbers in
- * content/data/twin-pearl.ts. Runs only when the match's ReplayHeader carries
- * `swordKey2: "twin-pearl"`: createSkillsState then adds `skills.twinPearl`
- * and resolveCast sends key 2 here instead of the line. Off (the default) the
- * world has no such key, so its hash, every golden and the rulesHash stay as
- * they were.
- *
- * Frames are ticks: the design's 60 Hz frame Fn is tick startTick + n (the
- * sim runs at 60 Hz, rules.ts SIM.tickHz). Per cast:
- * - F0 hold strike: x ±4 m, from the heart 8 m towards the gates.
- * - F1–F2 touch boxes, one per ground lane, round the lane's beast nearest the
- *   heart outside the hold zone (4 m along the lane, the corridor's width).
- * - F3–F42 the heads run from the lanes' meeting point up each lane to its
- *   gate on a ground S path; the body capsule (r 1.4 m, 0.2–1.5 m high) and
- *   what it passed in the last 0.9 s hit.
- * - F30–F50 each tail sweeps its side's sky route (2.5–6 m high), corner in.
- * - F51–F71 the lotus at the meeting point: full on the two long petals and
- *   the hold zone, half elsewhere within r 9 m.
- * A beast takes at most one hit of each kind (touch, corridor, lotus), at
- * least 20 ticks apart, so ≤ 3 a cast; the Vương takes ≤ 1.5 W a cast.
- *
- * Each dragon holds its side (west: gate A, and crows at x < 0; east: gate B,
- * and crows at x ≥ 0): its own falloff ladder (today's key 2: 100 %, −15 % each
- * next distinct beast, floor 40 %) and its own share of the cast's budget,
- * split by part (touch, ground corridor, sky, lotus; content `pool`), spent
- * first come. Each tick the beasts every live volume holds are gathered in one
- * pass and struck in one order (kind, then nearest the heart, then the smaller
- * beastId), so neither lane is favoured by the order the volumes are listed in.
- * The whole cast is one area hit: a swarm cluster loses at most 60 % of its HP
- * to it (canon §7.2), as it does to today's line.
- *
- * Lanes come from the flow field (field.ts): each ground gate's route is its
- * chain of waypoints to the heart edge; the meeting point is the midpoint of
- * the two routes' last bends (M0a: the bends round the Trận Trụ at (∓5.25;
- * −9.25), so (0; −9.25)). Geometry is cached per flow field; it is static
- * data, never hashed state.
- * Owner: Lane 4 (trial, behind a flag).
+ * Field-wide Twin Dragons, One Burning Pearl (DRAGON_SKILL.md §9).
+ * Geometry is fixed from the F0 snapshot, the field bounds, heart and caster.
+ * Moving beasts meet live discs, sampled bodies, sky capsules and lotus petals.
+ * The damage engine keeps per-side falloff and budgets, three spaced hit kinds,
+ * one area cap and one boss cap per cast. Absent the header flag, no state is added.
  */
 import { kiemSkill } from "../content/data/school-kiem";
 import { TWIN_PEARL, TWIN_PEARL_END_TICK, type SwordKey2 } from "../content/data/twin-pearl";
-import { FIELD } from "../content/rules";
-import type { BeastState, Cast, FlowField, Grade, PointU, StageDef, World } from "../content/types";
-import { createAreaHit, damageBeast, scaleHit, wHpOf, type AreaHit } from "./combat";
-import { cellAt, cellCenterX, cellCenterZ, gatePoint, heartDistance } from "./field";
-import { dist2, isqrt, mmToU, mulDiv, mulDivSym, unitPm, within } from "./fixed";
+import type { BeastState, Cast, Grade, PointU, StageDef, World } from "../content/types";
+import { areaClusterLeft, beastByRef, createAreaHit, damageBeast, scaleHit, wHpOf, type AreaHit } from "./combat";
+import { heartPoint } from "./targeting";
+import { clamp, dist2, isqrt, mmToU, mulDiv, mulDivSym, unitPm, within } from "./fixed";
 import { damageImmune, postureHit } from "./posture";
 
 declare module "../content/types" {
@@ -74,7 +40,7 @@ export const POOL_PARTS = 4;
 export interface TwinVictim {
   readonly slot: number;
   readonly serial: number;
-  /** 0 west (gate A, or a crow at x < 0), 1 east. */
+  /** Side 0 or 1 in this cast's lateral split. */
   readonly side: number;
   hits: number;
   /** Tick offset (from F0) of its last hit. */
@@ -85,14 +51,19 @@ export interface TwinVictim {
   readonly factorPm: number;
 }
 
-/** A touch box: on (0/1), centre (u), the lane's direction there (unit ‰). */
-export interface TwinTouch {
-  on: number;
-  x: number;
-  z: number;
-  dx: number;
-  dz: number;
+export interface TwinDragon {
+  /** C, ground anchors, P after adjacent duplicates are merged, before segment splitting. */
+  readonly nodes: number[];
+  readonly sx: number[];
+  readonly sz: number[];
+  readonly arc: number[];
+  readonly pass: number[];
+  readonly petalFrom: number;
+  /** This side's F0 sky anchors, x, z pairs. */
+  readonly sky: number[];
 }
+
+export interface TwinDisc { on: number; x: number; z: number; sky: number }
 
 export interface TwinPearlCast {
   /** The Cast's actionId: the Vương's cap is per cast id. */
@@ -118,8 +89,22 @@ export interface TwinPearlCast {
   readonly poolStart: readonly number[];
   /** The whole cast is one area hit (the 60 % swarm-cluster cap, canon §7.2). */
   readonly area: AreaHit;
-  /** Touch boxes of lanes A and B (set on F1). */
-  readonly touch: TwinTouch[];
+  readonly hx: number;
+  readonly hz: number;
+  readonly fx: number;
+  readonly fz: number;
+  readonly rx: number;
+  readonly rz: number;
+  readonly cut2: number;
+  readonly px: number;
+  readonly pz: number;
+  /** Slot entries are dense; serials guard reused slots. 0 none, 1 side 0, 2 side 1. */
+  readonly sideSlot: number[];
+  readonly sideSerial: number[];
+  readonly dragons: readonly [TwinDragon, TwinDragon];
+  readonly disc: [TwinDisc, TwinDisc];
+  /** F0 refs in beast-list order, slot, serial pairs. */
+  readonly snapshot: number[];
   readonly book: TwinVictim[];
   /** book index + 1 by beast slot (0: none); the entry's serial is checked, a reused slot starts a new entry. */
   readonly bookAt: number[];
@@ -136,76 +121,34 @@ export function createTwinPearlState(): TwinPearlState {
 /** The variant a header asks for key 2 ("line" when absent). */
 export const swordKey2Of = (header: { readonly swordKey2?: SwordKey2 }): SwordKey2 | "line" => header.swordKey2 ?? "line";
 
-// ── Geometry (static per flow field) ───────────────────────────────────────
-
-export interface TwinLane {
-  readonly gate: "A" | "B";
-  /** The lane from its gate to the heart edge: the flow field's waypoints, u. */
-  readonly route: readonly PointU[];
-  /** The head's base path: the meeting point, then the route's points from its last bend out to the gate. */
-  readonly path: readonly PointU[];
-  /** Arc length of each path point from the meeting point, u. */
-  readonly pathArc: readonly number[];
-  /** The S path's samples (u) and the tick offset the head passes each (F3 … F42). */
-  readonly sx: readonly number[];
-  readonly sz: readonly number[];
-  readonly pass: readonly number[];
-  /** Length of the S path, u. */
-  readonly sLength: number;
-  /** This side's sky route: the far corner and its point at the heart edge, u. */
-  readonly skyFrom: PointU;
-  readonly skyTo: PointU;
-}
-
-export interface TwinGeometry {
-  /** The lanes' meeting point (the lotus centre, where the pearl hangs), u. */
-  readonly meet: PointU;
-  readonly lanes: readonly [TwinLane, TwinLane];
-}
-
-const geometryCache = new WeakMap<FlowField, { readonly stage: StageDef; readonly flowB: FlowField; readonly geo: TwinGeometry }>();
+// ── Cast geometry (integer u, fixed at F0) ─────────────────────────────────
 
 const U = (mm: number): number => mmToU(mm);
+type FieldBounds = Pick<StageDef["field"], "minXMm" | "maxXMm" | "minZMm" | "maxZMm">;
+type CastGeometry = Pick<TwinPearlCast, "hx" | "hz" | "fx" | "fz" | "rx" | "rz" | "cut2" | "px" | "pz" | "sideSlot" | "sideSerial" | "dragons" | "disc" | "snapshot">;
 
-/** A ground gate's route: its point, the flow field's waypoints, then the heart edge on the last leg (u). */
-export function laneRoute(world: World, gate: "A" | "B"): PointU[] {
-  const field = world.field;
-  const flow = field.flows[gate];
-  const start = gatePoint(world.stage, gate);
-  const out: PointU[] = [start];
-  let cell = cellAt(field, start.x, start.z);
-  for (let guard = 0; guard < field.cols * field.rows; guard += 1) {
-    const wp = flow.waypoint[cell]!;
-    if (wp < 0) break;
-    out.push({ x: cellCenterX(field, wp), z: cellCenterZ(field, wp) });
-    cell = wp;
+/** Split long segments before the S polynomial's integer products can overflow. */
+export function splitLong(nodes: readonly number[], maxSegU: number): number[] {
+  const out = nodes.slice(0, 2);
+  for (let i = 2; i < nodes.length; i += 2) {
+    const ax = nodes[i - 2]!;
+    const az = nodes[i - 1]!;
+    const dx = nodes[i]! - ax;
+    const dz = nodes[i + 1]! - az;
+    const k = Math.max(1, Math.ceil(isqrt(dx * dx + dz * dz) / maxSegU));
+    for (let j = 1; j <= k; j += 1) out.push(ax + mulDivSym(dx, j, k), az + mulDivSym(dz, j, k));
   }
-  const last = out[out.length - 1]!;
-  const d = isqrt(last.x * last.x + last.z * last.z);
-  const edge = U(FIELD.heartEdgeMm);
-  if (d > edge) out.push({ x: mulDivSym(last.x, edge, d), z: mulDivSym(last.z, edge, d) });
   return out;
-}
-
-/** Where a route turns onto its last straight into the heart: its last waypoint, or (no bend) its point 10 m from the heart. */
-function lastBend(route: readonly PointU[]): PointU {
-  if (route.length >= 3) return route[route.length - 2]!;
-  const gate = route[0]!;
-  const d = isqrt(gate.x * gate.x + gate.z * gate.z) || 1;
-  const r = U(TWIN_PEARL.meetFallbackMm);
-  return { x: mulDivSym(gate.x, r, d), z: mulDivSym(gate.z, r, d) };
 }
 
 /**
  * The S path over `path`: half-waves of about halfWaveMm per segment (whole numbers, so the offset is 0 at each
- * bend), alternating sides. `side` (±1) picks the first bulge's side of the left-hand normal: the west lane takes
- * +1 and the east lane −1, so the two heads run mirror images (both bulge towards the gates first).
+ * bend), alternating sides. Side 0 starts at +1, side 1 at −1 on the left-hand normal.
  */
-function sPath(path: readonly PointU[], firstSide: number): { sx: number[]; sz: number[]; arc: number[] } {
+function sPath(path: readonly PointU[], firstSide: number, step: number): { sx: number[]; sz: number[]; arc: number[] } {
   const heads = TWIN_PEARL.heads;
   const amp = U(heads.amplitudeMm);
   const halfWave = U(heads.halfWaveMm);
-  const step = U(heads.sampleMm);
   const sx = [path[0]!.x];
   const sz = [path[0]!.z];
   const arc = [0];
@@ -232,8 +175,8 @@ function sPath(path: readonly PointU[], firstSide: number): { sx: number[]; sz: 
       const off = mulDivSym(sign * amp, wPm, 1000);
       const bx = a.x + mulDivSym(dx, s, len);
       const bz = a.z + mulDivSym(dz, s, len);
-      const x = bx + mulDivSym(-unit.z, off, 1000);
-      const z = bz + mulDivSym(unit.x, off, 1000);
+      const x = bx + mulDivSym(-unit.z * off, 1, 1000);
+      const z = bz + mulDivSym(unit.x * off, 1, 1000);
       const px = sx[sx.length - 1]!;
       const pz = sz[sz.length - 1]!;
       arc.push(arc[arc.length - 1]! + isqrt(dist2(x, z, px, pz)));
@@ -245,80 +188,169 @@ function sPath(path: readonly PointU[], firstSide: number): { sx: number[]; sz: 
   return { sx, sz, arc };
 }
 
-function buildLane(world: World, gate: "A" | "B", route: readonly PointU[], meet: PointU): TwinLane {
-  // The head's base path: the meeting point, then the route back from its last bend to the gate (the heart edge left out).
-  const path: PointU[] = [meet];
-  const lastIndex = route.length >= 3 ? route.length - 2 : 0;
-  for (let k = lastIndex; k >= 0; k -= 1) path.push(route[k]!);
-  const pathArc = [0];
-  for (let k = 1; k < path.length; k += 1) pathArc.push(pathArc[k - 1]! + isqrt(dist2(path[k]!.x, path[k]!.z, path[k - 1]!.x, path[k - 1]!.z)));
-  const s = sPath(path, route[0]!.x < 0 ? 1 : -1);
+/** Sample an S path, clamp to the field, then time the clamped arc. */
+export function sampleRoute(nodes: readonly number[], sideSign: number, field: FieldBounds): { sx: number[]; sz: number[]; arc: number[]; pass: number[]; step: number } {
+  const split = splitLong(nodes, U(TWIN_PEARL.heads.maxSegmentMm));
+  const path: PointU[] = [];
+  let length = 0;
+  for (let i = 0; i < split.length; i += 2) {
+    path.push({ x: split[i]!, z: split[i + 1]! });
+    if (i > 0) length += isqrt(dist2(split[i - 2]!, split[i - 1]!, split[i]!, split[i + 1]!));
+  }
+  const step = Math.max(U(TWIN_PEARL.heads.sampleMm), Math.ceil(length / TWIN_PEARL.heads.maxSamples));
+  const { sx, sz, arc } = sPath(path, sideSign, step);
+  for (let i = 0; i < sx.length; i += 1) {
+    sx[i] = clamp(sx[i]!, U(field.minXMm), U(field.maxXMm));
+    sz[i] = clamp(sz[i]!, U(field.minZMm), U(field.maxZMm));
+    arc[i] = i === 0 ? 0 : arc[i - 1]! + isqrt(dist2(sx[i - 1]!, sz[i - 1]!, sx[i]!, sz[i]!));
+  }
+  const total = arc[arc.length - 1]!;
   const heads = TWIN_PEARL.heads;
-  const total = s.arc[s.arc.length - 1]! || 1;
-  const pass = s.arc.map((a) => heads.fromTick + mulDiv(a, heads.toTick - heads.fromTick, total));
-  // This side's sky entry: the corner on the gate's side of the field.
-  const entries = world.stage.field.skyEntries;
-  const gateX = route[0]!.x;
-  const corner = entries.find((e) => (e.xMm < 0) === (gateX < 0)) ?? entries[0]!;
-  const skyFrom = { x: U(corner.xMm), z: U(corner.zMm) };
-  const d = isqrt(skyFrom.x * skyFrom.x + skyFrom.z * skyFrom.z) || 1;
-  const edge = U(FIELD.heartEdgeMm);
-  const skyTo = { x: mulDivSym(skyFrom.x, edge, d), z: mulDivSym(skyFrom.z, edge, d) };
-  return { gate, route, path, pathArc, sx: s.sx, sz: s.sz, pass, sLength: total, skyFrom, skyTo };
+  const pass = arc.map((a) => heads.fromTick + (total === 0 ? 0 : mulDiv(a, heads.toTick - heads.fromTick, total)));
+  return { sx, sz, arc, pass, step };
 }
 
-/** The skill's lanes and meeting point on this world's field (cached per flow field: rebuilt with an obstacle change). */
-export function twinPearlGeometry(world: World): TwinGeometry {
-  const flowA = world.field.flows.A;
-  const hit = geometryCache.get(flowA);
-  if (hit !== undefined && hit.stage === world.stage && hit.flowB === world.field.flows.B) return hit.geo;
-  const routeA = laneRoute(world, "A");
-  const routeB = laneRoute(world, "B");
-  const a = lastBend(routeA);
-  const b = lastBend(routeB);
-  const meet = { x: mulDivSym(a.x + b.x, 1, 2), z: mulDivSym(a.z + b.z, 1, 2) };
-  const geo: TwinGeometry = { meet, lanes: [buildLane(world, "A", routeA, meet), buildLane(world, "B", routeB, meet)] };
-  geometryCache.set(flowA, { stage: world.stage, flowB: world.field.flows.B, geo });
-  return geo;
+function insetPoint(x: number, z: number, field: FieldBounds): PointU {
+  const inset = U(TWIN_PEARL.pearl.insetMm);
+  const minX = U(field.minXMm), maxX = U(field.maxXMm);
+  const minZ = U(field.minZMm), maxZ = U(field.maxZMm);
+  return {
+    x: minX + inset > maxX - inset ? mulDivSym(minX + maxX, 1, 2) : clamp(x, minX + inset, maxX - inset),
+    z: minZ + inset > maxZ - inset ? mulDivSym(minZ + maxZ, 1, 2) : clamp(z, minZ + inset, maxZ - inset),
+  };
+}
+
+/** Lexicographic permutations of selection indices; the first strictly shortest wins. */
+function orderedAnchors(anchors: readonly BeastState[], c: PointU, p: PointU): BeastState[] {
+  let bestLength = -1;
+  let best: BeastState[] = [];
+  const order: BeastState[] = [];
+  const used = anchors.map(() => false);
+  const visit = (): void => {
+    if (order.length === anchors.length) {
+      let length = 0;
+      let prev = c;
+      for (const a of order) { length += isqrt(dist2(prev.x, prev.z, a.x, a.z)); prev = a; }
+      length += isqrt(dist2(prev.x, prev.z, p.x, p.z));
+      if (bestLength < 0 || length < bestLength) { bestLength = length; best = order.slice(); }
+      return;
+    }
+    for (let i = 0; i < anchors.length; i += 1) {
+      if (used[i]) continue;
+      used[i] = true;
+      order.push(anchors[i]!);
+      visit();
+      order.pop();
+      used[i] = false;
+    }
+  };
+  visit();
+  return best;
+}
+
+/** Build solely from bounds, H, C and the damageable F0 snapshot. */
+export function buildCastGeometry(world: World, cast: Cast): CastGeometry {
+  const h = heartPoint();
+  const c = cast.origin;
+  const field = world.stage.field;
+  const f = { x: 0, z: 0 };
+  unitPm(h.x - c.x, h.z - c.z, f);
+  if (f.x === 0 && f.z === 0) unitPm(mulDivSym(U(field.minXMm + field.maxXMm), 1, 2) - h.x, mulDivSym(U(field.minZMm + field.maxZMm), 1, 2) - h.z, f);
+  if (f.x === 0 && f.z === 0) f.z = -1000;
+  const fx = f.x + 0, fz = f.z + 0;
+  const rx = -fz + 0, rz = fx + 0;
+  const snapshot: number[] = [];
+  const beasts: BeastState[] = [];
+  for (const beast of world.beasts.list) if (beast.alive && !damageImmune(world, beast)) {
+    snapshot.push(beast.slot, beast.serial);
+    beasts.push(beast);
+  }
+  const v = (b: BeastState): number => mulDivSym((b.x - h.x) * rx + (b.z - h.z) * rz, 1, 1000);
+  const u = (b: BeastState): number => mulDivSym((b.x - h.x) * fx + (b.z - h.z) * fz, 1, 1000);
+  const sorted = beasts.slice().sort((a, b) => v(a) - v(b) || u(a) - u(b) || a.serial - b.serial);
+  const half = Math.ceil(sorted.length / 2);
+  const cut2 = sorted.length >= 2 ? v(sorted[half - 1]!) + v(sorted[half]!) : sorted.length === 1 ? 2 * v(sorted[0]!) : 0;
+  const sideSlot: number[] = [], sideSerial: number[] = [];
+  for (let i = 0; i < sorted.length; i += 1) {
+    const b = sorted[i]!;
+    while (sideSlot.length <= b.slot) { sideSlot.push(0); sideSerial.push(0); }
+    sideSlot[b.slot] = i < half ? 1 : 2;
+    sideSerial[b.slot] = b.serial;
+  }
+  const ground = beasts.filter((b) => inGroundBand(b.y));
+  const centroid = ground.length > 0 ? ground : beasts;
+  let px = h.x, pz = h.z;
+  if (centroid.length > 0) {
+    let x = 0, z = 0;
+    for (const b of centroid) { x += b.x; z += b.z; }
+    px += mulDivSym(mulDivSym(x, 1, centroid.length) - h.x, TWIN_PEARL.pearl.pullPm, 1000);
+    pz += mulDivSym(mulDivSym(z, 1, centroid.length) - h.z, TWIN_PEARL.pearl.pullPm, 1000);
+    const len = isqrt(dist2(px, pz, h.x, h.z));
+    const max = U(TWIN_PEARL.pearl.maxMm);
+    if (len > max) { px = h.x + mulDivSym(px - h.x, max, len); pz = h.z + mulDivSym(pz - h.z, max, len); }
+  } else {
+    px += mulDivSym(fx, U(TWIN_PEARL.pearl.emptyMm), 1000);
+    pz += mulDivSym(fz, U(TWIN_PEARL.pearl.emptyMm), 1000);
+  }
+  const p = insetPoint(px, pz, field);
+  const dragons: TwinDragon[] = [];
+  for (let side = 0; side < 2; side += 1) {
+    const options = ground.filter((b) => sideSlot[b.slot] === side + 1);
+    const anchors: BeastState[] = [];
+    while (anchors.length < TWIN_PEARL.anchors.max) {
+      let best: BeastState | null = null;
+      let bestD = -1;
+      for (const b of options) {
+        if (anchors.includes(b)) continue;
+        let d = dist2(b.x, b.z, h.x, h.z);
+        if (anchors.length > 0) {
+          d = Math.min(dist2(b.x, b.z, c.x, c.z), dist2(b.x, b.z, p.x, p.z));
+          for (const a of anchors) d = Math.min(d, dist2(b.x, b.z, a.x, a.z));
+        }
+        if (d > bestD || (d === bestD && best !== null && b.serial < best.serial)) { best = b; bestD = d; }
+      }
+      const gap = U(TWIN_PEARL.anchors.minGapMm);
+      if (best === null || (anchors.length > 0 && bestD < gap * gap)) break;
+      anchors.push(best);
+    }
+    const points: PointU[] = [c];
+    if (anchors.length > 0) points.push(...orderedAnchors(anchors, c, p));
+    else {
+      const sign = side === 0 ? -1 : 1;
+      points.push(insetPoint(h.x + sign * mulDivSym(rx, U(TWIN_PEARL.wingMm), 1000), h.z + sign * mulDivSym(rz, U(TWIN_PEARL.wingMm), 1000), field));
+    }
+    points.push(p);
+    const nodes: number[] = [];
+    for (const a of points) if (nodes.length === 0 || nodes[nodes.length - 2] !== a.x || nodes[nodes.length - 1] !== a.z) nodes.push(a.x, a.z);
+    const { sx, sz, arc, pass } = sampleRoute(nodes, side === 0 ? 1 : -1, field);
+    let petalFrom = 0;
+    while (arc[arc.length - 1]! - arc[petalFrom]! > U(TWIN_PEARL.lotus.petalLengthMm)) petalFrom += 1;
+    const sky: number[] = [];
+    for (const b of beasts) if (sideSlot[b.slot] === side + 1 && inSkyBand(b.y)) sky.push(b.x, b.z);
+    dragons.push({ nodes, sx, sz, arc, pass, petalFrom, sky });
+  }
+  return { hx: h.x, hz: h.z, fx, fz, rx, rz, cut2, px: p.x, pz: p.z, sideSlot, sideSerial, dragons: [dragons[0]!, dragons[1]!], disc: [{ on: 0, x: 0, z: 0, sky: 0 }, { on: 0, x: 0, z: 0, sky: 0 }], snapshot };
 }
 
 // ── Volumes (u; tick offsets from F0) ──────────────────────────────────────
-
-const HOLD_HALF = U(TWIN_PEARL.hold.halfWidthMm);
-const HOLD_DEPTH = U(TWIN_PEARL.hold.depthMm);
 const GROUND_TOP = U(TWIN_PEARL.groundTopMm);
 const SKY_BOTTOM = U(TWIN_PEARL.sky.bottomMm);
 const SKY_TOP = U(TWIN_PEARL.sky.topMm);
 const BODY_R = U(TWIN_PEARL.heads.radiusMm);
 const SKY_R = U(TWIN_PEARL.sky.radiusMm);
-const TOUCH_HALF_LEN = U(TWIN_PEARL.touch.halfLengthMm);
-const TOUCH_HALF_W = U(TWIN_PEARL.touch.halfWidthMm);
-const LOTUS_R = U(TWIN_PEARL.lotus.radiusMm);
-const PETAL_LEN = U(TWIN_PEARL.lotus.petalLengthMm);
 const PETAL_HALF_W = U(TWIN_PEARL.lotus.petalHalfWidthMm);
 
-/** A ground volume reaches a beast standing at most 1.5 m high; the sky volume one flying 2.5–6 m high. */
 export const inGroundBand = (y: number): boolean => y <= GROUND_TOP;
 export const inSkyBand = (y: number): boolean => y >= SKY_BOTTOM && y <= SKY_TOP;
+export const inHoldDisc = (cast: CastGeometry, x: number, z: number): boolean => within(x, z, cast.hx, cast.hz, U(TWIN_PEARL.hold.radiusMm));
+export const inDisc = (disc: TwinDisc, x: number, z: number): boolean => disc.on !== 0 && within(x, z, disc.x, disc.z, U(TWIN_PEARL.touch.radiusMm));
 
-/** The hold zone: 8 × 8 m in front of the formation centre (the heart at the origin), towards the gates (−z). */
-export const inHold = (x: number, z: number): boolean => x >= -HOLD_HALF && x <= HOLD_HALF && z <= 0 && z >= -HOLD_DEPTH;
-
-export function inTouch(touch: TwinTouch, x: number, z: number): boolean {
-  if (touch.on === 0) return false;
-  const vx = x - touch.x;
-  const vz = z - touch.z;
-  const along = vx * touch.dx + vz * touch.dz;
-  const across = vx * touch.dz - vz * touch.dx;
-  return Math.abs(along) <= TOUCH_HALF_LEN * 1000 && Math.abs(across) <= TOUCH_HALF_W * 1000;
-}
-
-/** The S samples live at tick offset t: [first, last] indices (passed at most trailTicks ago and already reached); last < first when none. */
-export function liveSamples(lane: TwinLane, t: number, out: { first: number; last: number }): void {
+/** Inclusive live sample range; last < first when no samples live. */
+export function liveSamples(dragon: TwinDragon, t: number, out: { first: number; last: number }): void {
   out.first = 0;
   out.last = -1;
   if (t < TWIN_PEARL.heads.fromTick) return;
-  const pass = lane.pass;
+  const pass = dragon.pass;
   let first = 0;
   while (first < pass.length && pass[first]! + TWIN_PEARL.trailTicks < t) first += 1;
   let last = first - 1;
@@ -327,83 +359,82 @@ export function liveSamples(lane: TwinLane, t: number, out: { first: number; las
   out.last = last;
 }
 
-const span = { first: 0, last: -1 };
-
-/** Within the body radius of one of lane's samples first … last (a span from liveSamples). */
-function inSpan(lane: TwinLane, first: number, last: number, x: number, z: number): boolean {
-  const r2 = BODY_R * BODY_R;
-  for (let i = first; i <= last; i += 1) if (dist2(x, z, lane.sx[i]!, lane.sz[i]!) <= r2) return true;
+export function inSpan(dragon: TwinDragon, first: number, last: number, x: number, z: number, r: number): boolean {
+  const r2 = r * r;
+  for (let i = first; i <= last; i += 1) if (dist2(x, z, dragon.sx[i]!, dragon.sz[i]!) <= r2) return true;
   return false;
 }
 
-/** In lane's body capsule or its 0.9 s trail at tick offset t (ground band checked by the caller). */
-export function inBody(lane: TwinLane, x: number, z: number, t: number): boolean {
-  liveSamples(lane, t, span);
-  return inSpan(lane, span.first, span.last, x, z);
+export function headIndex(dragon: TwinDragon, t: number): number {
+  const tick = Math.min(t, TWIN_PEARL.heads.toTick);
+  let last = -1;
+  while (last + 1 < dragon.pass.length && dragon.pass[last + 1]! <= tick) last += 1;
+  return last;
 }
 
-/** The tail's sweep front on this side's sky route at tick offset t, or false outside F30–F50. */
-export function skyFront(lane: TwinLane, t: number, out: { x: number; z: number }): boolean {
-  const sky = TWIN_PEARL.sky;
-  if (t < sky.fromTick || t > sky.toTick) return false;
-  const f = t - sky.fromTick;
-  const n = sky.toTick - sky.fromTick;
-  out.x = lane.skyFrom.x + mulDivSym(lane.skyTo.x - lane.skyFrom.x, f, n);
-  out.z = lane.skyFrom.z + mulDivSym(lane.skyTo.z - lane.skyFrom.z, f, n);
-  return true;
+/** Squared distance to an integer projection onto a segment (zero-length safe). */
+export function distSegment2(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax, dz = bz - az;
+  const len = isqrt(dx * dx + dz * dz);
+  if (len === 0) return dist2(x, z, ax, az);
+  const dot = (x - ax) * dx + (z - az) * dz;
+  const along = clamp(Math.floor(dot / len), 0, len);
+  return dist2(x, z, ax + mulDivSym(dx, along, len), az + mulDivSym(dz, along, len));
 }
 
-const front = { x: 0, z: 0 };
-
-export function inSky(lane: TwinLane, x: number, z: number, t: number): boolean {
-  return skyFront(lane, t, front) && within(x, z, front.x, front.z, SKY_R);
+const span = { first: 0, last: -1 };
+export function inBody(dragon: TwinDragon, x: number, z: number, t: number): boolean {
+  liveSamples(dragon, t, span);
+  return inSpan(dragon, span.first, span.last, x, z, BODY_R);
 }
 
-/** Within the petal's half-width of lane's base path, no further than petalLength along it from the meeting point. */
-export function inPetal(lane: TwinLane, x: number, z: number): boolean {
-  const path = lane.path;
-  for (let k = 0; k + 1 < path.length; k += 1) {
-    const start = lane.pathArc[k]!;
-    if (start > PETAL_LEN) break;
-    const a = path[k]!;
-    const b = path[k + 1]!;
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len = lane.pathArc[k + 1]! - start;
-    if (len <= 0) continue;
-    const dot = (x - a.x) * dx + (z - a.z) * dz;
-    const along = dot <= 0 ? 0 : dot >= len * len ? len : Math.floor(dot / len);
-    if (start + along > PETAL_LEN) continue;
-    const cx = a.x + mulDivSym(dx, along, len);
-    const cz = a.z + mulDivSym(dz, along, len);
-    if (dist2(x, z, cx, cz) <= PETAL_HALF_W * PETAL_HALF_W) return true;
+export function inSkyReach(cast: CastGeometry, x: number, z: number, t: number): boolean {
+  if (t < TWIN_PEARL.sky.fromTick || t > TWIN_PEARL.sky.toTick) return false;
+  for (const dragon of cast.dragons) {
+    const head = headIndex(dragon, t);
+    if (head >= 0) for (let i = 0; i < dragon.sky.length; i += 2) {
+      if (distSegment2(x, z, dragon.sx[head]!, dragon.sz[head]!, dragon.sky[i]!, dragon.sky[i + 1]!) <= SKY_R * SKY_R) return true;
+    }
+    liveSamples(dragon, t, span);
+    if (inSpan(dragon, span.first, span.last, x, z, SKY_R)) return true;
   }
   return false;
 }
 
-/**
- * The lotus's region at (x, z): 2 full (a long petal or the hold zone; the petals reach 13 m along the lanes, past
- * the 9 m bloom), 1 half (elsewhere within r 9 m of the meeting point), 0 none.
- */
-export function lotusRegion(geo: TwinGeometry, x: number, z: number): 0 | 1 | 2 {
-  if (inHold(x, z) || inPetal(geo.lanes[0], x, z) || inPetal(geo.lanes[1], x, z)) return 2;
-  return within(x, z, geo.meet.x, geo.meet.z, LOTUS_R) ? 1 : 0;
+/** Full on the core, H disc and the last 13 m of each sampled path; half elsewhere in P's 9 m disc. */
+export function lotusRegion(cast: CastGeometry, x: number, z: number): 0 | 1 | 2 {
+  if (within(x, z, cast.px, cast.pz, U(TWIN_PEARL.lotus.coreMm)) || inHoldDisc(cast, x, z)) return 2;
+  for (const d of cast.dragons) for (let k = Math.max(0, d.petalFrom - 1); k + 1 < d.sx.length; k += 1) {
+    if (distSegment2(x, z, d.sx[k]!, d.sz[k]!, d.sx[k + 1]!, d.sz[k + 1]!) <= PETAL_HALF_W * PETAL_HALF_W) return 2;
+  }
+  return within(x, z, cast.px, cast.pz, U(TWIN_PEARL.lotus.radiusMm)) ? 1 : 0;
 }
 
-/** Bits of the volumes that hold (x, y, z) at tick offset t (tests, the lab, coverage): 1 hold, 2 touch, 4 body, 8 sky, 16 lotus full, 32 lotus half. */
-export function volumesAt(geo: TwinGeometry, cast: TwinPearlCast | null, x: number, y: number, z: number, t: number): number {
+/** 1 F0 disc, 2 F1 disc, 4 body, 8 sky, 16 full lotus, 32 half lotus. */
+export function volumesAt(cast: CastGeometry, x: number, y: number, z: number, t: number): number {
   let bits = 0;
-  const ground = inGroundBand(y);
-  if (ground && t === TWIN_PEARL.hold.tick && inHold(x, z)) bits |= 1;
-  if (ground && cast !== null && t >= TWIN_PEARL.touch.fromTick && t <= TWIN_PEARL.touch.toTick && (inTouch(cast.touch[0]!, x, z) || inTouch(cast.touch[1]!, x, z))) bits |= 2;
-  if (ground && (inBody(geo.lanes[0], x, z, t) || inBody(geo.lanes[1], x, z, t))) bits |= 4;
-  if (inSkyBand(y) && (inSky(geo.lanes[0], x, z, t) || inSky(geo.lanes[1], x, z, t))) bits |= 8;
+  const ground = inGroundBand(y), sky = inSkyBand(y);
+  if (ground && t === TWIN_PEARL.hold.tick && inHoldDisc(cast, x, z)) bits |= 1;
+  if (t >= TWIN_PEARL.touch.fromTick && t <= TWIN_PEARL.touch.toTick) {
+    for (const d of cast.disc) if ((d.sky === 0 ? ground : sky) && inDisc(d, x, z)) bits |= 2;
+  }
+  if (ground && (inBody(cast.dragons[0], x, z, t) || inBody(cast.dragons[1], x, z, t))) bits |= 4;
+  if (sky && inSkyReach(cast, x, z, t)) bits |= 8;
   if (ground && t >= TWIN_PEARL.lotus.fromTick && t <= TWIN_PEARL.lotus.toTick) {
-    const region = lotusRegion(geo, x, z);
+    const region = lotusRegion(cast, x, z);
     if (region === 2) bits |= 16;
     else if (region === 1) bits |= 32;
   }
   return bits;
+}
+
+/** F0 points reached by any correctly banded volume over the whole cast, without damage limits. */
+export function staticCoverage(cast: CastGeometry, points: readonly { x: number; z: number; y: number }[]): number {
+  let count = 0;
+  for (const p of points) for (let t = TWIN_PEARL.hold.tick; t <= TWIN_PEARL_END_TICK; t += 1) {
+    if (volumesAt(cast, p.x, p.y, p.z, t) !== 0) { count += 1; break; }
+  }
+  return count;
 }
 
 // ── Casting ────────────────────────────────────────────────────────────────
@@ -422,11 +453,15 @@ function postureOf(kind: TwinKind): number {
   return effect.kind === "line" ? mulDiv(effect.posture, TWIN_PEARL.sharesPct[kind], 100) : 0;
 }
 
-/** The dragon that holds `beast`: 0 west (gate A), 1 east (gate B); a crow, or any other, by its x (west below 0). */
-export function sideOf(beast: BeastState): number {
-  if (beast.gate === "A") return 0;
-  if (beast.gate === "B") return 1;
-  return beast.x < 0 ? 0 : 1;
+/** A snapshot side stays fixed; late or reused slots are assigned once by cut2. */
+export function sideFor(cast: TwinPearlCast, beast: BeastState): number {
+  if ((cast.sideSlot[beast.slot] ?? 0) !== 0 && cast.sideSerial[beast.slot] === beast.serial) return cast.sideSlot[beast.slot]! - 1;
+  const v = mulDivSym((beast.x - cast.hx) * cast.rx + (beast.z - cast.hz) * cast.rz, 1, 1000);
+  const side = 2 * v < cast.cut2 ? 0 : 2 * v > cast.cut2 ? 1 : beast.serial % 2;
+  while (cast.sideSlot.length <= beast.slot) { cast.sideSlot.push(0); cast.sideSerial.push(0); }
+  cast.sideSlot[beast.slot] = side + 1;
+  cast.sideSerial[beast.slot] = beast.serial;
+  return side;
 }
 
 /** The cast's budget (effective HP) per side and part: M_q and the bucket as on every hit, no element (content `pool`). */
@@ -443,17 +478,17 @@ export function twinPearlPool(world: World, seat: number, grade: Grade): number[
 }
 
 /**
- * Key 2 under the flag: resolves when a beast that can take damage lives (the skill covers both lanes and both sky
- * routes; the Vương's roar is immune, canon §10.5), else false and nothing changes (the Cast stays held). The hits
- * start this tick (F0) in stepTwinPearl.
+ * Resolves only with a damageable beast in the ground or sky band (§9.2; roar is immune, canon §10.5).
+ * Otherwise the Cast stays held. Hits begin this tick (F0) in stepTwinPearl.
  */
 export function resolveTwinPearl(world: World, cast: Cast): boolean {
   const state = world.skills.twinPearl;
   if (state === undefined) return false;
-  if (!world.beasts.list.some((beast) => beast.alive && !damageImmune(world, beast))) return false;
+  if (!world.beasts.list.some((beast) => beast.alive && !damageImmune(world, beast) && (inGroundBand(beast.y) || inSkyBand(beast.y)))) return false;
   const effect = kiemSkill(2).effect;
   if (effect.kind !== "line") return false;
   const pool = twinPearlPool(world, cast.seat, cast.quality);
+  const geometry = buildCastGeometry(world, cast);
   state.casts.push({
     castId: cast.actionId,
     seat: cast.seat,
@@ -468,67 +503,34 @@ export function resolveTwinPearl(world: World, cast: Cast): boolean {
     pool,
     poolStart: pool.slice(),
     area: createAreaHit(),
-    touch: [
-      { on: 0, x: 0, z: 0, dx: 0, dz: 0 },
-      { on: 0, x: 0, z: 0, dx: 0, dz: 0 },
-    ],
+    ...geometry,
     book: [],
     bookAt: [],
   });
   return true;
 }
 
-/** The route segment nearest (x, z): its unit direction ‰ from the gate towards the heart. */
-function routeDirection(route: readonly PointU[], x: number, z: number, out: { x: number; z: number }): void {
-  let best = -1;
-  let bestD = 0;
-  for (let k = 0; k + 1 < route.length; k += 1) {
-    const a = route[k]!;
-    const b = route[k + 1]!;
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len2 = dx * dx + dz * dz;
-    if (len2 === 0) continue;
-    const len = isqrt(len2);
-    const dot = (x - a.x) * dx + (z - a.z) * dz;
-    const along = dot <= 0 ? 0 : dot >= len2 ? len : Math.floor(dot / len);
-    const d = dist2(x, z, a.x + mulDivSym(dx, along, len), a.z + mulDivSym(dz, along, len));
-    if (best < 0 || d < bestD) {
-      best = k;
-      bestD = d;
-    }
-  }
-  if (best < 0) {
-    out.x = 0;
-    out.z = 1000;
-    return;
-  }
-  unitPm(route[best + 1]!.x - route[best]!.x, route[best + 1]!.z - route[best]!.z, out);
-}
-
-/** F1: each lane's touch box round its ground beast nearest the heart outside the hold zone (ties: smaller beastId). */
-function pickTouches(world: World, cast: TwinPearlCast, geo: TwinGeometry): void {
-  const dir = { x: 0, z: 0 };
-  for (let i = 0; i < 2; i += 1) {
-    const lane = geo.lanes[i]!;
+/** F1 targets come only from the F0 snapshot and must have positive damage capacity. */
+export function pickDiscs(world: World, cast: TwinPearlCast): void {
+  for (let side = 0; side < 2; side += 1) {
     let best: BeastState | null = null;
     let bestD = 0;
-    for (const beast of world.beasts.list) {
-      if (!beast.alive || beast.gate !== lane.gate || !inGroundBand(beast.y) || inHold(beast.x, beast.z)) continue;
-      const d = heartDistance(world, beast);
-      if (best === null || d < bestD || (d === bestD && beast.serial < best.serial)) {
-        best = beast;
-        bestD = d;
-      }
+    for (let i = 0; i < cast.snapshot.length; i += 2) {
+      const slot = cast.snapshot[i]!, serial = cast.snapshot[i + 1]!;
+      if (cast.sideSlot[slot] !== side + 1 || cast.sideSerial[slot] !== serial) continue;
+      const b = beastByRef(world, { slot, serial });
+      if (b === null || damageImmune(world, b)) continue;
+      const ground = inGroundBand(b.y);
+      if (!ground && !inSkyBand(b.y)) continue;
+      const kind = ground ? "touch" : "corridor";
+      const part = ground ? POOL_TOUCH : POOL_SKY;
+      if (!mayHit(cast, b, kind, TWIN_PEARL.touch.fromTick) || cast.pool[side * POOL_PARTS + part]! <= 0) continue;
+      if (b.boss && cast.bossDealt >= cast.bossCap) continue;
+      if (b.cluster >= 0 && areaClusterLeft(world, cast.area, b.cluster) <= 0) continue;
+      const d = dist2(b.x, b.z, cast.hx, cast.hz);
+      if (best === null || d < bestD || (d === bestD && b.serial < best.serial)) { best = b; bestD = d; }
     }
-    const touch = cast.touch[i]!;
-    if (best === null) continue;
-    routeDirection(lane.route, best.x, best.z, dir);
-    touch.on = 1;
-    touch.x = best.x;
-    touch.z = best.z;
-    touch.dx = dir.x;
-    touch.dz = dir.z;
+    if (best !== null) cast.disc[side] = { on: 1, x: best.x, z: best.z, sky: inGroundBand(best.y) ? 0 : 1 };
   }
 }
 
@@ -553,7 +555,7 @@ export function mayHit(cast: TwinPearlCast, beast: BeastState, kind: TwinKind, t
  */
 function hit(world: World, cast: TwinPearlCast, beast: BeastState, kind: TwinKind, part: number, half: boolean, t: number): void {
   let entry = bookOf(cast, beast);
-  const side = entry !== null ? entry.side : sideOf(beast);
+  const side = entry !== null ? entry.side : sideFor(cast, beast);
   const at = side * POOL_PARTS + part;
   const left = cast.pool[at]!;
   if (left <= 0) return;
@@ -586,7 +588,7 @@ interface Candidate {
   kind: TwinKind;
   part: number;
   half: boolean;
-  /** Distance to the heart along its route (field.ts heartDistance), u. */
+  /** Squared distance to H. */
   d: number;
 }
 
@@ -594,30 +596,26 @@ const candidates: Candidate[] = [];
 const spareCandidates: Candidate[] = [];
 const spanA = { first: 0, last: -1 };
 const spanB = { first: 0, last: -1 };
-const frontA = { x: 0, z: 0 };
-const frontB = { x: 0, z: 0 };
 
 const byTickOrder = (p: Candidate, q: Candidate): number => KIND_ORDER[p.kind] - KIND_ORDER[q.kind] || p.d - q.d || p.beast.serial - q.beast.serial;
 
 /**
  * One tick of a cast: every beast the live volumes hold (one pass, each beast's first kind it may still take, in the
- * order touch, corridor, lotus), then the hits in one order for both lanes and both skies: kind, nearest the heart,
+ * order touch, corridor, lotus), then the hits in one order for both sides: kind, nearest the heart,
  * smaller beastId.
  */
 function stepCast(world: World, cast: TwinPearlCast, t: number): void {
-  const geo = twinPearlGeometry(world);
-  const [laneA, laneB] = geo.lanes;
-  if (t === TWIN_PEARL.touch.fromTick) pickTouches(world, cast, geo);
+  const [a, b] = cast.dragons;
+  if (t === TWIN_PEARL.touch.fromTick) pickDiscs(world, cast);
   const hold = t === TWIN_PEARL.hold.tick;
   const touch = t >= TWIN_PEARL.touch.fromTick && t <= TWIN_PEARL.touch.toTick;
-  liveSamples(laneA, t, spanA);
-  liveSamples(laneB, t, spanB);
+  liveSamples(a, t, spanA);
+  liveSamples(b, t, spanB);
   const body = spanA.last >= spanA.first || spanB.last >= spanB.first;
-  const skyA = skyFront(laneA, t, frontA);
-  const skyB = skyFront(laneB, t, frontB);
+  const sky = t >= TWIN_PEARL.sky.fromTick && t <= TWIN_PEARL.sky.toTick;
   const lotus = t >= TWIN_PEARL.lotus.fromTick && t <= TWIN_PEARL.lotus.toTick;
-  if (!hold && !touch && !body && !skyA && !skyB && !lotus) return;
-  const [touchA, touchB] = cast.touch;
+  if (!hold && !touch && !body && !sky && !lotus) return;
+  const discHolds = (air: boolean, x: number, z: number): boolean => cast.disc.some((d) => (d.sky !== 0) === air && inDisc(d, x, z));
   for (const beast of world.beasts.list) {
     if (!beast.alive || damageImmune(world, beast)) continue;
     const x = beast.x;
@@ -626,18 +624,21 @@ function stepCast(world: World, cast: TwinPearlCast, t: number): void {
     let kind: TwinKind | null = null;
     let part = 0;
     let half = false;
-    if (ground && ((hold && inHold(x, z)) || (touch && (inTouch(touchA!, x, z) || inTouch(touchB!, x, z)))) && mayHit(cast, beast, "touch", t)) {
+    if (ground && mayHit(cast, beast, "touch", t) && ((hold && inHoldDisc(cast, x, z)) || (touch && discHolds(false, x, z)))) {
       kind = "touch";
       part = POOL_TOUCH;
-    } else if (ground && body && (inSpan(laneA, spanA.first, spanA.last, x, z) || inSpan(laneB, spanB.first, spanB.last, x, z)) && mayHit(cast, beast, "corridor", t)) {
-      kind = "corridor";
-      part = POOL_CORRIDOR;
-    } else if (inSkyBand(beast.y) && ((skyA && within(x, z, frontA.x, frontA.z, SKY_R)) || (skyB && within(x, z, frontB.x, frontB.z, SKY_R))) && mayHit(cast, beast, "corridor", t)) {
+    } else if (inSkyBand(beast.y) && touch && mayHit(cast, beast, "corridor", t) && discHolds(true, x, z)) {
       kind = "corridor";
       part = POOL_SKY;
-    } else if (ground && lotus) {
-      const region = lotusRegion(geo, x, z);
-      if (region !== 0 && mayHit(cast, beast, "lotus", t)) {
+    } else if (ground && body && mayHit(cast, beast, "corridor", t) && (inSpan(a, spanA.first, spanA.last, x, z, BODY_R) || inSpan(b, spanB.first, spanB.last, x, z, BODY_R))) {
+      kind = "corridor";
+      part = POOL_CORRIDOR;
+    } else if (inSkyBand(beast.y) && sky && mayHit(cast, beast, "corridor", t) && inSkyReach(cast, x, z, t)) {
+      kind = "corridor";
+      part = POOL_SKY;
+    } else if (ground && lotus && mayHit(cast, beast, "lotus", t)) {
+      const region = lotusRegion(cast, x, z);
+      if (region !== 0) {
         kind = "lotus";
         part = POOL_LOTUS;
         half = region === 1;
@@ -649,7 +650,7 @@ function stepCast(world: World, cast: TwinPearlCast, t: number): void {
     item.kind = kind;
     item.part = part;
     item.half = half;
-    item.d = heartDistance(world, beast);
+    item.d = dist2(x, z, cast.hx, cast.hz);
     candidates.push(item);
   }
   if (candidates.length === 0) return;

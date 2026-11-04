@@ -34,9 +34,9 @@
  * (art-src/lab/vfx/aura/qi-streak-<n>.png; default 3, the prep's recommendation until the owner picks one),
  * ?plates=graded the graded plates (default even).
  * ?key2=twin-pearl: key 2 (and its panel button) casts Twin Dragons, One Burning Pearl's grey box instead
- * (DRAGON_SKILL.md §6 step 1; twin-pearl-greybox.ts): a real sim world with the header flag swordKey2, a dense
- * tide on both lanes and sky routes, the sim's hit volumes drawn as plain translucent shapes with phase labels;
- * N refills the tide, V brings the Vương in; __lab.twinPearl reads each cast's numbers (key-to-first-hit too).
+ * (DRAGON_SKILL.md §9; twin-pearl-greybox.ts): a real sim world with the header flag swordKey2,
+ * selectable field-wide tides and the cast's hit volumes drawn as translucent shapes with phase labels;
+ * L cycles layouts, N restores the tide, V brings the boss in; __lab.twinPearl reads each cast's numbers (key-to-first-hit too).
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -1108,6 +1108,7 @@ window.addEventListener("keydown", (e) => {
   lastKeyStamp = e.timeStamp;
   const slot = KEYS[e.key];
   if (slot) type(slot);
+  else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
   else if (e.key === "b" || e.key === "B") enemyShot();
@@ -1154,7 +1155,7 @@ if (params.get("ui") !== "0") {
   ];
   if (greybox !== null) {
     names[2] = ["2", "Twin Dragons, One Burning Pearl · grey box (sim volumes)"];
-    names.push(["N", "Grey box: refill the tide"], ["V", "Grey box: the Vương at gate A"]);
+    names.push(["L", "Grey box: next layout"], ["N", "Grey box: restore this layout"], ["V", "Grey box: boss at gate A"]);
   }
   for (const [key, name] of names) {
     const b = document.createElement("button");
@@ -1528,6 +1529,7 @@ declare global {
         cast(): void;
         reports(): readonly TwinCastReport[];
         refill(): void;
+        layout(): void;
         boss(): void;
         tick(): number;
         alive(): { ground: number; crows: number };
@@ -2072,6 +2074,7 @@ void (async () => {
       cast: () => type("k2"),
       reports: () => greybox.reports,
       refill: () => greybox.refillAll(),
+      layout: () => greybox.nextLayout(),
       boss: () => greybox.addBoss(),
       tick: () => greybox.world.tick,
       alive: () => {

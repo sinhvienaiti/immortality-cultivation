@@ -1,28 +1,11 @@
 /**
- * Twin Dragons, One Burning Pearl (`twin-pearl`, 雙龍戲珠): the grey box of
- * Kiếm key 2 that the owner chose on 04/11/2026 (docs/games/tu-tien/skills/
- * DRAGON_SKILL.md §3 A, §6 step 1). Trial numbers only: canon §12 and
- * school-kiem.ts are unchanged, and the skill runs only when a match's
- * ReplayHeader carries `swordKey2: "twin-pearl"` (sim/twin-pearl.ts); off by
- * default, so no default match, golden or rulesHash sees this table.
- *
- * Frames: the design doc counts frames at 60 Hz from F0 (the word's last
- * correct key); the sim ticks at 60 Hz (rules.ts SIM.tickHz), so frame Fn is
- * the n-th tick after the Cast resolves, one to one. Every `*Tick` below is
- * such an offset.
- *
- * Damage: each beast takes at most one hit of each kind a cast (touch,
- * corridor, lotus), at least `rehitTicks` apart, `maxHits` in all. The kinds
- * split today's key-2 damage on that beast (school-kiem.ts Nhất Tuyến Xuyên
- * Vân: 2.5 W on the first beast, −15 % each next distinct beast, floor 40 %,
- * Thế −20) as 15 / 45 / 40 %; the lotus deals half outside its two long petals
- * and the hold zone. Each dragon holds its own side (west: gate A and crows at
- * x < 0; east: gate B and crows at x ≥ 0) with its own falloff and its own
- * share of the cast's budget (`pool`). The Vương takes at most `bossCapW100` a
- * cast (cast id = the Cast's actionId).
- * Owner: Lane 4 (trial, behind a flag).
+ * Twin Dragons, One Burning Pearl: field-wide key-2 grey box (DRAGON_SKILL.md §9).
+ * Each cast snapshots damageable beasts, divides them across the caster's lateral
+ * axis and sends two sampled S paths through ground anchors to one pearl.
+ * Frames are tick offsets from F0 at 60 Hz. Damage keeps the three kinds,
+ * 15/45/40 shares, per-side falloff, cluster cap and per-cast boss cap.
+ * Only ReplayHeader.swordKey2 enables this table; default matches stay unchanged.
  */
-
 /** Key 2 variants a match may run (ReplayHeader.swordKey2); absent: today's line. */
 export type SwordKey2 = "twin-pearl";
 
@@ -31,50 +14,27 @@ export const SWORD_KEY2_VARIANTS: readonly SwordKey2[] = ["twin-pearl"];
 export const TWIN_PEARL = {
   id: "twin-pearl",
   name: "Twin Dragons, One Burning Pearl",
-  /** F0: the hold strike on 8 × 8 m in front of the formation centre (x ±4 m, from the heart 8 m towards the gates). */
-  hold: { tick: 0, halfWidthMm: 4000, depthMm: 8000 },
-  /**
-   * F1–F2: one touch box on each ground lane, round the lane's beast nearest the heart outside the hold zone,
-   * 4 m along the lane and the corridor's width across (the beam from the sword to it is drawn by the view).
-   */
-  touch: { fromTick: 1, toTick: 2, halfLengthMm: 2000, halfWidthMm: 2200 },
-  /**
-   * F3–F42: each head runs from the lanes' meeting point up its lane to the gate on a ground S path (half-waves
-   * of about `halfWaveMm`, `amplitudeMm` off the lane's line), sampled every `sampleMm`; its body capsule is
-   * `radiusMm` round the path, 0.2–1.5 m high, and what it passed keeps damaging for `trailTicks` (0.9 s).
-   */
-  heads: { fromTick: 3, toTick: 42, radiusMm: 1400, amplitudeMm: 900, halfWaveMm: 4000, sampleMm: 500 },
+  /** F0: ground disc around the formation centre. */
+  hold: { tick: 0, radiusMm: 4500 },
+  /** F1–F2: one ground or sky disc per side, fixed at its F1 target. */
+  touch: { fromTick: 1, toTick: 2, radiusMm: 2200 },
+  pearl: { pullPm: 600, maxMm: 12_000, insetMm: 2000, emptyMm: 9000, fromTick: 3, arriveTick: 48 },
+  anchors: { max: 3, minGapMm: 3000 },
+  wingMm: 9000,
+  heads: { fromTick: 3, toTick: 48, radiusMm: 1400, amplitudeMm: 900, halfWaveMm: 4000, sampleMm: 500, maxSamples: 256, maxSegmentMm: 32_000 },
   trailTicks: 54,
-  /** Ground volumes hit beasts standing at most this high (the body capsule's top, 1.5 m); crows fly at 4 m. */
   groundTopMm: 1500,
-  /** F30–F50: each tail sweeps its side's sky route from the far corner in to the heart edge, 2.5–6 m high. */
-  sky: { fromTick: 30, toTick: 50, radiusMm: 2500, bottomMm: 2500, topMm: 6000 },
-  /** The pearl flies from the sword to the meeting point over the heads' run and hangs there (view only, no hit). */
-  pearl: { fromTick: 3, arriveTick: 42 },
-  /**
-   * F51: the lotus at the meeting point, r 9 m (18 m across); full on its two long petals (the corridor's
-   * half-width round each head's base path, `petalLengthMm` from the meeting point) and in the hold zone,
-   * `outsidePm` ‰ elsewhere in it. Live until F71 so a beast hit up to F51 can take it after its 20-tick gap.
-   */
-  lotus: { fromTick: 51, toTick: 71, radiusMm: 9000, petalLengthMm: 13_000, petalHalfWidthMm: 2200, outsidePm: 500 },
-  /** Each kind's share of the beast's key-2 damage, %; Thế (posture) splits the same way. */
+  sky: { fromTick: 30, toTick: 56, radiusMm: 3000, bottomMm: 2500, topMm: 6000 },
+  /** View only. */
+  roar: { fromTick: 49, toTick: 56 },
+  lotus: { fromTick: 57, toTick: 77, radiusMm: 9000, coreMm: 4000, petalLengthMm: 13_000, petalHalfWidthMm: 2200, outsidePm: 500 },
   sharesPct: { touch: 15, corridor: 45, lotus: 40 },
-  /**
-   * The cast's damage budget, W × 100, scaled by the Cast's M_q and the seat's bucket (as every hit is) and spent as
-   * effective HP (like ô 4's 4 W a cast; ô 5 shares a 10 W pool). Each side gets `sideW100` for its ground beasts and
-   * its part of the hold zone, split touch / corridor / lotus as `sharesPct`, and `skyW100` for its sky sweep. A hit
-   * takes from its side's part first come (F0 hold strike, F1 touches, the heads from the meeting point out, the lotus),
-   * at most what is left; a spent part hits no more beasts this cast. Trial: each side carries today's key-2 damage on
-   * its first beast (2.5 W), each sky sweep one crow's HP (Hỏa Nha, 0.8 W).
-   */
-  pool: { sideW100: 250, skyW100: 80 },
+  /** Effective HP budget: 2 W per side split 15/45/40, plus 0.8 W for sky hits (§9.11). */
+  pool: { sideW100: 200, skyW100: 80 },
   maxHits: 3,
   rehitTicks: 20,
-  /** The Vương's cap a cast, W × 100 (trial: 60 % of one beast's 2.5 W). */
   bossCapW100: 150,
-  /** Where the lanes meet when a lane has no bend (canon §8.1: within 10 m of the heart): this far along it from the heart. */
-  meetFallbackMm: 10_000,
 } as const;
 
-/** The last tick a cast still hits on: the heads' trail at the gates. */
+/** Last damaging tick: the final head sample's trail. */
 export const TWIN_PEARL_END_TICK = Math.max(TWIN_PEARL.heads.toTick + TWIN_PEARL.trailTicks, TWIN_PEARL.lotus.toTick, TWIN_PEARL.sky.toTick);
