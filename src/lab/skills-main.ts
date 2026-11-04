@@ -33,6 +33,10 @@
  * gives the reduced-motion version of each layer. ?streak=1..4 picks the mantle's qi-streak candidate
  * (art-src/lab/vfx/aura/qi-streak-<n>.png; default 3, the prep's recommendation until the owner picks one),
  * ?plates=graded the graded plates (default even).
+ * ?key2=twin-pearl: key 2 (and its panel button) casts Twin Dragons, One Burning Pearl's grey box instead
+ * (DRAGON_SKILL.md §6 step 1; twin-pearl-greybox.ts): a real sim world with the header flag swordKey2, a dense
+ * tide on both lanes and sky routes, the sim's hit volumes drawn as plain translucent shapes with phase labels;
+ * N refills the tide, V brings the Vương in; __lab.twinPearl reads each cast's numbers (key-to-first-hit too).
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -75,6 +79,7 @@ import { resolveReducedMotion } from "../ui/skin";
 import { expectedTicks, gradeOf } from "../typing/grading";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
+import { TwinPearlGreybox, type TwinCastReport } from "./twin-pearl-greybox";
 
 const params = new URLSearchParams(location.search);
 const quality = (["low", "medium", "high", "ultra"].includes(params.get("q") ?? "") ? params.get("q") : "high") as Quality;
@@ -187,6 +192,14 @@ const ribbonNoise = tex("smoke_01");
 const herd = new LabHerd();
 const caster = new LabCaster();
 view.layers.actors.add(herd.group, caster.root);
+// ?key2=twin-pearl: the grey box of key 2 on its own sim world; the stand-in herd hides (the grey box draws the sim's beasts).
+const greybox = params.get("key2") === "twin-pearl" ? new TwinPearlGreybox(view.camera, () => ({ x: caster.x, y: 1.2, z: caster.z })) : null;
+if (greybox !== null) {
+  view.layers.fx.add(greybox.group);
+  herd.group.visible = false;
+}
+/** The last key's event time (the grey box measures key-to-first-hit from it). */
+let lastKeyStamp = 0;
 
 // Camera kick, hit stop and impact lights, owned by the lab (the game has its own in feedback-profile.ts): feel.ts.
 const camBase = new THREE.Vector3();
@@ -321,7 +334,17 @@ bus.on((e) => {
 // events as the body, VFX, camera and hit-stop, on the same frame. Audio starts on the first key or click.
 const sound = new LabSound(elementKits().map((k) => k.sound));
 bus.on((e) => sound.on(e));
-const unlockAudio = (): void => sound.unlock();
+// The first unlock creates the AudioContext (60–120 ms on the main thread, measured 04/11): it waits until the key's
+// frame is drawn, so the first key's release and first hit are not held back (the page keeps its user activation).
+let unlockQueued = false;
+const unlockAudio = (): void => {
+  if (unlockQueued) {
+    sound.unlock();
+    return;
+  }
+  unlockQueued = true;
+  requestAnimationFrame(() => setTimeout(() => sound.unlock(), 0));
+};
 window.addEventListener("keydown", unlockAudio);
 window.addEventListener("pointerdown", unlockAudio);
 /** The release event: on the key's frame, before the VFX cast (they read the hand after the caster's update). */
@@ -918,6 +941,15 @@ type LabSlot = SwordSlot | "k7";
 function type(slot: LabSlot): void {
   // Keys wait while the cut-in holds the world (the typing timer is stopped too).
   if (cutin.active) return;
+  if (slot === "k2" && greybox !== null) {
+    // The grey box casts on this key (D58 instant cast): the sim's F0 runs now, no VFX, the body still answers.
+    typing = null;
+    probe.lastKey("k2");
+    caster.release("k2", 0, -9);
+    greybox.cast(lastKeyStamp > 0 ? lastKeyStamp : performance.now());
+    lastKeyStamp = 0;
+    return;
+  }
   if (slot === "k5" && !typedMode) {
     probe.event("cutin", "k5");
     startUltimate(TARGET.k5[0], TARGET.k5[1]);
@@ -1025,6 +1057,7 @@ function updateTyping(dt: number): void {
 
 function reset(): void {
   typing = null;
+  greybox?.reset();
   fx.reset();
   herd.respawnAll();
   caster.place(0, 3, 0, -1);
@@ -1059,8 +1092,11 @@ const KEYS: Record<string, LabSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": 
 window.addEventListener("keydown", (e) => {
   // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  lastKeyStamp = e.timeStamp;
   const slot = KEYS[e.key];
   if (slot) type(slot);
+  else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
+  else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
   else if (e.key === "b" || e.key === "B") enemyShot();
   else if (e.key === "r" || e.key === "R") reset();
   else if (e.key === "w" || e.key === "W") cycleWeapon();
@@ -1101,6 +1137,10 @@ if (params.get("ui") !== "0") {
     ["Z", "Zoom: close view / whole field (wheel, = and - too)"],
     ["A", "Sword aura on / off"],
   ];
+  if (greybox !== null) {
+    names[2] = ["2", "Twin Dragons, One Burning Pearl · grey box (sim volumes)"];
+    names.push(["N", "Grey box: refill the tide"], ["V", "Grey box: the Vương at gate A"]);
+  }
   for (const [key, name] of names) {
     const b = document.createElement("button");
     b.textContent = key + " · " + name;
@@ -1254,7 +1294,10 @@ function frame(dt: number): void {
   const so = screen.offset;
   view.camera.position.set(camBase.x + kick.x + so.x, camBase.y + so.y, camBase.z + kick.z + so.z);
   screen.applyCamera(view.camera);
+  // The grey box steps its sim world on real time (through a hit-stop) and places its volumes for this frame.
+  greybox?.update(dt);
   view.render(dt);
+  greybox?.afterRender();
   // After the draw: world matrices are fresh and the probe reads what was shown.
   if (probeOn) {
     probe.sample(dt);
@@ -1461,6 +1504,15 @@ declare global {
       soundTakes(): readonly SoundTake[];
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
+      /** ?key2=twin-pearl only: the grey box (cast now, each cast's numbers, refill, the Vương, the sim world's tick). */
+      twinPearl?: {
+        cast(): void;
+        reports(): readonly TwinCastReport[];
+        refill(): void;
+        boss(): void;
+        tick(): number;
+        alive(): { ground: number; crows: number };
+      };
     };
   }
 }
@@ -1524,6 +1576,7 @@ void (async () => {
       swordAura.prewarm(r, view.camera);
       fx.prewarmAura(r, view.camera);
       myriad.prewarmAura(r, view.camera);
+      greybox?.prewarm(r, view.camera);
     }
     r.setRenderTarget(was);
   }
@@ -1994,6 +2047,21 @@ void (async () => {
       return m.triangles;
     },
   };
+  if (greybox !== null) {
+    window.__lab.twinPearl = {
+      cast: () => type("k2"),
+      reports: () => greybox.reports,
+      refill: () => greybox.refillAll(),
+      boss: () => greybox.addBoss(),
+      tick: () => greybox.world.tick,
+      alive: () => {
+        let ground = 0;
+        let crows = 0;
+        for (const b of greybox.world.beasts.list) if (b.alive) b.gate === "sky" ? (crows += 1) : (ground += 1);
+        return { ground, crows };
+      },
+    };
+  }
   if (params.get("herd") === "march") herd.setMode("march");
   if (!fixed) {
     let last = performance.now();
