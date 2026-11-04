@@ -68,6 +68,7 @@ import { DEFAULT_ELEMENT, elementById, elementKits } from "../view/skills/elemen
 import { ElementStage } from "../view/skills/element-stage";
 import type { DeathArgs } from "../view/skills/element-kit";
 import type { FlipbookMode } from "../view/skills/flipbook";
+import { runFlipbookProbe, type FlipbookProbeReport } from "./flipbook-probe";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { FIRE_FURNACE_BLADE, FIRE_LAB } from "../view/skills/element-fire";
@@ -1375,6 +1376,8 @@ declare global {
   interface Window {
     __lab?: {
       ready: boolean;
+      /** Ticket 258b: GPU checks of FlipbookPool v2 (programs, GPU vs CPU, mask decode); off-screen, no time passes. */
+      flipbookProbe(): Promise<FlipbookProbeReport>;
       type(slot: SwordSlot | "k7"): void;
       cast(slot: SwordSlot, tx: number, tz: number): void;
       enemyShot(): void;
@@ -1603,6 +1606,7 @@ void (async () => {
   caster.start();
   window.__lab = {
     ready: true,
+    flipbookProbe: () => runFlipbookProbe(view.stage.renderer),
     type,
     // The caster acts the slot first: SwordSkillHost.play names only a clip (K4 asks for Skill2 like the guard, K1 for Attack
     // like Phi Kiếm), so a cast left to play() acted the wrong skill (review fix).
