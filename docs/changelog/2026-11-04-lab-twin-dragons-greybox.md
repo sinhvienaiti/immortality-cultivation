@@ -2,6 +2,8 @@
 
 **Lý do:** sáng 04/11 anh chọn hướng **"A · Song Long"** trong ba hướng chiêu rồng (`docs/games/tu-tien/skills/DRAGON_SKILL.md` ở repo cha, §3 A). Bước tiếp theo theo §6 bước 1 là **hộp xám**: đường đi và khối trúng trong sim và lab, không hình, rồi đo bằng bot các chỉ số của §2 luật 4. Thiết kế đã được ChatGPT và Gemini góp ý hai lượt chéo (`docs/games/tu-tien/skills/source/dragon-skill-*.md`); bản này dựng đúng kế hoạch đó.
 
+**Đính chính (04/11, chiều):** sau một review độc lập, chiêu đã có ngân sách mỗi lần tung, mỗi bên một hệ số giảm dần và một trần cụm cho cả lần tung. Vì vậy số ở mục 5 và 7 không còn đúng. Câu "chiêu phủ đều cả hai bên" ở mục 7 cũng sai, vì đường A được lợi do thứ tự tính. Xem [`2026-11-04-twin-pearl-review-fixes.md`](2026-11-04-twin-pearl-review-fixes.md).
+
 **Tóm tắt:** Kiếm ô 2 có thêm một biến thể thử, `twin-pearl`, sau một cờ **tắt mặc định**. Bật cờ thì ô 2 phủ cả hai đường đất, cả hai đường trời và vùng trước Trận Tâm. Tắt cờ thì game giữ đúng từng byte như HEAD `1a78a82` (đã chứng minh ở mục 6).
 
 ## 1. Đã làm, theo commit
