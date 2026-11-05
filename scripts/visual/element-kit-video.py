@@ -39,6 +39,10 @@ def main() -> None:
         if seg["close"]:
             title = f"{NAMES.get(element, element)} · phím {seg['key']} · cận cảnh đòn xuống đất · {seg['name'].split(' · ')[0]}"
         line2 = "clip đã có: " + (", ".join(have) or "chưa có") + ("   ·   chưa có (lớp gốc vẽ): " + ", ".join(lack) if lack else "")
+        if seg["slot"] == "showcase":
+            kind = "cột trụ" if seg["name"].startswith("pillar") else "tuyệt kỹ"
+            title = f"Phím 8 · trình diễn {kind} · {seg['name']}"
+            line2 = f"clip art-src/lab/vfx/ult/{seg['name']} · lớp video đặt trên sân đúng góc camera chơi, chưa nối vào sim"
         for i in range(seg["start"], seg["start"] + seg["count"]):
             path = src / "frames" / f"{i:05d}.jpg"
             im = Image.open(path).convert("RGB")

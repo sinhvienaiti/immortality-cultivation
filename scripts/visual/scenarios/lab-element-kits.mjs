@@ -5,7 +5,8 @@
 // make the video with scripts/visual/element-kit-video.py, then delete the frames.
 //   BASE=http://127.0.0.1:3068/skills-lab.html ELEMENT=water OUT_DIR=…/captures/tu-tien/lab-elements/water \
 //   node src/kit/tools/cdp-run.mjs scripts/visual/scenarios/lab-element-kits.mjs --width=1280 --height=720
-// KEYS=1,7 limits the keys; CLOSE=0 drops the close ground shots; EVERY=1 shoots every frame.
+// KEYS=1,7 limits the keys; CLOSE=0 drops the close ground shots; EVERY=1 shoots every frame; SHOWCASE=1 adds key 8's
+// pillars and ultimates (KEYS=none CLOSE=0 SHOWCASE=1: only them).
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -80,6 +81,27 @@ export default async function (page) {
       if (only && !only.includes(key)) continue;
       const k = KEYS.find((x) => x[0] === key);
       await run(key, slot, k[2], after, cam);
+    }
+  }
+  // SHOWCASE=1: key 8's pillars and ultimates (showcase.ts), each at the play camera.
+  if (process.env.SHOWCASE === "1") {
+    const ids = (await page.eval("window.__lab.showcase('-').ids")) ?? [];
+    for (const id of ids) {
+      await page.eval("window.__lab.reset()");
+      await page.eval("window.__lab.camera('play')");
+      await page.eval("window.__lab.step(30)");
+      const start = n;
+      for (let i = 0; i < 8; i += every) {
+        await shoot();
+        await page.eval(`window.__lab.step(${every})`);
+      }
+      await page.eval(`window.__lab.showcase(${JSON.stringify(id)})`);
+      const after = id.startsWith("ult-") ? 290 : 170;
+      for (let f = 0; f < after; f += every) {
+        await shoot();
+        await page.eval(`window.__lab.step(${every})`);
+      }
+      segments.push({ key: "8", slot: "showcase", name: id, close: false, start, count: n - start, kit: null });
     }
   }
   const report = { element, every, fps: 60 / every, info, segments, frames: n };

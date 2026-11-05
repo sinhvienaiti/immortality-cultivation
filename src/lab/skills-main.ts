@@ -4,7 +4,8 @@
  * stand-in beasts and caster, so the owner reviews each skill before it goes
  * into the game (skill game-vfx-layered "Demo or lab first"; owner 02/11).
  * Keys: 0 Phi Kiếm, 1 Ngự Kiếm Quyết, 2 Nhất Tuyến Xuyên Vân, 3 Hồi Kiếm Hộ
- * Thân, 4 Lưu Quang Bộ, 5 Lạc Kiếm Trận, 6 Thiên Hà Kiếm Vũ, B an enemy blow
+ * Thân, 4 Lưu Quang Bộ, 5 Lạc Kiếm Trận, 6 Thiên Hà Kiếm Vũ, 8 the next pillar or element ultimate of
+ * art-src/lab/vfx/ult/ as its video layer on the field (showcase.ts; __lab.showcase), B an enemy blow
  * at the guard, R reset. A key is the word's last correct keystroke (canon
  * D58, instant cast): the release fires on that frame. ?typed=1 (or the
  * panel's checkbox) types the word at the chosen WPM first: the charge
@@ -77,6 +78,7 @@ import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, type ClipAudit } from "../view/skills/element-clips";
+import { UltShowcase } from "./showcase";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -833,6 +835,14 @@ const auraSolo = new AuraSolo(view.layers.fx, textures.trace);
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
 const lightAt = new THREE.Vector3();
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k), light: (x, y, z, colour, intensity) => lights.flash(lightAt.set(x, y, z), view.camera.position, colour, intensity, true) });
+// Key 8: the pillar skills and the element ultimates as their video layers on the field (showcase.ts; not in the sim).
+const showcase = new UltShowcase(stage.flipbooks, {
+  camera: view.camera,
+  nearest: (x, z, r) => herd.nearest(x, z, r),
+  at: (i, out) => out.set(herd.x(i), 0, herd.z(i)),
+  light: (at, colour, intensity) => lights.flash(at, view.camera.position, colour, intensity, true),
+  accent: (k) => screen.warm(k),
+});
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
@@ -1133,6 +1143,7 @@ window.addEventListener("keydown", (e) => {
   lastKeyStamp = e.timeStamp;
   const slot = KEYS[e.key];
   if (slot) type(slot);
+  else if (e.key === "8") showcase.play();
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
@@ -1170,6 +1181,7 @@ if (params.get("ui") !== "0") {
     ["5", "Lạc Kiếm Trận · Falling Sword Array"],
     ["6", "Thiên Hà Kiếm Vũ · Milky-Way Sword Rain"],
     ["7", "Vạn Kiếm Triều Tông · Ten-Thousand Sword Convergence"],
+    ["8", "Trình diễn cột trụ và tuyệt kỹ (lớp video, chưa vào sim) · Pillars and ultimates"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
@@ -1493,6 +1505,8 @@ declare global {
       fireImpact(mode?: "brush" | "lotus"): FirePrewarm & { mode: "brush" | "lotus"; ready: boolean; audit: FireAudit; ageTicks: number; lights: number[] };
       /** An element kit drawn from clips (element-clips.ts): its clips' spawns by role since the last reset and its pools by role (null: Metal, Fire). */
       clipKit(): ClipAudit | null;
+      /** Key 8 (showcase.ts): plays pillar or ultimate `id` (none: the next); what it played and every id it has. */
+      showcase(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
       fxSolo(prefix: string | null): number;
       /** Lab debugging: shows or hides every fx mesh whose name starts with `prefix` and redraws the frame (no time passes). */
@@ -1831,6 +1845,9 @@ void (async () => {
         ageTicks: audit.firstAt < 0 ? -1 : Math.round((stage.time - audit.firstAt - lastWorldDt) * 60) + 0,
         lights: lights.levels(),
       };
+    },
+    showcase(id) {
+      return { played: showcase.play(id), ids: showcase.ids() };
     },
     clipKit() {
       const a = clipAudit(stage, fx.element.id);
