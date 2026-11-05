@@ -374,7 +374,7 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(cuts).toEqual([2.0 * CUT.scale]);
   });
 
-  it("with Water's real hooks, key 2's slash clip is the one flying crescent and the end cut: no wave crescent per beast on the line", () => {
+  it("with Water's real hooks, key 2's slash clip is the flying crescent (and its afterimages) and one end cut: no wave crescent per beast", () => {
     const cam = camera();
     const layer = new THREE.Group();
     const tex = sheets();
@@ -383,6 +383,16 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     const fx = new SwordSkillFx(swordHost(field(12), layer, cam), tex, "high");
     fx.setElement(elementById("water")!, stage);
     stage.reset();
+    // Cuts are the slash cards not held whole (the flying crescent and its afterimages carry the held flag).
+    const pool = stage.flipbooks.pool("water", "water-slash");
+    let cuts = 0;
+    let held = 0;
+    const spawn = pool.spawn.bind(pool);
+    pool.spawn = (at, size, o = {}) => {
+      if ((o.alpha ?? 1) >= 2) held += 1;
+      else cuts += 1;
+      spawn(at, size, o);
+    };
     fx.cast("k2", 0, -10);
     let frames = 0;
     for (let i = 0; i < 60; i += 1) {
@@ -394,9 +404,9 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     const a = clipAudit(stage, "water")!;
     expect(frames).toBe(60);
     expect(a.spawned.impact).toBeGreaterThan(1);
-    // ~12 flight frames (0.2 s) and the end cut; the hits along the line add none.
-    expect(a.spawned.slash).toBeGreaterThan(8);
-    expect(a.spawned.slash).toBeLessThanOrEqual(13);
+    // One cut, the big one at the line's end; the hits along the line add none (no wave crescent per beast).
+    expect(cuts).toBe(1);
+    expect(held).toBeGreaterThan(8);
   });
 
   it("draws Metal's and Fire's cuts and key 2 with their own slash clips, and an element without one with Metal's, tinted", () => {
@@ -553,6 +563,43 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     } finally {
       SLASH_STYLE.style = "sword";
     }
+  });
+
+  it("trails key 2's crescent with a soft band, afterimages and horn sparkles that fade slowly after it lands (crescent-trail.md)", () => {
+    const cam = camera();
+    const layer = new THREE.Group();
+    const tex = sheets();
+    const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+    giveClips(stage, "water", ["slash"]);
+    const fx = new SwordSkillFx(swordHost(field(12), new THREE.Group(), cam), tex, "high");
+    fx.setElement(elementById("water")!, stage);
+    const pool = stage.flipbooks.pool("water", "water-slash");
+    const alphas: number[] = [];
+    const spawn = pool.spawn.bind(pool);
+    pool.spawn = (at, size, o = {}) => {
+      if ((o.alpha ?? 1) >= 2) alphas.push((o.alpha ?? 2) - 2);
+      spawn(at, size, o);
+    };
+    const trail = (): THREE.Mesh | undefined => layer.children.find((c) => c.name === "fx-crescent-trail") as THREE.Mesh | undefined;
+    fx.cast("k2", 0, -10);
+    let shown = 0;
+    let lastShown = -1;
+    for (let i = 0; i < 90; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+      if (trail()?.visible === true) {
+        shown += 1;
+        lastShown = i;
+      }
+    }
+    // The band shows from the crescent's first frames and lingers ≥ 0.4 s after it lands at the hit tick (12 ticks).
+    expect(shown).toBeGreaterThan(10);
+    expect((lastShown - 12) / 60).toBeGreaterThanOrEqual(0.4);
+    // Afterimages at 0.45, 0.25, 0.12 (and fading after the landing), never above the crescent itself.
+    expect(alphas.some((a) => Math.abs(a - 0.45) < 1e-6)).toBe(true);
+    expect(alphas.some((a) => Math.abs(a - 0.12) < 1e-6)).toBe(true);
+    expect(Math.max(...alphas)).toBeLessThanOrEqual(1);
   });
 
   it("takes the ribbon clip as the flight trail once it arrives", () => {

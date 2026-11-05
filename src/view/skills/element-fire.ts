@@ -1151,7 +1151,7 @@ class FireLayers {
    * crescent of `cut` without the clip.
    */
   flyingCut(a: FlyingCutArgs): boolean {
-    if (crescentOf(this.stage, FOLDER).flying(a.at, a.rot, a.size, a.fade, null)) return true;
+    if (crescentOf(this.stage, FOLDER, FIRE.ramp).flying(a.at, a.rot, a.size, a.fade, null, FIRE.ramp)) return true;
     const thin = 1;
     const b = this.slashBody.spec.reset();
     b.x = a.at.x;

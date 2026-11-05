@@ -69,6 +69,8 @@ export class ElementStage {
   private readonly pointPools: FirePointPool[] = [];
   private readonly decalPools = new Map<string, GroundDecalPool>();
   private readonly hooks = new Map<ElementId, ElementHooks>();
+  private readonly updaters: ((dt: number) => void)[] = [];
+  private readonly resetters: (() => void)[] = [];
 
   constructor(opts: ElementStageOptions) {
     this.layer = opts.layer;
@@ -205,6 +207,12 @@ export class ElementStage {
     return d;
   }
 
+  /** A kit's own per-frame work (load time): run at the start of update, before the layers draw. */
+  everyFrame(fn: (dt: number) => void, reset?: () => void): void {
+    this.updaters.push(fn);
+    if (reset !== undefined) this.resetters.push(reset);
+  }
+
   /** Start of a frame, before the skills emit: last frame's one-frame cards go. */
   begin(): void {
     for (const p of this.sprites) p.dropOneFrame();
@@ -214,6 +222,7 @@ export class ElementStage {
   /** After the skills: every layer the kits made moves and uploads. */
   update(dt: number): void {
     this.time += dt;
+    for (const fn of this.updaters) fn(dt);
     for (const p of this.sprites) p.update(dt);
     for (const b of this.beamPools) b.update(dt);
     for (const r of this.ribbonPools) r.update(dt, this.camera);
@@ -234,6 +243,7 @@ export class ElementStage {
     for (const p of this.pointPools) p.clear();
     for (const d of this.decalPools.values()) d.clear();
     this.flipbooks.clear();
+    for (const fn of this.resetters) fn();
     this.rand.reseed(RAND_SEED);
   }
 }

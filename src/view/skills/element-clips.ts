@@ -31,6 +31,8 @@ import type {
 } from "./element-kit";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type FlipbookMode, type FlipbookPool, type FlipOptions } from "./flipbook";
+import { CrescentTrail, type TrailMatter } from "./crescent-trail";
+import type { SpritePool } from "./fxkit";
 import { CUT } from "./sword-grammar";
 import { glowOf, glowOfRamp, rimOf, type Rgb, type WeaponGlow } from "./weapons";
 
@@ -176,13 +178,19 @@ const CRESCENT_HALF: Readonly<Record<string, "left" | "right">> = {
 
 const SWEEP_GLSL = /* glsl */ `
 // A slash card (element-clips.ts sweepCard). vAlpha >= 2 marks a held card (key 2's flying crescent): shown whole, its
-// alpha vAlpha - 2. Sword (uSweep.w = 0): a symmetric crescent shown from its centre out to both horns over uSweep.x of
+// alpha vAlpha - 2 (an afterimage's eroded from its horn tips). Sword (uSweep.w = 0): a symmetric crescent shown from its centre out to both horns over uSweep.x of
 // its life, its head hot (uSweep.z wide), flaring until uSweep.y, then eroded from both horn tips toward the centre.
 // Sabre (uSweep.w = 1): shown from its origin (cell left) to a head running to its tip, eroded from the origin.
 float vxSweep() {
-  if (vAlpha >= 2.0) return vAlpha - 2.0;
-  float k = vAge.x;
   float n = vxNoise(vUv * vec2(9.0, 5.0) + vAge.z * 7.0);
+  if (vAlpha >= 2.0) {
+    // Held: an afterimage (shown < 0.95) is eroded from both horn tips, the dimmer the more.
+    float op = vAlpha - 2.0;
+    float he = max(0.0, 0.95 - op) * 0.65;
+    if (he <= 0.0) return op;
+    return op * (1.0 - smoothstep(1.0 - he * 1.15 - 0.02, 1.0 - he * 1.15 + 0.1, abs(vUv.x - 0.5) * 2.0 + (n - 0.5) * 0.18));
+  }
+  float k = vAge.x;
   float e = clamp((k - uSweep.y) / max(1e-3, 1.0 - uSweep.y), 0.0, 1.0);
   float x = uSweep.w > 0.5 ? vUv.x : abs(vUv.x - 0.5) * 2.0;
   float head = clamp(k / uSweep.x, 0.0, 1.0) * 1.1;
@@ -414,9 +422,21 @@ class ClipLayers {
   private shedAcc = 0;
   private waitAcc = 0;
   private lastDt = 1 / 60;
+  /** Key 2's flying crescent's afterimages, horn sparkles and soft trail. */
+  private readonly flight: CrescentFlight;
+  /** Glow dots for the horn sparkles while the element has no sparkle clip. */
+  private readonly motes: SpritePool;
+  /** The trail's bands from the element's ribbon clip (its light, and its body as ink under it). */
+  private ribbonRim: CrescentTrail | null = null;
+  private ribbonInk: CrescentTrail | null = null;
 
   constructor(private readonly stage: ElementStage, private readonly spec: ClipKitSpec, private readonly trail: { flame?: FlameTrail }) {
     this.lib = stage.flipbooks.library(spec.id);
+    this.motes = stage.pool(256, stage.textures.glow, "add", "camera", 13, { crop: 0.6 });
+    this.flight = new CrescentFlight(stage,
+      (x, y, z, rot, size, alpha) => this.heldCrescent(x, y, z, rot, size, alpha),
+      (x, y, z, vx, vy, vz) => this.hornSpark(x, y, z, vx, vy, vz));
+    this.flight.setTrails([trailOf(stripMatter(stage, spec.id, spec.ramp))]);
     this.lib.watch((id) => this.adopt(id));
     if (spec.stillSlash !== undefined) void this.stillSlash(spec.stillSlash);
     void loadSymStill(this.lib, spec.id);
@@ -442,6 +462,8 @@ class ClipLayers {
     if (e === null || !isRole(role)) return;
     if (this.spec.rejected?.some((md5) => e.meta.url.includes("?v=" + md5)) === true) return;
     const body = e.meta.layer === "body";
+    // The ribbon clip is the flying crescent's trail (its body as ink under its light).
+    if (role === "ribbon") this.ribbonTrail(e.meta, e.texture, body);
     // A body (smoke on white) belongs to the ground blows and the big bursts only, as wisps (owner ~20:50: never a flat
     // blob under a slash).
     if (body && role !== "groundImpact" && role !== "burst") return;
@@ -901,24 +923,65 @@ class ClipLayers {
    * held at the clip's peak frame (the whole crescent), across the line, this frame only.
    */
   flyingCut(a: FlyingCutArgs): boolean {
+    const width = this.heldCrescent(a.at.x, a.at.y, a.at.z, a.rot, a.size, a.fade);
+    if (width === 0) return false;
+    // What follows it: afterimages, horn sparkles, the soft trail (crescent-trail.md).
+    this.flight.fly(a.at.x, a.at.y, a.at.z, a.rot, a.size * 1.2 * this.spec.look.scale, width, a.fade, this.lastDt);
+    return true;
+  }
+
+  /** A crescent held whole this frame (`size` as the cut's args give it, `alpha` shown); its card's width, 0: no clip. */
+  private heldCrescent(x: number, y: number, z: number, rot: number, size: number, alpha: number): number {
     const p = this.pick("slash");
-    if (p === null) return false;
+    if (p === null) return 0;
     const [first, last] = span(p);
     const o = flip();
     o.life = ONE_FRAME;
     o.rate = 0;
     o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
-    o.rot = a.rot;
+    o.rot = rot;
     o.lift = 0.7;
     o.ground = 0;
     this.matter(p, o);
     o.cool = undefined;
     o.fadeOut = 0;
     if (this.spec.look.slashHeat !== undefined && this.modes.get(p) === "heat") o.intensity = this.spec.look.slashHeat;
-    // Held whole while it flies (the sweep card's flag: alpha + 2).
-    o.alpha = a.fade + 2;
-    this.spawn("slash", p, a.at.x, a.at.y, a.at.z, a.size * 1.2, o);
-    return true;
+    // Held whole (the sweep card's flag: alpha + 2).
+    o.alpha = alpha + 2;
+    this.spawn("slash", p, x, y, z, size * 1.2, o);
+    return size * 1.2 * this.spec.look.scale * p.meta!.aspect;
+  }
+
+  /** A sparkle shed off a flying crescent's horn: the sparkle clip, else a glow dot in the element's core. */
+  private hornSpark(x: number, y: number, z: number, vx: number, vy: number, vz: number): void {
+    const R = this.stage.rand;
+    if (this.sparkle(x, y, z, R.range(0.35, 0.6), R.range(0.5, 0.8), vy, 0, 0.9, vx, vz)) return;
+    const s = this.motes.spec.reset();
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.vx = vx;
+    s.vy = vy;
+    s.vz = vz;
+    s.drag = 1.4;
+    s.life = R.range(0.5, 0.85);
+    s.size0 = R.range(0.22, 0.36);
+    s.size1 = 0.05;
+    const c = this.spec.ramp.core;
+    const k = R.next() < 0.35 ? 1.8 : 1.2;
+    s.r = c[0] * k;
+    s.g = c[1] * k;
+    s.b = c[2] * k;
+    this.motes.emit();
+  }
+
+  /** The element's ribbon clip becomes the trail's bands (in place of the aura strip). */
+  private ribbonTrail(meta: FlipbookMeta, texture: THREE.Texture, body: boolean): void {
+    // Its band (a smoke body, its rims at both edges) spans most of the cell's height.
+    const base = { map: texture, cols: meta.cols, rows: meta.rows, frames: meta.frames, fps: meta.fps, core: this.spec.ramp.core, edge: this.spec.ramp.edge, body: this.spec.ramp.body, across: 0.7 };
+    if (body) this.ribbonInk ??= trailOf({ ...base, colours: "clip", blend: "ink", ink: this.spec.look.body ?? this.spec.look.heat.deep });
+    else this.ribbonRim ??= trailOf({ ...base, colours: "clip", blend: "add" });
+    if (this.ribbonRim !== null) this.flight.setTrails(this.ribbonInk !== null ? [this.ribbonInk, this.ribbonRim] : [this.ribbonRim]);
   }
 
   areaHit(a: AreaHitArgs): boolean {
@@ -1114,6 +1177,138 @@ class ClipLayers {
   }
 }
 
+/** The authored band a trail takes when its element has no ribbon clip: the sword aura's strips (aura/strips/). */
+const TRAIL_STRIP = (folder: string): string => (folder === "fire" ? "aura/strips/strip-fire-ribbon-v2.png" : "aura/strips/strip-metal-windsilk-v2.png");
+/** Afterimages behind a flying crescent: seconds back, opacity, size (crescent-trail.md §2). */
+const AFTERIMAGES: readonly (readonly [back: number, alpha: number, size: number])[] = [[0.04, 0.45, 0.92], [0.08, 0.25, 0.84], [0.12, 0.12, 0.76]];
+/** Sparkles a second off each horn while a crescent flies; how long the afterimages linger after it lands (s). */
+const HORN_RATE = 45;
+const LINGER_S = 0.25;
+/** A flying crescent's span across its card (share of the card's width) and its trail's width (share of the span). */
+const SPAN = 0.95;
+const TRAIL_W = 0.9;
+
+/**
+ * Key 2's flying crescent and what follows it (owner 05/11 ~22:40; docs/work/tasks/crescent-trail.md): the soft energy
+ * trail from its concave side (CrescentTrail), three afterimages 0.04 s apart at 0.45, 0.25 and 0.12, smaller and eroded from their horns, and two
+ * streams of sparkles shed from its horns; after it lands the afterimages fade over LINGER_S and the trail erodes from its
+ * tail. One per kit (and per CrescentClip), run by the stage every frame. No allocation per frame.
+ */
+export class CrescentFlight {
+  private readonly hx = new Float32Array(48);
+  private readonly hy = new Float32Array(48);
+  private readonly hz = new Float32Array(48);
+  private readonly hr = new Float32Array(48);
+  private readonly ht = new Float32Array(48);
+  private count = 0;
+  private size = 1;
+  private lastAt = -1e9;
+  private hornAcc = 0;
+  private trails: CrescentTrail[] = [];
+
+  constructor(private readonly stage: ElementStage,
+    private readonly draw: (x: number, y: number, z: number, rot: number, size: number, alpha: number) => void,
+    private readonly spark: (x: number, y: number, z: number, vx: number, vy: number, vz: number) => void) {
+    stage.everyFrame((dt) => this.frame(dt), () => this.clear());
+  }
+
+  /** The bands it trails (replaced when the element's ribbon clip arrives); they join the stage's layer. */
+  setTrails(trails: CrescentTrail[]): void {
+    for (const t of this.trails) t.mesh.removeFromParent();
+    this.trails = trails;
+    for (const t of trails) this.stage.layer.add(t.mesh);
+  }
+
+  get trailCount(): number {
+    return this.trails.length;
+  }
+
+  /** The ramp the "ramp" bands take (the element flying now; Metal's crescent stands in for others). */
+  colours(core: Rgb, edge: Rgb, body: Rgb): void {
+    for (const t of this.trails) t.colours(core, edge, body);
+  }
+
+  /** This frame's crescent: centre, screen angle, card height and width (m), its shown share. */
+  fly(x: number, y: number, z: number, rot: number, size: number, width: number, fade: number, dt: number): void {
+    const now = this.stage.time;
+    if (now - this.lastAt > 0.3) this.count = 0;
+    if (this.count === this.hx.length) {
+      for (const a of [this.hx, this.hy, this.hz, this.hr, this.ht]) a.copyWithin(0, 1);
+      this.count -= 1;
+    }
+    const i = this.count;
+    this.hx[i] = x;
+    this.hy[i] = y;
+    this.hz[i] = z;
+    this.hr[i] = rot;
+    this.ht[i] = now;
+    this.count = i + 1;
+    this.lastAt = now;
+    this.size = size;
+    // The card's axes in the world: x across the crescent, y toward its horns (its concave side).
+    const m = this.stage.camera.matrixWorld.elements;
+    const c = Math.cos(rot);
+    const sn = Math.sin(rot);
+    const xx = m[0]! * c + m[4]! * sn, xy = m[1]! * c + m[5]! * sn, xz = m[2]! * c + m[6]! * sn;
+    const yx = -m[0]! * sn + m[4]! * c, yy = -m[1]! * sn + m[5]! * c, yz = -m[2]! * sn + m[6]! * c;
+    const span = width * SPAN;
+    for (const t of this.trails) t.head(x + yx * size * 0.12, y + yy * size * 0.12, z + yz * size * 0.12, span * TRAIL_W * fade);
+    // Two streams of sparkles shed from its horns, drifting back.
+    this.hornAcc += 2 * HORN_RATE * this.stage.dens * dt;
+    const R = this.stage.rand;
+    let side = 1;
+    while (this.hornAcc >= 1) {
+      this.hornAcc -= 1;
+      side = -side;
+      const h = span * 0.46 * side;
+      this.spark(x + xx * h + yx * size * 0.22, y + xy * h + yy * size * 0.22, z + xz * h + yz * size * 0.22,
+        yx * 1.2 + R.range(-0.3, 0.3), yy * 1.2 + R.range(0, 0.5), yz * 1.2 + R.range(-0.3, 0.3));
+    }
+  }
+
+  /** The afterimages (and the trail's ageing), after the skills each frame. */
+  private frame(dt: number): void {
+    for (const t of this.trails) t.update(dt, this.stage.camera);
+    if (this.count < 2) return;
+    const now = this.stage.time;
+    // The stage's clock moved on by this frame's step since the crescent flew in it.
+    const idle = Math.max(0, now - dt - this.lastAt);
+    if (idle > LINGER_S) return;
+    const linger = 1 - idle / LINGER_S;
+    for (const [back, alpha, scale] of AFTERIMAGES) {
+      const at = now - back;
+      if (at < this.ht[0]!) continue;
+      let k = this.count - 1;
+      while (k > 0 && this.ht[k - 1]! > at) k -= 1;
+      const k0 = Math.max(0, k - 1);
+      const span = this.ht[k]! - this.ht[k0]!;
+      const w = span > 1e-6 ? Math.min(1, Math.max(0, (at - this.ht[k0]!) / span)) : 1;
+      this.draw(this.hx[k0]! + (this.hx[k]! - this.hx[k0]!) * w, this.hy[k0]! + (this.hy[k]! - this.hy[k0]!) * w,
+        this.hz[k0]! + (this.hz[k]! - this.hz[k0]!) * w, this.hr[k]!, this.size * scale, alpha * linger);
+    }
+  }
+
+  private clear(): void {
+    this.count = 0;
+    this.lastAt = -1e9;
+    this.hornAcc = 0;
+    for (const t of this.trails) t.clear();
+  }
+}
+
+/** A trail of `matter` laid on the stage (load time). */
+function trailOf(matter: TrailMatter): CrescentTrail {
+  return new CrescentTrail(matter, ORDER.slash - 1);
+}
+
+/**
+ * The sword aura's strip as a band (a trail's matter before the element's ribbon clip lands): Fire's flame strip in its
+ * own colours, the wind-silk strip coloured through the element's ramp.
+ */
+function stripMatter(stage: ElementStage, folder: string, r: ElementRamp): TrailMatter {
+  return { map: stage.texture(TRAIL_STRIP(folder)), cols: 1, rows: 1, frames: 1, fps: 1, colours: folder === "fire" ? "clip" : "ramp", core: r.core, edge: r.edge, body: r.body, blend: "add" };
+}
+
 /**
  * A folder's authored crescent (its manifest's `slash` clips) for kits that do not draw by role: Fire's own clip, and
  * Metal's for Metal and for any element whose slash clip has not landed (tinted to its colour). The owner (05/11 ~19:45,
@@ -1125,9 +1320,20 @@ export class CrescentClip {
   private turn = 0;
   /** Crescents drawn since the stage was made (the lab's count). */
   spawned = 0;
+  /** Key 2's flying crescent's afterimages, horn sparkles (glow dots in `sparkRgb`) and soft trail. */
+  private readonly flight: CrescentFlight;
+  private readonly motes: SpritePool;
+  private tint: THREE.Color | null = null;
+  private readonly sparkRgb: [number, number, number] = [1, 1, 1];
 
-  constructor(stage: ElementStage, readonly folder: string) {
+  constructor(private readonly stage: ElementStage, readonly folder: string, ramp?: ElementRamp) {
     const lib = stage.flipbooks.library(folder);
+    this.motes = stage.pool(192, stage.textures.glow, "add", "camera", 13, { crop: 0.6 });
+    this.flight = new CrescentFlight(stage,
+      (x, y, z, rot, size, alpha) => this.held(v.set(x, y, z), rot, size, alpha, this.tint),
+      (x, y, z, vx, vy, vz) => this.hornSpark(x, y, z, vx, vy, vz));
+    const r = ramp ?? { core: [1, 1, 1], edge: [0.8, 0.85, 0.9], body: [0.3, 0.45, 0.6], soot: [0, 0, 0] };
+    this.flight.setTrails([trailOf(stripMatter(stage, folder, r))]);
     lib.watch((id) => {
       const e = lib.get(id);
       if (e === null || e.meta.role !== "slash" || e.meta.layer === "body" || this.pools.some((p) => p.id === id)) return;
@@ -1173,10 +1379,49 @@ export class CrescentClip {
     return size * 1.2 * p.meta!.aspect;
   }
 
-  /** Key 2's flying crescent: the clip held at its peak frame (the whole crescent), `fade` shown, this frame only, never swept. */
-  flying(at: THREE.Vector3, rot: number, size: number, fade: number, tint: THREE.Color | null): boolean {
+  /**
+   * Key 2's flying crescent: the clip held at its peak frame (the whole crescent), `fade` shown, this frame only, never
+   * swept; its afterimages, horn sparkles and soft trail follow it in `ramp` (the element flying now).
+   */
+  flying(at: THREE.Vector3, rot: number, size: number, fade: number, tint: THREE.Color | null, ramp?: ElementRamp): boolean {
+    const width = this.held(at, rot, size, fade, tint);
+    if (width === 0) return false;
+    this.tint = tint;
+    if (ramp !== undefined) {
+      this.flight.colours(ramp.core, ramp.edge, ramp.body);
+      this.sparkRgb[0] = ramp.core[0];
+      this.sparkRgb[1] = ramp.core[1];
+      this.sparkRgb[2] = ramp.core[2];
+    }
+    this.flight.fly(at.x, at.y, at.z, rot, size * 1.2, width, fade, 1 / 60);
+    return true;
+  }
+
+  /** A sparkle shed off a flying crescent's horn: a glow dot in the element's core. */
+  private hornSpark(x: number, y: number, z: number, vx: number, vy: number, vz: number): void {
+    const R = this.stage.rand;
+    const s = this.motes.spec.reset();
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.vx = vx;
+    s.vy = vy;
+    s.vz = vz;
+    s.drag = 1.4;
+    s.life = R.range(0.5, 0.85);
+    s.size0 = R.range(0.22, 0.36);
+    s.size1 = 0.05;
+    const k = R.next() < 0.35 ? 1.8 : 1.2;
+    s.r = this.sparkRgb[0] * k;
+    s.g = this.sparkRgb[1] * k;
+    s.b = this.sparkRgb[2] * k;
+    this.motes.emit();
+  }
+
+  /** The crescent held whole this frame; its card's width (m), 0 when the folder has no slash clip. */
+  private held(at: THREE.Vector3, rot: number, size: number, fade: number, tint: THREE.Color | null): number {
     const p = this.pick();
-    if (p === null) return false;
+    if (p === null) return 0;
     const [first, last] = span(p);
     const o = flip();
     o.life = ONE_FRAME;
@@ -1188,7 +1433,7 @@ export class CrescentClip {
     o.alpha = fade + 2;
     p.spawn(at, size * 1.2, o);
     this.spawned += 1;
-    return true;
+    return size * 1.2 * p.meta!.aspect;
   }
 
   private finish(o: FlipOptions, rot: number, tint: THREE.Color | null): void {
@@ -1202,12 +1447,12 @@ export class CrescentClip {
 
 const CRESCENTS = new WeakMap<ElementStage, Map<string, CrescentClip>>();
 
-/** The authored crescent of `folder` on `stage` (made on first use; load time). */
-export function crescentOf(stage: ElementStage, folder: string): CrescentClip {
+/** The authored crescent of `folder` on `stage` (made on first use; load time), its trail in `ramp`. */
+export function crescentOf(stage: ElementStage, folder: string, ramp?: ElementRamp): CrescentClip {
   let byFolder = CRESCENTS.get(stage);
   if (byFolder === undefined) CRESCENTS.set(stage, (byFolder = new Map()));
   let c = byFolder.get(folder);
-  if (c === undefined) byFolder.set(folder, (c = new CrescentClip(stage, folder)));
+  if (c === undefined) byFolder.set(folder, (c = new CrescentClip(stage, folder, ramp)));
   return c;
 }
 

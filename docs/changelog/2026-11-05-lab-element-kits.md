@@ -39,6 +39,11 @@ Thiết kế theo: `docs/games/tu-tien/skills/ELEMENT_LAYER.md` §1–3 (vũ kh�
 | `9f173b8` … `932de69` | Mỗi hệ một commit: Phong, Băng, Ám, Quang, Mộc, Thổ, Độc, Huyết, Không gian, Tinh tú |
 | `c154f35` | Phím **8** của lab: cột trụ và tuyệt kỹ (`art-src/lab/vfx/ult/`) phát thành lớp video trên sân, đúng góc camera chơi, chưa nối vào sim (`src/lab/showcase.ts`, `__lab.showcase(id?)`) |
 
+## Vệt năng lượng sau lưỡi liềm phím 2 (anh, 05/11 ~22:40; `docs/work/tasks/crescent-trail.md`)
+
+- `crescent-trail.ts` (`CrescentTrail`): dải mềm quay về camera, bắt đầu từ lòng lưỡi liềm, rộng khoảng 85 % sải lưỡi liềm rồi thon về 0 sau 5 m; mép mờ dần trên 45 % nửa bề rộng, không có mép cứng; hào quang giữ ≤ 0,9 mỗi kênh, chỉ một lõi mảnh sáng hơn. Chất của dải là clip `ribbon` của hệ (Ám: thân khói đen + viền đỏ thẫm bảng A), chưa có thì là dải của hào quang kiếm (`aura/strips/`: Hỏa dải lửa giữ màu gốc, các hệ khác dải lụa gió tô theo dải màu của hệ). Lưỡi liềm chạm đích thì dải mòn dần từ đuôi trong 0,5 s.
+- `CrescentFlight` (`element-clips.ts`): 3 bóng mờ cách nhau 0,04 s, độ đậm 0,45 / 0,25 / 0,12, nhỏ dần và mòn từ hai đầu sừng; hai dòng lấp lánh rơi từ hai sừng (clip `sparkle` của hệ, chưa có thì chấm sáng màu lõi). `ElementStage.everyFrame` chạy chúng mỗi khung.
+
 ## Kiểm
 
 - `tsc --noEmit -p .` sạch.

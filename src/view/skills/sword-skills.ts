@@ -2450,7 +2450,7 @@ export class SwordSkillFx {
       if (hook(a)) return;
     }
     // Metal's authored crescent flying (tinted for an element without its own), held whole; else the sprite crescent.
-    if (this.metalCut?.flying(at, rot, size, fade, this.kit.id === "metal" ? null : this.cutTint) === true) return;
+    if (this.metalCut?.flying(at, rot, size, fade, this.kit.id === "metal" ? null : this.cutTint, this.kit.ramp) === true) return;
     const thin = 1;
     const s = this.slash.spec.reset();
     s.x = at.x;
