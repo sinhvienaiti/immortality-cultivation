@@ -36,7 +36,7 @@
  * DRAGON_FIRE_DIAGNOSIS); only thin cores are HDR. No allocation per frame.
  */
 import * as THREE from "three";
-import type { AftermathArgs, BladeLook, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
+import type { AftermathArgs, BladeLook, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, FlyingCutArgs, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
 import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions, type FlipbookPlayer } from "./flipbook";
@@ -1135,6 +1135,34 @@ class FireLayers {
     return true;
   }
 
+  /** Key 2's flying crescent (owner 05/11 ~19:45): the molten crescent of `cut`, whole, this frame only. */
+  flyingCut(a: FlyingCutArgs): boolean {
+    const b = this.slashBody.spec.reset();
+    b.x = a.at.x;
+    b.y = a.at.y;
+    b.z = a.at.z;
+    b.rot = a.rot;
+    b.life = -1;
+    b.size0 = b.size1 = a.size * 1.6;
+    b.r = CUT_BODY[0];
+    b.g = CUT_BODY[1];
+    b.b = CUT_BODY[2];
+    b.a = 0.95 * a.fade;
+    this.slashBody.emit();
+    const s = this.slash.spec.reset();
+    s.x = a.at.x;
+    s.y = a.at.y;
+    s.z = a.at.z;
+    s.rot = a.rot;
+    s.life = -1;
+    s.size0 = s.size1 = a.size * 1.6;
+    s.r = 0.72 * a.fade;
+    s.g = 0.4 * a.fade;
+    s.b = 0.1 * a.fade;
+    this.slash.emit();
+    return true;
+  }
+
   aftermath(a: AftermathArgs): boolean {
     if (a.slot === "k1" && FIRE_LAB.impact === "brush" && this.brush.ready) {
       // The brushfire burns down to embers on its own (owner 04/11): no code scorch, no ground fire; the wisps and the rising embers stay.
@@ -1522,6 +1550,7 @@ class FireLayers {
         travel: (a) => this.travel(a),
         impact: (a) => this.impact(a),
         cut: (a) => this.cut(a),
+        flyingCut: (a) => this.flyingCut(a),
         aftermath: (a) => this.aftermath(a),
         death: (a) => this.death(a),
         frame: (dt) => this.frame(dt),

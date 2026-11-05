@@ -339,6 +339,22 @@ export interface CutArgs {
   pal: WeaponGlow;
 }
 
+/**
+ * A crescent flying along a line, drawn this frame only (Nhất Tuyến, key 2; owner 05/11 ~19:45: the skill's main shape
+ * is the designed crescent, not a chain of small stamps).
+ */
+export interface FlyingCutArgs {
+  slot: SwordSlot;
+  /** Its centre this frame, its screen angle (across its flight) and its size (m, the cut's scale already in). */
+  at: THREE.Vector3;
+  rot: number;
+  size: number;
+  /** Flight progress (0 at the hand … 1 where it lands) and how much of it shows (1 whole … 0 gone). */
+  u: number;
+  fade: number;
+  pal: WeaponGlow;
+}
+
 export interface AreaHitArgs {
   slot: SwordSlot;
   at: THREE.Vector3;
@@ -399,6 +415,8 @@ export interface SwordHooks {
   travel?(a: TravelArgs): boolean;
   /** Impact: a full hit on a beast (impact, basicImpact). */
   impact?(a: ImpactArgs): boolean;
+  /** Travel: a crescent flying along a line this frame (flyingCut: Nhất Tuyến's main shape). */
+  flyingCut?(a: FlyingCutArgs): boolean;
   /** Impact: the crescent cut across a blow (slashAt). */
   cut?(a: CutArgs): boolean;
   /** Impact: one light hit inside an area blow (strikeLight). */

@@ -332,6 +332,57 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     }
   });
 
+  it("draws key 2 as one big designed crescent flying the line, then one big cut at its end; no chain of small crescents (owner ~19:45)", () => {
+    const cuts: number[] = [];
+    const flights: { size: number; u: number; x: number; z: number }[] = [];
+    const kit: ElementKit = {
+      ...elementById("water")!,
+      id: "water",
+      attach: () => ({
+        sword: {
+          cut: (a) => (cuts.push(a.size), true),
+          flyingCut: (a) => (flights.push({ size: a.size, u: a.u, x: a.at.x, z: a.at.z }), true),
+        },
+      }),
+    };
+    const cam = camera();
+    const layer = new THREE.Group();
+    const fx = new SwordSkillFx(swordHost(field(12), layer, cam), sheets(), "high");
+    fx.setElement(kit, new ElementStage({ layer, camera: cam, quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" }));
+    fx.cast("k2", 0, -10);
+    for (let i = 0; i < 60; i += 1) fx.update(1 / 60);
+    // One crescent a frame through the flight, growing from the hand to the line's end, at least the 1.8× cut size.
+    expect(flights.length).toBeGreaterThanOrEqual(8);
+    expect(flights[0]!.u).toBeLessThan(0.3);
+    expect(flights[flights.length - 1]!.u).toBeGreaterThan(0.8);
+    for (let i = 1; i < flights.length; i += 1) expect(flights[i]!.u).toBeGreaterThanOrEqual(flights[i - 1]!.u);
+    for (const f of flights) expect(f.size).toBeGreaterThanOrEqual(1.8 * CUT.scale - 1e-6);
+    // The beasts on the line are struck, yet only one cut: the big crescent where the line ends.
+    expect(cuts).toEqual([2.0 * CUT.scale]);
+  });
+
+  it("draws Metal's key 2 crescent itself when the element has no flying cut (one sprite pair a frame, never a stamp chain)", () => {
+    const cam = camera();
+    const layer = new THREE.Group();
+    const tex = sheets();
+    const fxSlashTex = tex.slash;
+    const fx = new SwordSkillFx(swordHost(field(12), layer, cam), tex, "high");
+    fx.cast("k2", 0, -10);
+    let maxSlash = 0;
+    for (let i = 0; i < 60; i += 1) {
+      fx.update(1 / 60);
+      layer.traverse((o) => {
+        const m = o as THREE.Mesh;
+        const mat = m.material as THREE.ShaderMaterial | undefined;
+        const g = m.geometry as THREE.InstancedBufferGeometry | undefined;
+        if (o.visible && g?.isInstancedBufferGeometry === true && mat?.uniforms?.map?.value === fxSlashTex) maxSlash = Math.max(maxSlash, g.instanceCount);
+      });
+    }
+    // The flying pair (core and rim) and the big end cut's pair: never the old 9 + 1-per-beast stamps (≥ 20 sprites).
+    expect(maxSlash).toBeGreaterThan(0);
+    expect(maxSlash).toBeLessThanOrEqual(4);
+  });
+
   it("takes the ribbon clip as the flight trail once it arrives", () => {
     const kit = elementById("thunder")!;
     const stage = new ElementStage({ layer: new THREE.Group(), camera: camera(), quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" });

@@ -25,7 +25,7 @@
 import * as THREE from "three";
 import type {
   AftermathArgs, AreaBurstArgs, AreaHitArgs, BladeLook, ChargeFrameArgs, ChargeKeyArgs, ClipRole, CutArgs, DeathArgs,
-  ElementHooks, ElementId, ElementKit, ElementRamp, FlameTrail, FoeStatus, ImpactArgs, LaunchArgs, ReleaseArgs,
+  ElementHooks, ElementId, ElementKit, ElementRamp, FlameTrail, FlyingCutArgs, FoeStatus, ImpactArgs, LaunchArgs, ReleaseArgs,
   ScreenAccent, SigilLook, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSparkArgs,
   StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TrailLook, TravelArgs,
 } from "./element-kit";
@@ -638,6 +638,28 @@ class ClipLayers {
     return true;
   }
 
+  /**
+   * Key 2's main shape (owner 05/11 ~19:45): the authored crescent, one big card flying with the blade along its line,
+   * held at the clip's peak frame (the whole crescent), across the line, this frame only.
+   */
+  flyingCut(a: FlyingCutArgs): boolean {
+    const p = this.pick("slash");
+    if (p === null) return false;
+    const [first, last] = span(p);
+    const o = flip();
+    o.life = ONE_FRAME;
+    o.rate = 0;
+    o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
+    o.rot = a.rot;
+    o.lift = 0.7;
+    o.ground = 0;
+    this.matter(p, o);
+    o.fadeOut = 0;
+    o.alpha = a.fade;
+    this.spawn("slash", p, a.at.x, a.at.y, a.at.z, a.size * 1.2, o);
+    return true;
+  }
+
   areaHit(a: AreaHitArgs): boolean {
     const p = this.pick("impact");
     if (p === null) return false;
@@ -808,6 +830,7 @@ class ClipLayers {
         travel: (a) => this.travel(a),
         impact: (a) => this.impact(a),
         cut: (a) => this.cut(a),
+        flyingCut: (a) => this.flyingCut(a),
         areaHit: (a) => this.areaHit(a),
         areaBurst: (a) => this.areaBurst(a),
         aftermath: (a) => this.aftermath(a),

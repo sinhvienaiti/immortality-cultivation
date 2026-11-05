@@ -46,7 +46,7 @@
  */
 import * as THREE from "three";
 import { BladeSet, loadSwordModels, overlayModel } from "./blades";
-import type { AftermathArgs, AreaBurstArgs, AreaHitArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementKit, ImpactArgs, LaunchArgs, ReleaseArgs, SwordHooks, SwordTextureLayer, TravelArgs } from "./element-kit";
+import type { AftermathArgs, AreaBurstArgs, AreaHitArgs, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementKit, FlyingCutArgs, ImpactArgs, LaunchArgs, ReleaseArgs, SwordHooks, SwordTextureLayer, TravelArgs } from "./element-kit";
 import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
@@ -225,6 +225,8 @@ const FLIGHT_TURN_S = 0.09;
 /** After the hit a flown blade stands in the wound, then folds away (s). */
 const FLIGHT_HOLD_S = 0.08;
 const FLIGHT_FOLD_S = 0.2;
+/** Nhất Tuyến: its crescent's size before CUT.scale (the flying one and the big cut it lands as at the line's end). */
+const K2_CRESCENT = 2.0;
 /** Nhất Tuyến: the blade runs past the line's end by this much (m) and comes to rest there. */
 const K2_OVERSHOOT_M = 0.5;
 /**
@@ -640,6 +642,7 @@ export class SwordSkillFx {
   private readonly aTravel: TravelArgs = { slot: "auto", blade: 0, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 1, tipM: 0, u: 0, dt: 0, pal: START_GLOW, aura: false };
   private readonly aImpact: ImpactArgs = { slot: "auto", at: new THREE.Vector3(), scale: 1, dx: 0, dz: -1, power: 0, big: false, pal: START_GLOW };
   private readonly aCut: CutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, pal: START_GLOW };
+  private readonly aFly: FlyingCutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, u: 0, fade: 1, pal: START_GLOW };
   /** Where the current cut is drawn (slashAt: below the hit as it grows). */
   private readonly cutAt = new THREE.Vector3();
   private readonly aArea: AreaHitArgs = { slot: "auto", at: new THREE.Vector3(), dx: 0, dz: -1, power: 0, marked: false, pal: START_GLOW };
@@ -2410,6 +2413,46 @@ export class SwordSkillFx {
     this.slash.emit();
   }
 
+  /**
+   * A crescent flying along a line, this frame only (Nhất Tuyến's main shape, owner 05/11 ~19:45): the element's
+   * (its flyingCut hook: its slash clip, Fire's molten crescent), else Metal's crescent in the slot's colours, held
+   * whole (no grow) at `size` (m, × CUT.scale), `fade` of it shown, `u` of its flight done.
+   */
+  private flyingCutAt(at: THREE.Vector3, rot: number, base: number, u: number, fade: number): void {
+    const size = base * CUT.scale;
+    const hook = this.hooks.flyingCut;
+    if (hook !== undefined) {
+      const a = this.aFly;
+      a.slot = this.palSlot;
+      a.at.copy(at);
+      a.rot = rot;
+      a.size = size;
+      a.u = u;
+      a.fade = fade;
+      a.pal = this.pal;
+      if (hook(a)) return;
+    }
+    const s = this.slash.spec.reset();
+    s.x = at.x;
+    s.y = at.y;
+    s.z = at.z;
+    s.rot = rot;
+    s.life = -1;
+    s.size0 = s.size1 = size * 1.6;
+    this.col(s, this.pal.core, 0.85 * fade);
+    this.slash.emit();
+    const h = this.slash.spec.reset();
+    h.x = at.x;
+    h.y = at.y;
+    h.z = at.z;
+    h.rot = rot;
+    h.life = -1;
+    h.size0 = h.size1 = size * 2.2;
+    this.col(h, this.pal.rim, fade);
+    h.a = 0.8 * fade;
+    this.slash.emit();
+  }
+
   /** Screen angle of a crescent across a blow along ground direction (dx, dz): the camera looks north (−z). */
   private cutAngle(dx: number, dz: number): number {
     return Math.atan2(-dz, dx) + Math.PI / 2;
@@ -3605,6 +3648,9 @@ export class SwordSkillFx {
     // on (the 2.7 m star vanished in one frame at the line's end).
     const tip = 1 - smooth01((k.t - T_K2_HIT) / 0.12);
     if (tip > 0.01) this.twinkle(hx + k.dx * 1.9, hy, hz + k.dz * 1.9, 2.0, -1, tip, this.time * 2.5);
+    // The main shape: one big crescent flying with the blade, across the line, from the hand to the line's end (it
+    // lands there as the big cut at the hit tick).
+    if (k.t < T_K2_HIT) this.flyingCutAt(this.v.set(hx + k.dx * 1.2, hy, hz + k.dz * 1.2), this.cutAngle(k.dx, k.dz), K2_CRESCENT, s / L, 1);
     if (k.t < T_K2_HIT + 0.02) {
       // The air splits to both sides behind the tip.
       k.acc += K2_SPLIT_RATE * this.dens * dt;
@@ -3692,18 +3738,18 @@ export class SwordSkillFx {
         const sx = -k.dz * Math.sign(side || 1);
         const sz = k.dx * Math.sign(side || 1);
         this.v.set(T.x(b), T.midY(b), T.z(b));
-        this.slashAt(this.v, this.cutAngle(k.dx, k.dz), 1.6);
         this.strike(b, T.x(b) - sx, T.z(b) - sz, 0.9, 0.95, false);
       }
-      // The after-cut: the whole line ignites at once, crescent cuts and glints all along it, and the far end bursts.
+      // The after-cut: the whole line ignites at once, glints all along it (radiance, never a chain of small
+      // crescents: owner 05/11 ~19:45), and the flying crescent lands at the far end as the big cut, with a burst.
       this.beamAt(k.ax, 0.9, k.az, k.dx, 0, k.dz, 14, 0.7, 0.2, 1.6, 0.9, 0.03, 0.06, 0);
-      const cuts = this.n(9);
-      for (let i = 1; i <= cuts; i += 1) {
-        const t = i / (cuts + 1);
-        this.v.set(k.ax + (k.bx - k.ax) * t, 0.9, k.az + (k.bz - k.az) * t);
-        this.twinkle(this.v.x, 0.9, this.v.z, 1.1, 0.2, 0.9);
-        this.slashAt(this.v, this.cutAngle(k.dx, k.dz) + this.rand.range(-0.25, 0.25), 0.9);
+      const glints = this.n(9);
+      for (let i = 1; i <= glints; i += 1) {
+        const t = i / (glints + 1);
+        this.twinkle(k.ax + (k.bx - k.ax) * t, 0.9, k.az + (k.bz - k.az) * t, 1.1, 0.2, 0.9);
       }
+      this.v.set(k.bx, 0.9, k.bz);
+      this.slashAt(this.v, this.cutAngle(k.dx, k.dz), K2_CRESCENT);
       this.v.set(k.bx, 0.9, k.bz);
       this.burstAt(k.bx, 0.9, k.bz, 4, 1);
       this.groundShockAt(k.bx, k.bz, 0.3, 2.2, 0.35, 0.7);
