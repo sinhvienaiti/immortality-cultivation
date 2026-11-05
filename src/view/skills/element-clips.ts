@@ -97,6 +97,11 @@ export interface ClipKitSpec {
   readonly trailCore: Rgb;
   readonly sound: string;
   readonly look: ClipLook;
+  /**
+   * Atlases the owner turned down (their manifest md5): a manifest that still lists one is ignored for it, so the base
+   * layer draws until its redraw (a new atlas, a new md5) lands.
+   */
+  readonly rejected?: readonly string[];
 }
 
 /** Where a one-shot's peak sits in its frames when its manifest gives none (share). */
@@ -214,6 +219,7 @@ class ClipLayers {
     const e = this.lib.get(id);
     const role = e?.meta.role;
     if (e === null || !isRole(role)) return;
+    if (this.spec.rejected?.some((md5) => e.meta.url.includes("?v=" + md5)) === true) return;
     const body = e.meta.layer === "body";
     const lists = body ? this.bodies : this.pools;
     const list = lists.get(role) ?? [];

@@ -188,7 +188,8 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
       new THREE.Color().setRGB(r.body[0], r.body[1], r.body[2]).getHSL(hsl, THREE.SRGBColorSpace);
       const h = hsl.h * 360;
       expect(Math.abs(h - 169)).toBeGreaterThan(25);
-      expect(Math.min(h, 360 - h)).toBeGreaterThan(15);
+      // Apart from the enemy's warning red #FF4A4A (D54) by hue, or by being far darker (Dark's crimson, palette A).
+      expect(Math.min(h, 360 - h) > 15 || hsl.l < 0.3, `${id} body hue ${h.toFixed(0)}°, lightness ${hsl.l.toFixed(2)}`).toBe(true);
     }
   });
 
@@ -296,6 +297,26 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
       expect(rise).toBeLessThan((c.size - 1.5) / 2);
       expect(drop).toBeGreaterThan(0);
     }
+  });
+
+  it("draws Dark in palette A (black, ember-crimson rims; owner 19:20): no purple or violet, and never the v1 purple atlases", () => {
+    const hsl = { h: 0, s: 0, l: 0 };
+    const dark = elementById("dark")!;
+    for (const c of [dark.ramp.core, dark.ramp.edge, dark.ramp.body, dark.ramp.soot, dark.stream.halo, dark.stream.core]) {
+      new THREE.Color().setRGB(c[0], c[1], c[2]).getHSL(hsl, THREE.SRGBColorSpace);
+      const h = hsl.h * 360;
+      // Reds and embers only (330°–40°), never 250°–320° (violet, purple).
+      expect(h < 40 || h > 330 || hsl.s < 0.1, `hue ${h.toFixed(0)}°`).toBe(true);
+    }
+    const stage = new ElementStage({ layer: new THREE.Group(), camera: camera(), quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" });
+    stage.hooksOf(dark);
+    const lib = stage.flipbooks.library("dark");
+    const old = parseFlipbookManifest({ flipbooks: { "dark-slash-arc": { file: "dark-slash-arc.atlas.png", cols: 4, rows: 4, md5: "4b87786fec45844738b4a6b32ca6e76b", role: "slash", layer: "rim" } } }, "/v/dark/");
+    lib.add(old.get("dark-slash-arc")!, new THREE.Texture());
+    expect(clipAudit(stage, "dark")!.pools.slash).toBe(0);
+    const redraw = parseFlipbookManifest({ flipbooks: { "dark-slash-arc": { file: "dark-slash-arc.atlas.png", cols: 4, rows: 4, md5: "0123456789abcdef0123456789abcdef", role: "slash", layer: "rim" } } }, "/v/dark/");
+    lib.add(redraw.get("dark-slash-arc")!, new THREE.Texture());
+    expect(clipAudit(stage, "dark")!.pools.slash).toBe(1);
   });
 
   it("takes the ribbon clip as the flight trail once it arrives", () => {
