@@ -88,9 +88,13 @@ function darkKit(R: DarkRamp, name: string): ElementKit {
     trailCore: k3(CORE, 2),
     sound: "dark",
     rejected: PURPLE_V1,
+    // The owner's palette-A crescent (Codex 299) as its slash until dark-slash-arc-a's video lands (owner ~20:50).
+    stillSlash: "/art-src/lab/firefly-sprint-2026-11-05/stills/skills/dark-slash-arc-a.v1-try2.png",
     look: {
       modes: { charge: "heat", release: "heat", impact: "heat", burst: "heat", groundImpact: "heat", slash: "heat", groundMark: "heat", sheath: "heat" },
-      heat: { soot: SOOT, deep: DEEP, mid: MID, core: CORE },
+      // Most of Dark reads black: the heat field's body runs from a crimson-black up to the ember rim, only its
+      // brightest line ember white (owner 19:20 palette A; ~20:50 the slash read as red paint).
+      heat: { soot: SOOT, deep: k3(DEEP, 0.35), mid: RIM, core: CORE },
       occlude: 0.9,
       gain: 1,
       light: R.rim,
@@ -99,6 +103,8 @@ function darkKit(R: DarkRamp, name: string): ElementKit {
       linger: 1.2,
       // Its smoke filmed on white (the "body" layers, lab-flipbooks 18:52): a near-black ink under the rim's light.
       body: lin(R.ink),
+      // The still's dim smoke falls in the soot band (black matter), its edge crimson, only its brightest line ember white.
+      slashHeat: 0.7,
     },
   });
 }

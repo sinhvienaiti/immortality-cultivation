@@ -73,6 +73,8 @@ export interface ClipLook {
    * its top); absent: the heat ramp's deep end.
    */
   readonly body?: Rgb;
+  /** A heat-mode slash's heat gain (Dark's still: its dim smoke into the soot band, black; its edge crimson to ember). */
+  readonly slashHeat?: number;
 }
 
 /** What an element kit made of clips is (the ElementKit fields; the trail is built from `trailW` and the heat ramp). */
@@ -107,10 +109,17 @@ export interface ClipKitSpec {
    * layer draws until its redraw (a new atlas, a new md5) lands.
    */
   readonly rejected?: readonly string[];
+  /**
+   * An approved still to draw as its slash (a single frame, swept, held and eroded like a clip) until the folder's
+   * manifest has a slash clip (Dark: its palette-A crescent, Codex 299, before its video lands).
+   */
+  readonly stillSlash?: string;
 }
 
 /** Where a one-shot's peak sits in its frames when its manifest gives none (share). */
 const PEAK = 0.35;
+/** A body layer's opacity: smoke wisps that thin and erode, never a flat blob (owner ~20:50). */
+const BODY_ALPHA = 0.55;
 /** From this share of its life a matter clip ("heat", "rgba") burns out by erosion. */
 const COOL = 0.55;
 
@@ -140,6 +149,78 @@ const isRole = (r: string | undefined): r is ClipRole => r !== undefined && (CLI
  * height. Adapted from element-fire.ts groundCard (its
  * strip variant left out).
  */
+/**
+ * Every slash is presented as a slash, not a stamp (owner 05/11 ~20:50: "bạn có hiểu dạng vệt chém không"): revealed by
+ * a sweep from its origin to its tip in SLASH.sweep s with a hot head running along it, held SLASH.hold s, then eroded
+ * from the origin toward the tip over SLASH.erode s; the clip is held at its peak frame (the whole crescent) while the
+ * sweep, the hold and the erosion animate it. Its origin is the cell's left, its tip the right (the slash stills).
+ */
+export const SLASH = { sweep: 0.1, hold: 0.15, erode: 0.7 } as const;
+const SLASH_LIFE = SLASH.sweep + SLASH.hold + SLASH.erode;
+
+const SWEEP_GLSL = /* glsl */ `
+// A slash card (element-clips.ts sweepCard): shown from its origin (cell left) to a head running to its tip (cell right)
+// over uSweep.x of its life, the head hot (uSweep.z wide); from uSweep.y of its life it erodes from the origin toward the
+// tip, broken by noise. vAlpha >= 2 marks a held card (key 2's flying crescent): no sweep, its alpha vAlpha - 2.
+float vxSweep() {
+  if (vAlpha >= 2.0) return vAlpha - 2.0;
+  float k = vAge.x;
+  float x = vUv.x;
+  float head = clamp(k / uSweep.x, 0.0, 1.0) * 1.1;
+  float shown = 1.0 - smoothstep(head - 0.03, head + 0.03, x);
+  float hot = smoothstep(head - uSweep.z, head, x) * shown * (1.0 - smoothstep(0.8, 1.0, k / uSweep.x));
+  float e = clamp((k - uSweep.y) / max(1e-3, 1.0 - uSweep.y), 0.0, 1.0);
+  float n = vxNoise(vUv * vec2(9.0, 5.0) + vAge.z * 7.0);
+  float kept = smoothstep(e * 1.2 - 0.1, e * 1.2 + 0.02, x + (n - 0.5) * 0.2);
+  return vAlpha * shown * kept * (1.0 + 1.8 * hot);
+}
+`;
+
+/** Gives a slash pool the sweep, hold and erosion (SLASH; its fragment's vAlpha through vxSweep). */
+function sweepCard(pool: FlipbookPool): void {
+  const material = pool.mesh.material;
+  const uSweep = { value: new THREE.Vector4(SLASH.sweep / SLASH_LIFE, (SLASH.sweep + SLASH.hold) / SLASH_LIFE, 0.16, 0) };
+  material.uniforms.uSweep = uSweep;
+  material.customProgramCacheKey = () => "element-sweep-card";
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uSweep = uSweep;
+    let f = shader.fragmentShader.replace(/\bvAlpha\b/g, "vAlphaS");
+    f = f.replace("varying float vAlphaS;", "varying float vAlpha;\nuniform vec4 uSweep;\nfloat vAlphaS;");
+    const main = "void main() {";
+    const at = f.indexOf(main);
+    if (at < 0 || f.indexOf(main, at + 1) >= 0) throw new Error("[element-clips] sweep-card fragment anchor missing");
+    shader.fragmentShader = f.slice(0, at) + SWEEP_GLSL + main + "\n  vAlphaS = vxSweep();" + f.slice(at + main.length);
+  };
+}
+
+/** A slash's options on `o`: its life the sweep, hold and erosion, held at the clip's peak frame (the whole crescent). */
+function slashTiming(p: FlipbookPool, o: FlipOptions): FlipOptions {
+  const [first, last] = span(p);
+  o.life = SLASH_LIFE;
+  o.rate = 0;
+  o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
+  return o;
+}
+
+/**
+ * Sparkles shed along a slash's arc as its head passes: `n` points along the card's chord (its screen x turned by
+ * `rot`, `width` m), from origin to tip, each calling `at(x, y, z, delay)` with its delay in the sweep.
+ */
+export function alongSlash(camera: THREE.Camera, cx: number, cy: number, cz: number, rot: number, width: number, n: number,
+  at: (x: number, y: number, z: number, delay: number, u: number) => void): void {
+  const m = camera.matrixWorld.elements;
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  const ax = m[0]! * c + m[4]! * s;
+  const ay = m[1]! * c + m[5]! * s;
+  const az = m[2]! * c + m[6]! * s;
+  for (let i = 0; i < n; i += 1) {
+    const u = (i + 0.5) / n;
+    const d = (u - 0.5) * width * 0.8;
+    at(cx + ax * d, cy + ay * d, cz + az * d, u * SLASH.sweep, u);
+  }
+}
+
 function layFlat(pool: FlipbookPool): void {
   const material = pool.mesh.material;
   material.customProgramCacheKey = () => "element-ground-card";
@@ -217,6 +298,28 @@ class ClipLayers {
   constructor(private readonly stage: ElementStage, private readonly spec: ClipKitSpec, private readonly trail: { flame?: FlameTrail }) {
     this.lib = stage.flipbooks.library(spec.id);
     this.lib.watch((id) => this.adopt(id));
+    if (spec.stillSlash !== undefined) void this.stillSlash(spec.stillSlash);
+  }
+
+  /** Registers the kit's still as its slash clip (one frame) when the loaded manifest has none (browser only). */
+  private async stillSlash(url: string): Promise<void> {
+    if (typeof location === "undefined" || !/^https?:$/.test(location.protocol)) return;
+    await this.lib.load();
+    if (this.lib.declares().some((m) => m.role === "slash")) return;
+    try {
+      const texture = await new THREE.TextureLoader().loadAsync(url);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.generateMipmaps = true;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.premultiplyAlpha = false;
+      const img = texture.image as { width?: number; height?: number } | undefined;
+      const aspect = img?.width !== undefined && img.height !== undefined && img.height > 0 ? img.width / img.height : 16 / 9;
+      this.lib.add({ id: this.spec.id + "-slash-still", url, cols: 1, rows: 1, frames: 1, fps: 24, loop: false, mode: "fire",
+        aspect, pivot: [0.5, 0.5], start: 0, heading: 0, role: "slash" }, texture);
+    } catch (error) {
+      console.warn("[element-clips] " + this.spec.id + ": the slash still did not load", error);
+    }
   }
 
   /** A clip of the folder arrived: its role's pool is made and set up (load time, once per clip). */
@@ -226,6 +329,9 @@ class ClipLayers {
     if (e === null || !isRole(role)) return;
     if (this.spec.rejected?.some((md5) => e.meta.url.includes("?v=" + md5)) === true) return;
     const body = e.meta.layer === "body";
+    // A body (smoke on white) belongs to the ground blows and the big bursts only, as wisps (owner ~20:50: never a flat
+    // blob under a slash).
+    if (body && role !== "groundImpact" && role !== "burst") return;
     const lists = body ? this.bodies : this.pools;
     const list = lists.get(role) ?? [];
     if (list.some((p) => p.id === id)) return;
@@ -248,6 +354,7 @@ class ClipLayers {
     // A vertical sheath (9:16) flows up its cell: its height follows the blade.
     if (role === "sheath" && e.meta.aspect < 1 && e.meta.heading === 0) pool.attach({ ...e.meta, heading: Math.PI / 2 }, e.texture, e.controls);
     if (role === "groundMark") layFlat(pool);
+    if (role === "slash" && !body) sweepCard(pool);
     list.push(pool);
     lists.set(role, list);
     this.modes.set(pool, mode);
@@ -322,6 +429,8 @@ class ClipLayers {
   }
 
   private spawn(role: ClipRole, p: FlipbookPool, x: number, y: number, z: number, size: number, o: FlipOptions): void {
+    // A body drawn alone is thin wisps: lower opacity.
+    if (this.bodies.get(role)?.includes(p) === true) o.alpha = (o.alpha ?? 1) * BODY_ALPHA;
     p.spawn(v.set(x, y, z), size * this.spec.look.scale, o);
     this.audit.spawned[role] += 1;
     // A body drawn alone (its role has no rim yet) has no body under it.
@@ -349,7 +458,7 @@ class ClipLayers {
     q.ground = o.ground;
     q.delay = o.delay;
     q.lift = (o.lift ?? 0) - 0.05;
-    q.alpha = o.alpha;
+    q.alpha = (o.alpha ?? 1) * BODY_ALPHA;
     const c = this.spec.look.body ?? this.spec.look.heat.deep;
     q.tint = bodyTint.setRGB(c[0], c[1], c[2]);
     b.spawn(v.set(x, y, z), size * this.spec.look.scale, q);
@@ -446,7 +555,7 @@ class ClipLayers {
     if (role === "slash" && !crescent) return;
     const p = this.pick(role);
     if (p === null) return;
-    const o = this.once(p, role, 1.2);
+    const o = role === "slash" ? this.slashOpts(p) : this.once(p, role, 1.2);
     o.dir = dirV.set(dx, 0, dz);
     o.vx = dx * 5;
     o.vz = dz * 5;
@@ -644,13 +753,29 @@ class ClipLayers {
   cut(a: CutArgs): boolean {
     const p = this.pick("slash");
     if (p === null) return false;
-    const o = this.once(p, "slash");
+    const o = this.slashOpts(p);
     o.rot = a.rot;
     o.lift = 0.7;
     // Grown big (CUT), it meets the ground: fade softly there, never a straight cut along the floor.
     o.ground = 0;
-    this.spawn("slash", p, a.at.x, a.at.y, a.at.z, a.size * 1.2, o);
+    const size = a.size * 1.2;
+    this.spawn("slash", p, a.at.x, a.at.y, a.at.z, size, o);
+    // Sparkles shed from its trailing edge as the head passes.
+    if (this.has("sparkle")) {
+      alongSlash(this.stage.camera, a.at.x, a.at.y, a.at.z, a.rot, size * this.spec.look.scale * (p.meta?.aspect ?? 1.78), this.stage.n(5),
+        (x, y, z, delay) => this.sparkle(x, y, z, 0.55, 0.5, 0.25, delay + 0.02, 0.9));
+    }
     return true;
+  }
+
+  /** A slash's spawn options (SLASH timing, the element's light or matter, no fade: the sweep erodes it). */
+  private slashOpts(p: FlipbookPool): FlipOptions {
+    const o = slashTiming(p, flip());
+    this.matter(p, o);
+    o.cool = undefined;
+    o.fadeOut = 0;
+    if (this.spec.look.slashHeat !== undefined && this.modes.get(p) === "heat") o.intensity = this.spec.look.slashHeat;
+    return o;
   }
 
   /**
@@ -669,8 +794,11 @@ class ClipLayers {
     o.lift = 0.7;
     o.ground = 0;
     this.matter(p, o);
+    o.cool = undefined;
     o.fadeOut = 0;
-    o.alpha = a.fade;
+    if (this.spec.look.slashHeat !== undefined && this.modes.get(p) === "heat") o.intensity = this.spec.look.slashHeat;
+    // Held whole while it flies (the sweep card's flag: alpha + 2).
+    o.alpha = a.fade + 2;
     this.spawn("slash", p, a.at.x, a.at.y, a.at.z, a.size * 1.2, o);
     return true;
   }
@@ -813,7 +941,7 @@ class ClipLayers {
   cutSeam(a: StreamSeamArgs): boolean {
     const p = this.pick("slash");
     if (p === null) return false;
-    const o = this.once(p, "slash", 0.8);
+    const o = this.slashOpts(p);
     o.dir = dirV.set(a.dx, a.dy, a.dz);
     o.span = a.len * 1.1;
     o.lift = 0.5;
@@ -887,6 +1015,7 @@ export class CrescentClip {
       if (e === null || e.meta.role !== "slash" || e.meta.layer === "body" || this.pools.some((p) => p.id === id)) return;
       const pool = stage.flipbooks.pool(folder, id, { mode: e.meta.mode, capacity: CAPACITY.slash, renderOrder: ORDER.slash });
       pool.softM = 0.25;
+      sweepCard(pool);
       this.pools.push(pool);
     });
   }
@@ -907,30 +1036,21 @@ export class CrescentClip {
   }
 
   /**
-   * The cut at `at` (turned `rot`, `size` m as the cut's args give it), instant to its peak frame then decaying over the
-   * slash role's tail × `linger`, light × `tint` (null: the clip's own colours). False when the folder has none.
+   * The cut at `at` (turned `rot`, `size` m as the cut's args give it): swept from origin to tip, held, eroded (SLASH),
+   * light × `tint` (null: the clip's own colours). Its card's width (m), or 0 when the folder has no slash clip.
    */
-  cut(at: THREE.Vector3, rot: number, size: number, tint: THREE.Color | null, linger = 1): boolean {
+  cut(at: THREE.Vector3, rot: number, size: number, tint: THREE.Color | null): number {
     const p = this.pick();
-    if (p === null) return false;
-    const m = p.meta!;
-    const [first, last] = span(p);
-    const [attackS, tailS] = TIMES.slash;
-    const peak = Math.min(last - 1, Math.max(first, m.peak ?? Math.round(first + (last - first) * PEAK)));
-    const o = flip();
-    o.frame = first;
-    if (peak > first) {
-      o.rate = (peak - first) / (m.fps * attackS);
-      o.slowFrom = peak;
-      o.slowRate = (last + 1 - peak) / (m.fps * tailS * linger);
-    } else o.rate = (last + 1 - first) / (m.fps * tailS * linger);
+    if (p === null) return 0;
+    const o = slashTiming(p, flip());
     this.finish(o, rot, tint);
+    o.fadeOut = 0;
     p.spawn(at, size * 1.2, o);
     this.spawned += 1;
-    return true;
+    return size * 1.2 * p.meta!.aspect;
   }
 
-  /** Key 2's flying crescent: the clip held at its peak frame (the whole crescent), `fade` shown, this frame only. */
+  /** Key 2's flying crescent: the clip held at its peak frame (the whole crescent), `fade` shown, this frame only, never swept. */
   flying(at: THREE.Vector3, rot: number, size: number, fade: number, tint: THREE.Color | null): boolean {
     const p = this.pick();
     if (p === null) return false;
@@ -941,7 +1061,8 @@ export class CrescentClip {
     o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
     this.finish(o, rot, tint);
     o.fadeOut = 0;
-    o.alpha = fade;
+    // Held whole while it flies (the sweep card's flag: alpha + 2).
+    o.alpha = fade + 2;
     p.spawn(at, size * 1.2, o);
     this.spawned += 1;
     return true;

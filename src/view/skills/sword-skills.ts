@@ -51,7 +51,7 @@ import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
-import { crescentOf, type CrescentClip } from "./element-clips";
+import { alongSlash, crescentOf, type CrescentClip } from "./element-clips";
 import { CUT } from "./sword-grammar";
 import { applyBladeLook, FaceRoll } from "./sword-material";
 import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
@@ -2397,9 +2397,15 @@ export class SwordSkillFx {
       a.pal = this.pal;
       if (hook(a)) return;
     }
-    // The authored crescent (Metal's slash clip; tinted for an element whose own has not landed), the sprite crescent
-    // only a thin layer under it; without the clip, the sprite crescent as before: as instant, held a little longer.
-    const thin = this.metalCut?.cut(at, rot, size, this.kit.id === "metal" ? null : this.cutTint) === true ? 0.35 : 1;
+    // The authored crescent (Metal's slash clip; tinted for an element whose own has not landed), swept from its origin
+    // to its tip, held and eroded (element-clips.ts SLASH), glints shed along it as its head passes; no sprite crescent
+    // stamped under it (owner ~20:50). Without the clip, the sprite crescent as before, held a little longer.
+    const w = this.metalCut?.cut(at, rot, size, this.kit.id === "metal" ? null : this.cutTint) ?? 0;
+    if (w > 0) {
+      alongSlash(this.host.camera, at.x, at.y, at.z, rot, w, this.n(5), (x, y, z, delay) => this.shedGlint(x, y, z, delay));
+      return;
+    }
+    const thin = 1;
     const s = this.slash.spec.reset();
     s.x = at.x;
     s.y = at.y;
@@ -2443,8 +2449,9 @@ export class SwordSkillFx {
       a.pal = this.pal;
       if (hook(a)) return;
     }
-    // Metal's authored crescent flying (tinted for an element without its own), the sprite crescent a thin layer.
-    const thin = this.metalCut?.flying(at, rot, size, fade, this.kit.id === "metal" ? null : this.cutTint) === true ? 0.35 : 1;
+    // Metal's authored crescent flying (tinted for an element without its own), held whole; else the sprite crescent.
+    if (this.metalCut?.flying(at, rot, size, fade, this.kit.id === "metal" ? null : this.cutTint) === true) return;
+    const thin = 1;
     const s = this.slash.spec.reset();
     s.x = at.x;
     s.y = at.y;
@@ -2464,6 +2471,22 @@ export class SwordSkillFx {
     this.col(h, this.pal.rim, fade * thin);
     h.a = 0.8 * fade * thin;
     this.slash.emit();
+  }
+
+  /** A glint shed off a slash as its head passes (`delay` s into the sweep: it rises in over that long). */
+  private shedGlint(x: number, y: number, z: number, delay: number): void {
+    const g = this.star.spec.reset();
+    g.x = x + this.rand.range(-0.15, 0.15);
+    g.y = y + this.rand.range(-0.1, 0.2);
+    g.z = z + this.rand.range(-0.15, 0.15);
+    g.vy = 0.4;
+    g.life = 0.4 + delay;
+    g.size0 = 0.55;
+    g.size1 = 0.25;
+    g.rot = this.rand.range(-0.4, 0.4);
+    g.fadeIn = delay + 0.02;
+    this.col(g, this.pal.core, 0.7);
+    this.star.emit();
   }
 
   /** Screen angle of a crescent across a blow along ground direction (dx, dz): the camera looks north (−z). */

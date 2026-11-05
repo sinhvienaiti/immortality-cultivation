@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { CLIP_ROLES, clipAudit, crescentOf } from "../../src/view/skills/element-clips";
+import { CLIP_ROLES, clipAudit, crescentOf, SLASH } from "../../src/view/skills/element-clips";
 import { CUT } from "../../src/view/skills/sword-grammar";
 import { DARK, DARK_B } from "../../src/view/skills/element-dark";
 import type { ClipRole, ElementKit, FoeStatusKind } from "../../src/view/skills/element-kit";
@@ -254,9 +254,9 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
       const fx = new SwordSkillFx(swordHost(targets, base, cam), tex, "high");
       const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
       const entries: Record<string, unknown> = {
-        "dark-impact": { file: "a.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "fire", role: "impact", layer: "rim" },
+        "dark-ground-impact": { file: "a.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "fire", role: "groundImpact", layer: "rim" },
       };
-      if (withBody) entries["dark-impact-white"] = { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "impact", layer: "body" };
+      if (withBody) entries["dark-ground-impact-white"] = { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "groundImpact", layer: "body" };
       const lib = stage.flipbooks.library("dark");
       // The manifest declares both before either atlas arrives (the rim first).
       const metas = [...parseFlipbookManifest({ flipbooks: entries }, "/v/dark/").values()];
@@ -273,15 +273,15 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
       return { stage };
     };
     const alone = layered(false);
-    expect(alone.stage.flipbooks.pool("dark", "dark-impact").mode).toBe("heat");
-    expect(clipAudit(alone.stage, "dark")!.bodies.impact).toBe(0);
+    expect(alone.stage.flipbooks.pool("dark", "dark-ground-impact").mode).toBe("heat");
+    expect(clipAudit(alone.stage, "dark")!.bodies.groundImpact).toBe(0);
     const paired = layered(true);
-    expect(paired.stage.flipbooks.pool("dark", "dark-impact").mode).toBe("fire");
-    expect(paired.stage.flipbooks.pool("dark", "dark-impact-white").mode).toBe("smoke");
+    expect(paired.stage.flipbooks.pool("dark", "dark-ground-impact").mode).toBe("fire");
+    expect(paired.stage.flipbooks.pool("dark", "dark-ground-impact-white").mode).toBe("smoke");
     const a = clipAudit(paired.stage, "dark")!;
-    expect(a.spawned.impact).toBeGreaterThan(0);
-    expect(a.bodies.impact).toBe(a.spawned.impact);
-    expect(a.pools.impact).toBe(1);
+    expect(a.spawned.groundImpact).toBeGreaterThan(0);
+    expect(a.bodies.groundImpact).toBe(a.spawned.groundImpact);
+    expect(a.pools.groundImpact).toBe(1);
   });
 
   it("cuts 1.8 times bigger for every element (owner 19:12), grown sideways and down so the word tag stays clear", () => {
@@ -450,13 +450,16 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(maxSlash).toBeLessThanOrEqual(4);
   });
 
-  it("draws a role's body layer alone while it has no rim yet (Dark's smoke on white before its clips on black)", () => {
+  it("draws a ground blow's body layer alone while it has no rim yet, as wisps; a body on a hit or a slash is never drawn (owner ~20:50)", () => {
     const layer = new THREE.Group();
     const cam = camera();
     const tex = sheets();
     const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
     const lib = stage.flipbooks.library("dark");
-    const metas = parseFlipbookManifest({ flipbooks: { "dark-impact-white": { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "impact", layer: "body" } } }, "/v/dark/");
+    const metas = parseFlipbookManifest({ flipbooks: {
+      "dark-impact-white": { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "impact", layer: "body" },
+      "dark-ground-impact-white": { file: "c.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "groundImpact", layer: "body" },
+    } }, "/v/dark/");
     for (const m of metas.values()) lib.add(m, new THREE.Texture());
     const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
     fx.setElement(elementById("dark")!, stage);
@@ -467,11 +470,49 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
       stage.update(1 / 60);
     }
     const a = clipAudit(stage, "dark")!;
-    expect(a.pools.impact).toBe(0);
-    expect(a.bodyPools.impact).toBe(1);
-    expect(a.spawned.impact).toBeGreaterThan(0);
+    // The hit's smoke is ignored (it sat as a flat black blob under the slash); the ground blow's is drawn alone.
+    expect(a.bodyPools.impact).toBe(0);
+    expect(a.spawned.impact).toBe(0);
+    expect(a.bodyPools.groundImpact).toBe(1);
+    expect(a.spawned.groundImpact).toBeGreaterThan(0);
     // Nothing under a body drawn alone.
-    expect(a.bodies.impact).toBe(0);
+    expect(a.bodies.groundImpact).toBe(0);
+  });
+
+  it("presents every slash as a sweep, a hold and an erosion (owner ~20:50), the flying crescent held whole", () => {
+    const layer = new THREE.Group();
+    const cam = camera();
+    const tex = sheets();
+    const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+    giveClips(stage, "water", ["slash"]);
+    const fx = new SwordSkillFx(swordHost(field(12), new THREE.Group(), cam), tex, "high");
+    fx.setElement(elementById("water")!, stage);
+    const pool = stage.flipbooks.pool("water", "water-slash");
+    const spawns: { life: number; alpha: number; rate: number }[] = [];
+    const spawn = pool.spawn.bind(pool);
+    pool.spawn = (at, size, o = {}) => {
+      spawns.push({ life: o.life ?? -1, alpha: o.alpha ?? 1, rate: o.rate ?? 1 });
+      spawn(at, size, o);
+    };
+    fx.cast("k2", 0, -10);
+    for (let i = 0; i < 40; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+    }
+    const flying = spawns.filter((x) => x.alpha >= 2);
+    const cuts = spawns.filter((x) => x.alpha < 2);
+    expect(flying.length).toBeGreaterThan(8);
+    expect(cuts.length).toBe(1);
+    expect(cuts[0]!.life).toBeCloseTo(SLASH.sweep + SLASH.hold + SLASH.erode, 6);
+    // Held at the peak frame: the sweep animates it.
+    expect(cuts[0]!.rate).toBe(0);
+    // The fragment reads its alpha through the sweep.
+    const shader = { uniforms: {} as Record<string, unknown>, fragmentShader: pool.mesh.material.fragmentShader, vertexShader: "" };
+    pool.mesh.material.onBeforeCompile(shader as never, null as never);
+    expect(shader.fragmentShader).toContain("vAlphaS = vxSweep();");
+    expect(shader.fragmentShader).toContain("varying float vAlpha;");
+    expect(shader.uniforms.uSweep).toBeDefined();
   });
 
   it("takes the ribbon clip as the flight trail once it arrives", () => {
