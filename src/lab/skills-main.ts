@@ -847,6 +847,8 @@ const showcase = new UltShowcase(stage.flipbooks, {
   at: (i, out) => out.set(herd.x(i), 0, herd.z(i)),
   light: (at, colour, intensity) => lights.flash(at, view.camera.position, colour, intensity, true),
   accent: (k) => screen.warm(k),
+  shake: (px, seconds, roll) => screen.shake(px, seconds, roll),
+  captionHost: document.body,
 });
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
@@ -1148,7 +1150,8 @@ window.addEventListener("keydown", (e) => {
   lastKeyStamp = e.timeStamp;
   const slot = KEYS[e.key];
   if (slot) type(slot);
-  else if (e.key === "8") showcase.play();
+  // 8 the next pillar or ultimate, Shift+8 the one before (Shift+8 types "*" on most layouts).
+  else if (e.code === "Digit8" || e.key === "8" || e.key === "*") void (e.shiftKey || e.key === "*" ? showcase.prev() : showcase.play());
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
@@ -1186,7 +1189,7 @@ if (params.get("ui") !== "0") {
     ["5", "Lạc Kiếm Trận · Falling Sword Array"],
     ["6", "Thiên Hà Kiếm Vũ · Milky-Way Sword Rain"],
     ["7", "Vạn Kiếm Triều Tông · Ten-Thousand Sword Convergence"],
-    ["8", "Trình diễn cột trụ và tuyệt kỹ (lớp video, chưa vào sim) · Pillars and ultimates"],
+    ["8", "Trình diễn cột trụ và tuyệt kỹ (Shift+8 lùi lại; lớp video, chưa vào sim) · Pillars and ultimates"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
@@ -1272,6 +1275,35 @@ if (params.get("ui") !== "0") {
   elementListeners.push((id) => (elSelect.value = id));
   el.append(elSelect);
   panel.append(el);
+  // Key 8's list (showcase.ts): any pillar or ultimate directly; it fills as their clips arrive.
+  const sl = document.createElement("label");
+  sl.textContent = "Trình diễn (8) ";
+  const scSelect = document.createElement("select");
+  scSelect.style.cssText = select.style.cssText;
+  const fillShowcase = (): void => {
+    const keep = scSelect.value;
+    scSelect.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "— chọn cột trụ hoặc tuyệt kỹ —";
+    scSelect.append(none);
+    for (const id of showcase.ids()) {
+      const it = showcase.item(id);
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = `${it.kind === "pillar" ? "Cột trụ" : "Tuyệt kỹ"} · ${it.element[1] || "?"} · ${it.en}`;
+      scSelect.append(o);
+    }
+    scSelect.value = keep;
+  };
+  fillShowcase();
+  showcase.onList(fillShowcase);
+  scSelect.onchange = () => {
+    if (scSelect.value !== "") showcase.play(scSelect.value);
+    scSelect.blur();
+  };
+  sl.append(scSelect);
+  panel.append(sl);
   // Sword aura selector (SWORD_AURA §5.1): off (today's look) or the owner's pick.
   const al = document.createElement("label");
   al.textContent = "Aura ";

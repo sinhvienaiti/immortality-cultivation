@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { UltShowcase } from "../../src/lab/showcase";
+import { SHOWCASE, UltShowcase } from "../../src/lab/showcase";
 import { FlipbookPlayer, parseFlipbookManifest } from "../../src/view/skills/flipbook";
 
 function camera(): THREE.PerspectiveCamera {
@@ -20,10 +20,12 @@ function setup(): { show: UltShowcase; player: FlipbookPlayer; lights: string[] 
     at: (_i, out) => out.set(1, 0, -5),
     light: (_at, colour) => lights.push(colour),
     accent: () => {},
+    shake: () => {},
+    captionHost: null,
   });
   const entries: Record<string, unknown> = {};
   for (const [id, role] of [["ult-light", "ultimate"], ["pillar-thunder-single", "pillar"], ["pillar-thunder-field", "pillar"], ["kiem-guard", "weapon"],
-    ["ult-water-profound-sea", "ultimate"], ["ult-water-profound-sea-v2", "ultimate"]] as const) {
+    ["ult-water-profound-sea", "ultimate"], ["ult-water-profound-sea-v2", "ultimate"], ["ult-dark", "ultimate"]] as const) {
     entries[id] = { file: `${id}.png`, cols: 4, rows: 8, frames: 31, fps: 6, cell: [640, 360], role };
   }
   const lib = player.library("ult");
@@ -32,15 +34,35 @@ function setup(): { show: UltShowcase; player: FlipbookPlayer; lights: string[] 
 }
 
 describe("the lab's showcase key (8): pillars and ultimates as video layers", () => {
-  it("lists the pillars first, then the ultimates; other roles and the ultimates the owner turned down are left out", () => {
-    expect(setup().show.ids()).toEqual(["pillar-thunder-field", "pillar-thunder-single", "ult-light", "ult-water-profound-sea-v2"]);
+  it("lists the catalogue's order (pillars, then one ultimate per element); other roles and the clips the owner turned down are left out", () => {
+    expect(setup().show.ids()).toEqual(["pillar-thunder-single", "pillar-thunder-field", "ult-water-profound-sea-v2", "ult-light"]);
     expect(setup().show.play("ult-water-profound-sea")).toBeNull();
+    expect(setup().show.play("ult-dark")).toBeNull();
+  });
+
+  it("names every catalogue item in English and Vietnamese with its element and its Firefly sound", () => {
+    expect(SHOWCASE.filter((it) => it.kind === "pillar").length).toBe(4);
+    expect(new Set(SHOWCASE.filter((it) => it.kind === "ultimate").map((it) => it.element[0])).size).toBe(14);
+    for (const it of SHOWCASE) {
+      expect(it.en.length).toBeGreaterThan(3);
+      expect(it.vi.length).toBeGreaterThan(3);
+      expect(it.sound).toMatch(/^tt-sfx-(pillar|ult)-/);
+    }
+  });
+
+  it("goes back with Shift+8 (prev) and wraps round both ways", () => {
+    const { show } = setup();
+    expect(show.play()).toBe("pillar-thunder-single");
+    expect(show.prev()).toBe("ult-light");
+    expect(show.prev()).toBe("ult-water-profound-sea-v2");
+    expect(show.play()).toBe("ult-light");
+    expect(show.play()).toBe("pillar-thunder-single");
   });
 
   it("plays one a press in order, at the clip's element light, and nothing for an id it does not have", () => {
     const { show, player, lights } = setup();
-    expect(show.play()).toBe("pillar-thunder-field");
     expect(show.play()).toBe("pillar-thunder-single");
+    expect(show.play()).toBe("pillar-thunder-field");
     expect(show.play("ult-light")).toBe("ult-light");
     expect(show.play("nope")).toBeNull();
     player.update(1 / 60);
