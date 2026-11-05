@@ -51,6 +51,7 @@ import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
+import { crescentOf, type CrescentClip } from "./element-clips";
 import { CUT } from "./sword-grammar";
 import { applyBladeLook, FaceRoll } from "./sword-material";
 import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
@@ -643,6 +644,9 @@ export class SwordSkillFx {
   private readonly aImpact: ImpactArgs = { slot: "auto", at: new THREE.Vector3(), scale: 1, dx: 0, dz: -1, power: 0, big: false, pal: START_GLOW };
   private readonly aCut: CutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, pal: START_GLOW };
   private readonly aFly: FlyingCutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, u: 0, fade: 1, pal: START_GLOW };
+  /** Metal's slash clip (null without a stage) and the tint it takes for another element (its ramp's edge, unit max). */
+  private metalCut: CrescentClip | null = null;
+  private readonly cutTint = new THREE.Color();
   /** Where the current cut is drawn (slashAt: below the hit as it grows). */
   private readonly cutAt = new THREE.Vector3();
   private readonly aArea: AreaHitArgs = { slot: "auto", at: new THREE.Vector3(), dx: 0, dz: -1, power: 0, marked: false, pal: START_GLOW };
@@ -773,6 +777,11 @@ export class SwordSkillFx {
   setElement(kit: ElementKit, stage: ElementStage | null): void {
     this.kit = kit;
     this.hooks = stage !== null ? (stage.hooksOf(kit).sword ?? NO_HOOKS) : NO_HOOKS;
+    // Metal's authored crescent (its slash clip): Metal's cuts, and any element's whose own has not landed, tinted.
+    this.metalCut = stage !== null ? crescentOf(stage, "metal") : null;
+    const e = kit.ramp.edge;
+    const m = Math.max(e[0], e[1], e[2], 1e-6);
+    this.cutTint.setRGB(e[0] / m, e[1] / m, e[2] / m);
     for (const layer of Object.keys(this.texTargets) as SwordTextureLayer[]) {
       const name = kit.textures[layer];
       const t = name !== undefined && stage !== null ? stage.texture(name) : this.baseTex[layer];
@@ -2388,7 +2397,9 @@ export class SwordSkillFx {
       a.pal = this.pal;
       if (hook(a)) return;
     }
-    // Metal's crescent: as instant, held a little longer (attack fast, decay slowly).
+    // The authored crescent (Metal's slash clip; tinted for an element whose own has not landed), the sprite crescent
+    // only a thin layer under it; without the clip, the sprite crescent as before: as instant, held a little longer.
+    const thin = this.metalCut?.cut(at, rot, size, this.kit.id === "metal" ? null : this.cutTint) === true ? 0.35 : 1;
     const s = this.slash.spec.reset();
     s.x = at.x;
     s.y = at.y;
@@ -2397,7 +2408,7 @@ export class SwordSkillFx {
     s.life = 0.22;
     s.size0 = size * 1.5;
     s.size1 = size * 2.0;
-    this.col(s, this.pal.core, 0.85);
+    this.col(s, this.pal.core, 0.85 * thin);
     this.slash.emit();
     // A wider coloured crescent under the hot one.
     const h = this.slash.spec.reset();
@@ -2408,8 +2419,8 @@ export class SwordSkillFx {
     h.life = 0.28;
     h.size0 = size * 2.1;
     h.size1 = size * 2.7;
-    this.col(h, this.pal.rim, 1);
-    h.a = 0.8;
+    this.col(h, this.pal.rim, thin);
+    h.a = 0.8 * thin;
     this.slash.emit();
   }
 
@@ -2432,6 +2443,8 @@ export class SwordSkillFx {
       a.pal = this.pal;
       if (hook(a)) return;
     }
+    // Metal's authored crescent flying (tinted for an element without its own), the sprite crescent a thin layer.
+    const thin = this.metalCut?.flying(at, rot, size, fade, this.kit.id === "metal" ? null : this.cutTint) === true ? 0.35 : 1;
     const s = this.slash.spec.reset();
     s.x = at.x;
     s.y = at.y;
@@ -2439,7 +2452,7 @@ export class SwordSkillFx {
     s.rot = rot;
     s.life = -1;
     s.size0 = s.size1 = size * 1.6;
-    this.col(s, this.pal.core, 0.85 * fade);
+    this.col(s, this.pal.core, 0.85 * fade * thin);
     this.slash.emit();
     const h = this.slash.spec.reset();
     h.x = at.x;
@@ -2448,8 +2461,8 @@ export class SwordSkillFx {
     h.rot = rot;
     h.life = -1;
     h.size0 = h.size1 = size * 2.2;
-    this.col(h, this.pal.rim, fade);
-    h.a = 0.8 * fade;
+    this.col(h, this.pal.rim, fade * thin);
+    h.a = 0.8 * fade * thin;
     this.slash.emit();
   }
 

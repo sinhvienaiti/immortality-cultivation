@@ -859,6 +859,105 @@ class ClipLayers {
   }
 }
 
+/**
+ * A folder's authored crescent (its manifest's `slash` clips) for kits that do not draw by role: Fire's own clip, and
+ * Metal's for Metal and for any element whose slash clip has not landed (tinted to its colour). The owner (05/11 ~19:45,
+ * ~20:00): the cut and key 2's flying crescent are the crescent we designed, a code-drawn crescent at most a thin layer
+ * under it. One per stage and folder (crescentOf).
+ */
+export class CrescentClip {
+  private readonly pools: FlipbookPool[] = [];
+  private turn = 0;
+  /** Crescents drawn since the stage was made (the lab's count). */
+  spawned = 0;
+
+  constructor(stage: ElementStage, readonly folder: string) {
+    const lib = stage.flipbooks.library(folder);
+    lib.watch((id) => {
+      const e = lib.get(id);
+      if (e === null || e.meta.role !== "slash" || e.meta.layer === "body" || this.pools.some((p) => p.id === id)) return;
+      const pool = stage.flipbooks.pool(folder, id, { mode: e.meta.mode, capacity: CAPACITY.slash, renderOrder: ORDER.slash });
+      pool.softM = 0.25;
+      this.pools.push(pool);
+    });
+  }
+
+  get ready(): boolean {
+    return this.pools.some((p) => p.ready);
+  }
+
+  private pick(): FlipbookPool | null {
+    for (let k = 0; k < this.pools.length; k += 1) {
+      const p = this.pools[(this.turn + k) % this.pools.length]!;
+      if (p.ready) {
+        this.turn += k + 1;
+        return p;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The cut at `at` (turned `rot`, `size` m as the cut's args give it), instant to its peak frame then decaying over the
+   * slash role's tail × `linger`, light × `tint` (null: the clip's own colours). False when the folder has none.
+   */
+  cut(at: THREE.Vector3, rot: number, size: number, tint: THREE.Color | null, linger = 1): boolean {
+    const p = this.pick();
+    if (p === null) return false;
+    const m = p.meta!;
+    const [first, last] = span(p);
+    const [attackS, tailS] = TIMES.slash;
+    const peak = Math.min(last - 1, Math.max(first, m.peak ?? Math.round(first + (last - first) * PEAK)));
+    const o = flip();
+    o.frame = first;
+    if (peak > first) {
+      o.rate = (peak - first) / (m.fps * attackS);
+      o.slowFrom = peak;
+      o.slowRate = (last + 1 - peak) / (m.fps * tailS * linger);
+    } else o.rate = (last + 1 - first) / (m.fps * tailS * linger);
+    this.finish(o, rot, tint);
+    p.spawn(at, size * 1.2, o);
+    this.spawned += 1;
+    return true;
+  }
+
+  /** Key 2's flying crescent: the clip held at its peak frame (the whole crescent), `fade` shown, this frame only. */
+  flying(at: THREE.Vector3, rot: number, size: number, fade: number, tint: THREE.Color | null): boolean {
+    const p = this.pick();
+    if (p === null) return false;
+    const [first, last] = span(p);
+    const o = flip();
+    o.life = ONE_FRAME;
+    o.rate = 0;
+    o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
+    this.finish(o, rot, tint);
+    o.fadeOut = 0;
+    o.alpha = fade;
+    p.spawn(at, size * 1.2, o);
+    this.spawned += 1;
+    return true;
+  }
+
+  private finish(o: FlipOptions, rot: number, tint: THREE.Color | null): void {
+    o.rot = rot;
+    o.lift = 0.7;
+    o.ground = 0;
+    o.occlude = 0.5;
+    if (tint !== null) o.tint = tint;
+  }
+}
+
+const CRESCENTS = new WeakMap<ElementStage, Map<string, CrescentClip>>();
+
+/** The authored crescent of `folder` on `stage` (made on first use; load time). */
+export function crescentOf(stage: ElementStage, folder: string): CrescentClip {
+  let byFolder = CRESCENTS.get(stage);
+  if (byFolder === undefined) CRESCENTS.set(stage, (byFolder = new Map()));
+  let c = byFolder.get(folder);
+  if (c === undefined) byFolder.set(folder, (c = new CrescentClip(stage, folder)));
+  return c;
+}
+
 const LAYERS = new WeakMap<ElementStage, Map<ElementId, ClipLayers>>();
 
 /** What a clip kit has drawn on `stage` since its last reset (the lab's __lab.clipKit; null before it is attached). */

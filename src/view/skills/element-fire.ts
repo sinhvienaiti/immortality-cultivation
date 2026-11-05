@@ -37,6 +37,7 @@
  */
 import * as THREE from "three";
 import type { AftermathArgs, BladeLook, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, FlyingCutArgs, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
+import { crescentOf } from "./element-clips";
 import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookPool, type FlipOptions, type FlipbookPlayer } from "./flipbook";
@@ -1104,8 +1105,10 @@ class FireLayers {
   }
 
   cut(a: CutArgs): boolean {
-    // The blade's cut stays a cut: one molten crescent across the blow, matter (it stays amber on pale stone, where
-    // added light read as a pale arc: 03/11 recheck) with a thin white-gold core inside it.
+    // The owner's crescent (05/11 ~20:00): Fire's authored slash clip, the molten crescent a thin layer under it; without
+    // the clip, the molten crescent across the blow as before, matter (it stays amber on pale stone, where added light
+    // read as a pale arc: 03/11 recheck) with a thin white-gold core inside it.
+    const thin = crescentOf(this.stage, FOLDER).cut(a.at, a.rot, a.size, null) ? 0.4 : 1;
     const b = this.slashBody.spec.reset();
     b.x = a.at.x;
     b.y = a.at.y;
@@ -1117,7 +1120,7 @@ class FireLayers {
     b.r = CUT_BODY[0];
     b.g = CUT_BODY[1];
     b.b = CUT_BODY[2];
-    b.a = 0.95;
+    b.a = 0.95 * thin;
     this.slashBody.emit();
     const s = this.slash.spec.reset();
     s.x = a.at.x;
@@ -1128,15 +1131,19 @@ class FireLayers {
     s.size0 = a.size * 1.35;
     s.size1 = a.size * 1.85;
     // Gold, just under the bloom: a white-hot line bloomed into a pale arc on light stone.
-    s.r = 0.72;
-    s.g = 0.4;
-    s.b = 0.1;
+    s.r = 0.72 * thin;
+    s.g = 0.4 * thin;
+    s.b = 0.1 * thin;
     this.slash.emit();
     return true;
   }
 
-  /** Key 2's flying crescent (owner 05/11 ~19:45): the molten crescent of `cut`, whole, this frame only. */
+  /**
+   * Key 2's flying crescent (owner 05/11 ~19:45, ~20:00): Fire's authored slash clip, whole, this frame only; the molten
+   * crescent of `cut` a thin layer under it (alone without the clip).
+   */
   flyingCut(a: FlyingCutArgs): boolean {
+    const thin = crescentOf(this.stage, FOLDER).flying(a.at, a.rot, a.size, a.fade, null) ? 0.4 : 1;
     const b = this.slashBody.spec.reset();
     b.x = a.at.x;
     b.y = a.at.y;
@@ -1147,7 +1154,7 @@ class FireLayers {
     b.r = CUT_BODY[0];
     b.g = CUT_BODY[1];
     b.b = CUT_BODY[2];
-    b.a = 0.95 * a.fade;
+    b.a = 0.95 * a.fade * thin;
     this.slashBody.emit();
     const s = this.slash.spec.reset();
     s.x = a.at.x;
@@ -1156,9 +1163,9 @@ class FireLayers {
     s.rot = a.rot;
     s.life = -1;
     s.size0 = s.size1 = a.size * 1.6;
-    s.r = 0.72 * a.fade;
-    s.g = 0.4 * a.fade;
-    s.b = 0.1 * a.fade;
+    s.r = 0.72 * a.fade * thin;
+    s.g = 0.4 * a.fade * thin;
+    s.b = 0.1 * a.fade * thin;
     this.slash.emit();
     return true;
   }

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { CLIP_ROLES, clipAudit } from "../../src/view/skills/element-clips";
+import { CLIP_ROLES, clipAudit, crescentOf } from "../../src/view/skills/element-clips";
 import { CUT } from "../../src/view/skills/sword-grammar";
 import { DARK, DARK_B } from "../../src/view/skills/element-dark";
 import type { ClipRole, ElementKit, FoeStatusKind } from "../../src/view/skills/element-kit";
@@ -397,6 +397,35 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     // ~12 flight frames (0.2 s) and the end cut; the hits along the line add none.
     expect(a.spawned.slash).toBeGreaterThan(8);
     expect(a.spawned.slash).toBeLessThanOrEqual(13);
+  });
+
+  it("draws Metal's and Fire's cuts and key 2 with their own slash clips, and an element without one with Metal's, tinted", () => {
+    const run = (id: string): { metal: number; fire: number } => {
+      const cam = camera();
+      const layer = new THREE.Group();
+      const tex = sheets();
+      const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+      giveClips(stage, "metal", ["slash"]);
+      giveClips(stage, "fire", ["slash"]);
+      const fx = new SwordSkillFx(swordHost(field(12), layer, cam), tex, "high");
+      fx.setElement(elementById(id)!, stage);
+      fx.cast("k2", 0, -10);
+      for (let i = 0; i < 40; i += 1) {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+      }
+      return { metal: crescentOf(stage, "metal").spawned, fire: crescentOf(stage, "fire").spawned };
+    };
+    const metal = run("metal");
+    expect(metal.metal).toBeGreaterThan(8);
+    expect(metal.fire).toBe(0);
+    const fire = run("fire");
+    expect(fire.fire).toBeGreaterThan(8);
+    expect(fire.metal).toBe(0);
+    // Dark has no slash clip yet: Metal's crescent in Dark's colour (its own when it lands).
+    const dark = run("dark");
+    expect(dark.metal).toBeGreaterThan(8);
   });
 
   it("draws Metal's key 2 crescent itself when the element has no flying cut (one sprite pair a frame, never a stamp chain)", () => {

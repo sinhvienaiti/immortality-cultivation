@@ -79,7 +79,7 @@ import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { FlameSlash } from "../view/skills/flame-slash";
-import { clipAudit, type ClipAudit } from "../view/skills/element-clips";
+import { clipAudit, crescentOf, type ClipAudit } from "../view/skills/element-clips";
 import { UltShowcase } from "./showcase";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
@@ -1510,6 +1510,8 @@ declare global {
       fireImpact(mode?: "brush" | "lotus"): FirePrewarm & { mode: "brush" | "lotus"; ready: boolean; audit: FireAudit; ageTicks: number; lights: number[] };
       /** An element kit drawn from clips (element-clips.ts): its clips' spawns by role since the last reset and its pools by role (null: Metal, Fire). */
       clipKit(): ClipAudit | null;
+      /** Crescents drawn from Metal's and Fire's slash clips since load (crescentOf; Metal's also stands in, tinted). */
+      crescents(): { metal: number; fire: number };
       /** Key 8 (showcase.ts): plays pillar or ultimate `id` (none: the next); what it played and every id it has. */
       showcase(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
@@ -1850,6 +1852,9 @@ void (async () => {
         ageTicks: audit.firstAt < 0 ? -1 : Math.round((stage.time - audit.firstAt - lastWorldDt) * 60) + 0,
         lights: lights.levels(),
       };
+    },
+    crescents() {
+      return { metal: crescentOf(stage, "metal").spawned, fire: crescentOf(stage, "fire").spawned };
     },
     showcase(id) {
       return { played: showcase.play(id), ids: showcase.ids() };
