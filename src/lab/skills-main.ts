@@ -27,6 +27,8 @@
  * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
  * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
  * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
+ * ?slash=tongues keeps Fire key 7's old finisher tongues for A/B (default: the owner's Firefly strip).
+ * ?stripK=<positive number> overrides Fire's measured finisher strip repeat count in this lab only.
  * Sword aura (docs/games/tu-tien/skills/SWORD_AURA.md §5.1): ?aura=off|a (default off: today's look; a =
  * wind-silk-mantle), the panel's Aura list, A toggles it, __lab.aura(id) sets it, __lab.auraLayer(name, on, intensity)
  * switches one layer (MantleSheath, MantleHull, SilkTail, MantleHalo, TipStar); ?motion=reduce (resolveReducedMotion)
@@ -72,6 +74,7 @@ import { runFlipbookProbe, type FlipbookProbeReport } from "./flipbook-probe";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { FIRE_FURNACE_BLADE, FIRE_LAB } from "../view/skills/element-fire";
+import { FlameSlash } from "../view/skills/flame-slash";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -823,6 +826,9 @@ const BLADE_HEAT = params.get("bladeHeat");
 // SWORD_AURA §5.5: ?riverSheath=1 puts the Fire round's removed flame cards back on key 7's river (the "burning planks"
 // comparison sheet only).
 FIRE_LAB.riverSheath = params.get("riverSheath") === "1";
+FIRE_LAB.slashTongues = params.get("slash") === "tongues";
+const stripK = Number(params.get("stripK"));
+FlameSlash.stripK = Number.isFinite(stripK) && stripK > 0 ? stripK : null;
 /** Puts every skill in element `id`'s material (its flipbooks loaded first); false for an unknown id. */
 async function setElement(id: string): Promise<boolean> {
   const kit = elementById(id);

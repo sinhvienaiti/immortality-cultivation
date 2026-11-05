@@ -2,8 +2,8 @@
  * Key 7's finisher slash in fire (03/11 fixes, replace never stack: Fire drew Metal's sword-qi slash recoloured). The
  * same strip and shape as qi-slash.ts (the authored crescent unwrapped from origin to tip, ~150 px wide at 1080p, its
  * head running origin to tip), drawn as a flame: the crescent's body read as heat round a smooth spine (its band's
- * centre and width measured once along the arc and smoothed), crisp flame tongues licking out along both edges (one
- * per cell, each its own length, pointed, leaning back from the head, flickering), coloured through the fire ramp (a soot edge, a vermilion-to-amber body, a thin
+ * centre and width measured once along the arc and smoothed), the owner's Firefly strip licking out along both
+ * edges (the old tongues remain for A/B and while the image loads), coloured through the fire ramp (a soot edge, a vermilion-to-amber body, a thin
  * white-gold core that alone blooms), hotter just behind the head; it cools through the bands and erodes instead of
  * fading. Premultiplied, no depth test; view only.
  */
@@ -16,6 +16,10 @@ uniform sampler2D tMask;
 uniform float uHasMask;
 uniform sampler2D tBand;
 uniform float uHasBand;
+uniform sampler2D tStrip;
+uniform float uHasStrip;
+uniform float uStripK;
+uniform float uStripScroll;
 uniform float uHead;
 uniform float uFade;
 uniform float uErode;
@@ -86,29 +90,45 @@ void main() {
   }
   float rel = halfW > 0.02 ? abs(v - centre) / max(halfW, 0.04) : 2.0;
   float spine = (1.0 - smoothstep(0.08, 0.2, rel)) * step(0.02, halfW);
-  // Flame tongues along both edges: one per cell along the slash, each its own length, pointed, leaning back from the
-  // running head and flickering (regular, crisp tongues instead of lumpy noise; round 3). Only behind the head.
   // From the crescent's visible edge (its soft coverage runs ~1.5 × its measured half width), in units of that edge.
   float edgeW = halfW * 1.5 + 0.03;
-  float dOut = (abs(v - centre) - edgeW) / max(edgeW, 0.1);
   float env = smoothstep(0.0, 0.12, s) * smoothstep(1.0, 0.88, s);
-  float sec = s * 96.0 + dOut * 0.22;
-  float id = floor(sec);
-  float fs = fract(sec) - 0.5;
-  float len = mix(0.8, 2.4, fsHash1(id * 1.7 + (v > centre ? 31.0 : 0.0))) * (0.86 + 0.14 * sin(uTime * 13.0 + id * 2.3)) * env;
-  float tt = dOut / max(len, 1e-3);
-  // Each tongue sways a little toward its tip (a flame, not a shard).
-  fs -= sin(tt * 3.0 + id * 1.7) * 0.14 * tt;
-  float hw = mix(0.47, 0.0, smoothstep(0.0, 1.0, tt));
-  float tongue = step(0.0, tt) * (1.0 - smoothstep(0.9, 1.0, tt)) * (1.0 - smoothstep(hw - 0.08, hw, abs(fs)));
   float n = fsNoise(vec2(s * 40.0 - uTime * 3.0, v * 3.0));
-  float behind = step(s, uHead + 0.02);
+  float front = uHead + 0.02;
+  float tornFront = front + (n - 0.5) * 0.02;
+  float behind = uHasStrip > 0.5 ? 1.0 - smoothstep(tornFront - 0.07, tornFront, s) : step(s, front);
   // The head's heat stays inside the shape (at the strip's ends it would draw a square).
-  float head = exp(-abs(s - uHead) * 22.0) * step(s, uHead + 0.05) * body;
-  // A thin white-gold spine (wider at the running head), an amber body cooling to vermilion toward its edge, the
-  // tongues amber at their root cooling to a soot tip.
-  float heat = max(body * (0.5 + 0.22 * (1.0 - smoothstep(0.3, 0.95, rel)) + 0.3 * spine) * (0.96 + 0.06 * n), tongue * behind * mix(0.72, 0.3, tt)) + head * 0.3 * (1.0 - smoothstep(0.25, 0.6, rel));
-  heat *= mix(0.82, 1.0, behind);
+  float hotFront = uHead + 0.05;
+  float headPulse = exp(-abs(s - uHead) * 22.0) * step(s, hotFront);
+  float head = headPulse * body;
+  float heat;
+  vec4 st = vec4(0.0);
+  float flame = 0.0;
+  if (uHasStrip > 0.5) {
+    float reach = edgeW * 2.6;
+    float vs = 0.5 + (v - centre) / (2.0 * reach);
+    float us = s * uStripK - uTime * uStripScroll;
+    st = (vs > 0.0 && vs < 1.0) ? texture2D(tStrip, vec2(us, vs)) : vec4(0.0);
+    flame = st.a * env * behind;
+    float bodyHeat = body * (0.5 + 0.22 * (1.0 - smoothstep(0.3, 0.95, rel)) + 0.3 * spine) * (0.96 + 0.06 * n) + head * 0.3 * (1.0 - smoothstep(0.25, 0.6, rel));
+    heat = max(bodyHeat, flame * mix(0.62, 0.3, abs(vs - 0.5) * 2.0));
+  } else {
+    // Legacy A/B: keep every tongue and heat calculation unchanged.
+    float dOut = (abs(v - centre) - edgeW) / max(edgeW, 0.1);
+    float sec = s * 96.0 + dOut * 0.22;
+    float id = floor(sec);
+    float fs = fract(sec) - 0.5;
+    float len = mix(0.8, 2.4, fsHash1(id * 1.7 + (v > centre ? 31.0 : 0.0))) * (0.86 + 0.14 * sin(uTime * 13.0 + id * 2.3)) * env;
+    float tt = dOut / max(len, 1e-3);
+    // Each tongue sways a little toward its tip (a flame, not a shard).
+    fs -= sin(tt * 3.0 + id * 1.7) * 0.14 * tt;
+    float hw = mix(0.47, 0.0, smoothstep(0.0, 1.0, tt));
+    float tongue = step(0.0, tt) * (1.0 - smoothstep(0.9, 1.0, tt)) * (1.0 - smoothstep(hw - 0.08, hw, abs(fs)));
+    heat = max(body * (0.5 + 0.22 * (1.0 - smoothstep(0.3, 0.95, rel)) + 0.3 * spine) * (0.96 + 0.06 * n), tongue * behind * mix(0.72, 0.3, tt)) + head * 0.3 * (1.0 - smoothstep(0.25, 0.6, rel));
+  }
+  // Preserve the head's peak heat while the strip's leading edge burns away softly.
+  float heatBehind = uHasStrip > 0.5 ? max(behind, headPulse) : behind;
+  heat *= mix(0.82, 1.0, heatBehind);
   // It cools (falls through the bands) and erodes from its thin tongues; it never turns see-through.
   heat = heat * uFade - uErode * 0.55;
   float edge = 0.12 + (n - 0.5) * 0.06 + uErode * 0.12;
@@ -118,6 +138,7 @@ void main() {
   float c = smoothstep(0.8, 0.94, heat);
   vec3 col = mix(uSoot, mix(uDeep, uAmber, smoothstep(0.4, 0.78, heat)), b2);
   col = mix(col, uCore * 2.4, c);
+  if (uHasStrip > 0.5) col *= mix(vec3(1.0), st.rgb * 1.15, 0.5 * flame);
   a *= mix(0.86, 0.96, b2);
   gl_FragColor = vec4(col * a, a);
 }`;
@@ -126,12 +147,20 @@ void main() {
 const WIDE = 1.7;
 
 export class FlameSlash {
+  /** Set only by the lab entry point; null keeps the measured source aspect. */
+  static stripK: number | null = null;
   readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private readonly u: Record<string, THREE.IUniform>;
   private readonly vp = new THREE.Vector4();
   /** The band table of the mask it was measured from (measureBand). */
   private band: THREE.DataTexture | null = null;
   private bandOf: THREE.Texture | null = null;
+  private readonly projectedA = new THREE.Vector4();
+  private readonly projectedB = new THREE.Vector4();
+  private stripAspect: number | null = null;
+  private stripMetaUrl: string | null = null;
+  /** Mean half width of the analytic band, replaced by the authored band when readable. */
+  private stripHalfW = 0.34 * 2 / Math.PI;
 
   constructor(renderOrder = 15) {
     const v3 = (): THREE.Vector3 => new THREE.Vector3();
@@ -144,6 +173,10 @@ export class FlameSlash {
       uHasMask: { value: 0 },
       tBand: { value: null },
       uHasBand: { value: 0 },
+      tStrip: { value: null },
+      uHasStrip: { value: 0 },
+      uStripK: { value: 5 },
+      uStripScroll: { value: 0.5 },
       uHead: { value: 0 },
       uFade: { value: 0 },
       uErode: { value: 0 },
@@ -187,8 +220,19 @@ export class FlameSlash {
     (this.u.uCore!.value as THREE.Vector3).set(core[0], core[1], core[2]);
   }
 
+  /** Authored straight-alpha fire; null keeps the legacy A/B path. Scroll is periods per second. */
+  setStrip(texture: THREE.Texture | null, scroll: number): void {
+    if (texture !== this.u.tStrip!.value) {
+      this.stripAspect = null;
+      this.stripMetaUrl = null;
+    }
+    this.u.tStrip!.value = texture;
+    this.u.uHasStrip!.value = texture !== null ? 1 : 0;
+    this.u.uStripScroll!.value = scroll;
+  }
+
   /** As QiSlash.set, with the crescent mask and the flame's clock (s). Fade 0 hides it. */
-  set(ax: number, ay: number, az: number, bx: number, by: number, bz: number, halfPx: number, head: number, fade: number, erode: number, mask: THREE.Texture | null, time: number): void {
+  set(ax: number, ay: number, az: number, bx: number, by: number, bz: number, halfPx: number, head: number, fade: number, erode: number, mask: THREE.Texture | null, time: number, camera?: THREE.Camera): void {
     (this.u.uA!.value as THREE.Vector3).set(ax, ay, az);
     (this.u.uB!.value as THREE.Vector3).set(bx, by, bz);
     this.u.uHalf!.value = halfPx * WIDE;
@@ -200,7 +244,39 @@ export class FlameSlash {
     if (mask !== this.bandOf) this.measureBand(mask);
     this.u.uHasBand!.value = this.band !== null && mask === this.bandOf ? 1 : 0;
     this.u.uTime!.value = time;
+    // TextureLoader returns before decoding; a pending or failed strip must keep the old flame visible.
+    const strip = this.u.tStrip!.value as THREE.Texture | null;
+    const image = strip?.image as { width: number; height: number; src?: string } | undefined;
+    this.u.uHasStrip!.value = image !== undefined && image !== null && image.width > 0 && image.height > 0 ? 1 : 0;
+    if (strip !== null && image?.src) this.readStripAspect(strip, image.src);
+    let k = 5;
+    if (camera !== undefined && this.stripAspect !== null && halfPx > 0) {
+      const a = this.projectedA.set(ax, ay, az, 1).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+      const b = this.projectedB.set(bx, by, bz, 1).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+      const view = this.u.uView!.value as THREE.Vector2;
+      const lengthPx = Math.hypot((b.x / b.w - a.x / a.w) * view.x / 2, (b.y / b.w - a.y / a.w) * view.y / 2);
+      // Match vs in the shader: full sampled width, not the packed PNG's 4:1 aspect or the mesh's WIDE.
+      const widthPx = 2 * (this.stripHalfW * 1.5 + 0.03) * 2.6 * halfPx * view.y / 1080;
+      const measured = lengthPx / (this.stripAspect * widthPx);
+      if (a.w >= 0.05 && b.w >= 0.05 && Number.isFinite(measured) && measured > 0) k = measured;
+    }
+    this.u.uStripK!.value = FlameSlash.stripK !== null && Number.isFinite(FlameSlash.stripK) && FlameSlash.stripK > 0 ? FlameSlash.stripK : k;
     this.mesh.visible = fade > 0.003;
+  }
+
+  /** Source period dimensions live beside the packed image; request once, including a failed request. */
+  private readStripAspect(strip: THREE.Texture, src: string): void {
+    const url = src.replace(/\.rgba\.png(?=\?|$)/, ".json");
+    if (url === src || this.stripMetaUrl === url) return;
+    this.stripMetaUrl = url;
+    void fetch(url).then(async (response) => {
+      if (!response.ok) return;
+      const meta = await response.json() as { mapping?: { periodPx?: number; halfRows?: number } };
+      const period = meta.mapping?.periodPx;
+      const halfRows = meta.mapping?.halfRows;
+      if (typeof period !== "number" || typeof halfRows !== "number" || !Number.isFinite(period) || !Number.isFinite(halfRows) || period <= 0 || halfRows <= 0) return;
+      if (this.u.tStrip!.value === strip && this.stripMetaUrl === url) this.stripAspect = period / (2 * halfRows);
+    }).catch(() => { /* Keep five periods until both source dimensions and projection can be measured. */ });
   }
 
   hide(): void {
@@ -214,6 +290,7 @@ export class FlameSlash {
    * Without a readable image (tests, before it loads) the shader measures it itself.
    */
   private measureBand(mask: THREE.Texture | null): void {
+    this.stripHalfW = 0.34 * 2 / Math.PI;
     const img = mask?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
     if (mask === null || img === undefined || !(img.width > 0) || typeof document === "undefined") return;
     const N = 128;
@@ -274,6 +351,7 @@ export class FlameSlash {
     this.band = t;
     this.bandOf = mask;
     this.u.tBand!.value = t;
+    this.stripHalfW = data.reduce((sum, value, i) => sum + (i % 4 === 1 ? value / 255 : 0), 0) / N;
   }
 
   dispose(): void {
