@@ -53,3 +53,12 @@ Chưa nghiệm thu hình ảnh hoặc GPU. Claude tiếp tục parity ONLY lô 1
 - Thêm **8 ca** trong `skill-prewarm-shared.test.ts`: mapped skinned/instanced ở nhánh thành công và lỗi compile/render; biến thể va chạm Hỏa/Kim; lỗi mask/compile/render của pass va chạm. Kiểm target màn hình chỉ dùng compile, vật liệu được giữ, quad tạm được dọn, sampler/cờ/count/ma trận/visibility được trả lại và pool vẫn rỗng.
 
 **Kiểm 286:** TypeScript qua; **1014/1014 test, 93/93 tệp** qua, giữ đủ mốc 1006. Build wrapper 274 với đầu ra `/private/tmp/codex-286-dist` qua; không có `prewarmReport` hoặc `fxcode` trong bundle; đã xóa build. Không sửa `element-stage.ts` hoặc `skills-main.ts`: vòng prewarm Hỏa/Kim của 283 đã gọi đúng hai điểm vào này. Claude đo lại cổng 7 cho Hỏa/Kim; chưa xác nhận GPU ≤ 11,5 ms. Báo cáo ở repo cha: `docs/codex-queue/286-report.md`.
+
+## Bổ sung phiếu 287b · Giải xung đột với main
+
+- Giải hai tệp `element-fire.ts` và `skills-main.ts`, giữ brush, art lô 1, chớp tuổi 0, prewarm 280/283/286 và đường `?fxcode=1`; nối thêm nhát chém kết dùng dải, cờ `?slash=tongues` và `?stripK=` từ main. Giữ nguyên `flame-slash.ts` cùng 10 test của main: công thức tỉ lệ nguồn 2:1, mép đầu mềm và các phép tính lưỡi lửa cũ.
+- Nhát chém và thẻ vạch dùng chung texture `strip-fire-sheath-v2.rgba.png` đã được lô 1 ưu tiên. Cả hai JSON dải đều ghi `periodPx = 600`, `halfRows = 150`, nên tỉ lệ nguồn vẫn là 2:1. Bỏ lượt nạp riêng bản thường qua `stage.texture()`; một lượt nạp trong thư viện `fire` cấp cùng đối tượng texture cho hai vật liệu, kể cả khi ảnh về muộn.
+- Prewarm đợi Promise của dải chung, tải texture lên GPU một lần trên mỗi renderer rồi compile cùng mesh `fx-flame-slash` đang tạm hiện. `?fxcode=1` vẫn nạp dải cho nhát chém; `?slash=tongues` chỉ giữ nhát chém ở đường cũ. Khi bật cả hai cờ, không nạp dải không dùng. Vòng prewarm chung và shader không cần sửa.
+- Thêm 4 ca trong `tests/view/fire-prewarm.test.ts`, tổng tệp 9 ca: bốn tổ hợp hai cờ, ảnh về muộn, cùng sampler giữa hai vật liệu, một lượt nạp/upload trước compile, mesh nhát chém được compile, khôi phục visibility và không render/phát thẻ/tăng tuổi.
+
+**Kiểm 287b:** không còn dấu xung đột trong `src`/`tests`; TypeScript qua; **1028/1028 test, 94/94 tệp** qua. Build wrapper 274 với đầu ra `/private/tmp/codex-287b-dist` qua; grep không có `fxcode`, `stripK`, `prewarmReport`; đã xóa build. Không dùng lệnh Git ghi: index vẫn chờ Claude đánh dấu giải xung đột và commit merge. Claude tiếp tục đo cổng 7 và parity trước khi đưa lên main. Báo cáo: `docs/codex-queue/287b-report.md` ở repo cha.

@@ -19,8 +19,9 @@ function meta(id: string): FlipbookMeta {
     pivot: [0.5, 0.5], aspect: 1, start: 0, heading: 0 };
 }
 
-function setup(lateStrip?: Promise<THREE.Texture>) {
-  vi.stubGlobal("location", { search: "" });
+function setup(lateStrip?: Promise<THREE.Texture>, code = false) {
+  const search = code ? "?fxcode=1" : "";
+  vi.stubGlobal("location", { search });
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x334455, 5, 100);
   scene.add(new THREE.HemisphereLight(), new THREE.DirectionalLight());
@@ -40,7 +41,7 @@ function setup(lateStrip?: Promise<THREE.Texture>) {
   stage.flipbooks.library(BRUSH.folder).add({ ...meta(BRUSH.id), loopMode: "none", timingProfile: "impact-key1" }, brush, { a, b });
   if (lateStrip !== undefined) {
     vi.spyOn(THREE.TextureLoader.prototype, "loadAsync").mockReturnValue(lateStrip);
-    vi.stubGlobal("location", { search: "", protocol: "http:" });
+    vi.stubGlobal("location", { search, protocol: "http:" });
   }
   stage.hooksOf(FIRE);
   const post = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
@@ -61,9 +62,55 @@ function setup(lateStrip?: Promise<THREE.Texture>) {
     setTarget: (t: THREE.WebGLRenderTarget | null) => { target = t; }, getTarget: () => target };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetFireAudit(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetFireAudit(); FIRE_LAB.slashTongues = false; });
 
 describe("Fire texture upload and scene prewarm (ticket 280)", () => {
+  it.each([
+    { code: false, tongues: false },
+    { code: true, tongues: false },
+    { code: false, tongues: true },
+    { code: true, tongues: true },
+  ])("shares and prewarms the finisher strip while preserving comparisons (code=$code, tongues=$tongues)", async ({ code, tongues }) => {
+    FIRE_LAB.slashTongues = tongues;
+    let finish!: (t: THREE.Texture) => void;
+    const f = setup(new Promise<THREE.Texture>((resolve) => { finish = resolve; }), code);
+    const strip = texture();
+    const slash = f.scene.getObjectByName("fx-flame-slash") as THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+    const wantsStrip = !code || !tongues;
+    const compiled = f.compile.getMockImplementation()!;
+    f.compile.mockImplementation((scene, camera) => {
+      compiled(scene, camera);
+      expect(slash.visible).toBe(true);
+      expect(slash.material.fragmentShader).toContain("texture2D(tStrip, vec2(us, vs))");
+      expect(slash.material.uniforms.tStrip!.value).toBe(tongues ? null : strip);
+      expect(slash.material.uniforms.uHasStrip!.value).toBe(tongues ? 0 : 1);
+      if (wantsStrip) expect(f.initTexture.mock.calls.filter(([t]) => t === strip)).toHaveLength(1);
+    });
+    try {
+      const warming = prewarmFire(f.stage, f.renderer, f.camera, f.scene);
+      if (wantsStrip) {
+        await vi.waitFor(() => expect(THREE.TextureLoader.prototype.loadAsync).toHaveBeenCalledTimes(1));
+        expect(f.compile).not.toHaveBeenCalled();
+        expect(slash.material.uniforms.tStrip!.value).toBeNull();
+        finish(strip);
+      }
+      await warming;
+      if (wantsStrip) {
+        expect(THREE.TextureLoader.prototype.loadAsync).toHaveBeenCalledExactlyOnceWith("/v/aura/strips/strip-fire-sheath-v2.rgba.png");
+        expect(f.stage.flipbooks.library("fire").get("strip-fire-sheath-v2")!.texture).toBe(strip);
+        expect(f.initTexture.mock.invocationCallOrder.at(-1)!).toBeLessThan(f.compile.mock.invocationCallOrder[0]!);
+      } else expect(THREE.TextureLoader.prototype.loadAsync).not.toHaveBeenCalled();
+      const card = f.scene.getObjectByName("flipbook-strip-fire-sheath-v2") as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
+      expect(card === undefined).toBe(code);
+      if (card !== undefined) expect(card.material.uniforms.uMap!.value).toBe(strip);
+      expect(f.compile).toHaveBeenCalledExactlyOnceWith(f.scene, f.camera);
+      expect(firePrewarmStatus(f.stage, f.renderer).prewarmed).toBe(true);
+      expect(slash.visible).toBe(false);
+      expect(f.stage.time).toBe(0); expect(f.stage.flipbooks.live).toBe(0);
+      expect(f.render).not.toHaveBeenCalled();
+    } finally { f.stage.flipbooks.dispose(); f.post.dispose(); strip.dispose(); }
+  });
+
   it("uploads every loaded Fire atlas, A/B mask and sprite/ground sampler once, then compiles the scene once", async () => {
     const f = setup();
     const { stage, renderer, scene, camera, initTexture, compile } = f;

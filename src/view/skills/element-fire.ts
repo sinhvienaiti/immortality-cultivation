@@ -136,6 +136,7 @@ export interface FirePrewarm {
  */
 export const FIRE_LAB = {
   riverSheath: false,
+  slashTongues: false,
   /** ?impact=brush|lotus (ticket 264); "lotus" restores key 1's old hit exactly as before the ticket. */
   impact: "brush" as "brush" | "lotus",
   /** What key 1's hits have drawn since the last reset; the lab reads it through __lab.fireImpact, the game never does. */
@@ -383,7 +384,6 @@ class FireLayers {
   constructor(private readonly stage: ElementStage) {
     const P = stage.flipbooks;
     const code = import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("fxcode") === "1";
-    this.stripReady = Promise.resolve();
     this.twinkles = this.handRing = this.sealRing = this.strip = null;
     if (!code) {
       this.twinkles = P.pool(FOLDER, "fire-twinkle-set", { mode: "fire", capacity: 256, renderOrder: 14 });
@@ -398,7 +398,6 @@ class FireLayers {
         const e = P.library(FOLDER).get(id)!;
         this.twinkles!.attach({ ...e.meta, frames: 16, variants: 8, loop: false, loopMode: "none" }, e.texture);
       });
-      this.stripReady = loadFireStrip(P);
     }
     // Key 7 and K5 keep up to ~90 lotuses alive at once (deaths collapse into one each; 03/11 recheck).
     // Lingering (round 3) they hold ~90 at once in K5's deaths: room to spare, a full pool would drop new ones.
@@ -446,6 +445,18 @@ class FireLayers {
     this.seams = code ? stage.beams(24, 13) : null;
     this.flameSlash = new FlameSlash(15);
     this.flameSlash.setRamp(CHAR, SLASH_DEEP, AMBER, WHITE_GOLD);
+    if (!FIRE_LAB.slashTongues) {
+      // Share lot 1's selected strip, including a late image, rather than loading another copy for the finisher.
+      const library = P.library(FOLDER);
+      const attachStrip = (): void => {
+        const entry = library.get(STRIP);
+        if (entry !== null) this.flameSlash.setStrip(entry.texture, 0.5);
+      };
+      library.watch((id) => { if (id === STRIP) attachStrip(); });
+      attachStrip();
+    }
+    // The finisher still uses the strip in ?fxcode=1 unless its own legacy comparison is requested.
+    this.stripReady = !code || !FIRE_LAB.slashTongues ? loadFireStrip(P) : Promise.resolve();
     stage.layer.add(this.flameSlash.mesh);
     this.groundRings = code ? stage.heatRings(16, "ground", 6) : null;
     this.groundRings?.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
@@ -1370,7 +1381,7 @@ class FireLayers {
       this.slashAcc = 0;
       return true;
     }
-    this.flameSlash.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, e.half * 1.3, head, fade, erode, e.mask, t);
+    this.flameSlash.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, e.half * 1.3, head, fade, erode, e.mask, t, this.stage.camera);
     this.slashAcc += 90 * a.dt * fade * (1 - erode) * this.stage.dens;
     const R = this.stage.rand;
     while (this.slashAcc >= 1) {
