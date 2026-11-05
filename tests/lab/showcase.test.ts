@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { SHOWCASE, UltShowcase } from "../../src/lab/showcase";
+import { EXPANSION, EXPANSION_SHOWCASE, SHOWCASE, Showcase, ULT_SHOWCASE } from "../../src/lab/showcase";
 import { FlipbookPlayer, parseFlipbookManifest } from "../../src/view/skills/flipbook";
 
 function camera(): THREE.PerspectiveCamera {
@@ -11,18 +11,23 @@ function camera(): THREE.PerspectiveCamera {
   return c;
 }
 
-function setup(): { show: UltShowcase; player: FlipbookPlayer; lights: string[] } {
-  const player = new FlipbookPlayer("/v/");
-  const lights: string[] = [];
-  const show = new UltShowcase(player, {
+function host(lights: string[]): ConstructorParameters<typeof Showcase>[1] {
+  return {
     camera: camera(),
     nearest: () => 0,
     at: (_i, out) => out.set(1, 0, -5),
+    caster: (out) => out.set(0, 0, 3),
     light: (_at, colour) => lights.push(colour),
     accent: () => {},
     shake: () => {},
     captionHost: null,
-  });
+  };
+}
+
+function setup(): { show: Showcase; player: FlipbookPlayer; lights: string[] } {
+  const player = new FlipbookPlayer("/v/");
+  const lights: string[] = [];
+  const show = new Showcase(player, host(lights), ULT_SHOWCASE);
   const entries: Record<string, unknown> = {};
   for (const [id, role] of [["ult-light", "ultimate"], ["pillar-thunder-single", "pillar"], ["pillar-thunder-field", "pillar"], ["kiem-guard", "weapon"],
     ["ult-water-profound-sea", "ultimate"], ["ult-water-profound-sea-v2", "ultimate"], ["ult-dark", "ultimate"]] as const) {
@@ -84,5 +89,44 @@ describe("the lab's showcase key (8): pillars and ultimates as video layers", ()
     }
     expect(frames / 60).toBeGreaterThan(2);
     expect(frames / 60).toBeLessThan(3);
+  });
+
+  it("key 9 matches the expansion's clips by their design code, in the catalogue's order, staged by group", () => {
+    const player = new FlipbookPlayer("/v/");
+    const lights: string[] = [];
+    const show = new Showcase(player, host(lights), EXPANSION_SHOWCASE);
+    const entries = {
+      "exp-c1-dragon": { file: "a.png", cols: 4, rows: 4, frames: 16, fps: 8, role: "beast", code: "C1" },
+      "exp-a1-lotus": { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 8, role: "area", code: "A1" },
+      "exp-b6-sword-immortal": { file: "c.png", cols: 4, rows: 4, frames: 16, fps: 8, role: "avatar", code: "B6" },
+      "exp-unknown": { file: "d.png", cols: 4, rows: 4, frames: 16, fps: 8, role: "treasure", code: "Z9" },
+      "pillar-x": { file: "e.png", cols: 4, rows: 4, frames: 16, fps: 8, role: "pillar" },
+    };
+    const lib = player.library("expansion");
+    for (const meta of parseFlipbookManifest({ flipbooks: entries }, "/v/expansion/").values()) lib.add(meta, new THREE.Texture());
+    expect(show.ids()).toEqual(["exp-a1-lotus", "exp-b6-sword-immortal", "exp-c1-dragon", "exp-unknown"]);
+    expect(show.item("exp-b6-sword-immortal").en).toBe("Taixu Sword Immortal Phantom");
+    expect(show.item("exp-b6-sword-immortal").place).toBe("caster");
+    expect(show.item("exp-c1-dragon").place).toBe("foes");
+    expect(show.item("exp-a1-lotus").place).toBe("field");
+    expect(show.item("exp-unknown").en).toBe("Z9");
+    expect(show.play()).toBe("exp-a1-lotus");
+    expect(show.play()).toBe("exp-b6-sword-immortal");
+    expect(show.prev()).toBe("exp-a1-lotus");
+    player.update(1 / 60);
+    expect(player.live).toBe(2);
+    // The first element's light: A1 Wood, B6 Metal.
+    expect(lights).toEqual(["#d8f2a8", "#d6f3ff", "#d8f2a8"]);
+  });
+
+  it("names all 30 expansion designs in English and Hán Việt, four groups, a sound for each", () => {
+    expect(EXPANSION.length).toBe(30);
+    expect(new Set(EXPANSION.map((it) => it.code)).size).toBe(30);
+    for (const g of ["area", "avatar", "beast", "treasure"]) expect(EXPANSION.filter((it) => it.kind === g).length).toBeGreaterThanOrEqual(6);
+    for (const it of EXPANSION) {
+      expect(it.en.length).toBeGreaterThan(5);
+      expect(it.vi.length).toBeGreaterThan(5);
+      expect(it.sound).toMatch(/^tt-sfx-ult-/);
+    }
   });
 });

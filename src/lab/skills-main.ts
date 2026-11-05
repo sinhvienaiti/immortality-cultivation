@@ -5,7 +5,8 @@
  * into the game (skill game-vfx-layered "Demo or lab first"; owner 02/11).
  * Keys: 0 Phi Kiếm, 1 Ngự Kiếm Quyết, 2 Nhất Tuyến Xuyên Vân, 3 Hồi Kiếm Hộ
  * Thân, 4 Lưu Quang Bộ, 5 Lạc Kiếm Trận, 6 Thiên Hà Kiếm Vũ, 8 the next pillar or element ultimate of
- * art-src/lab/vfx/ult/ as its video layer on the field (showcase.ts; __lab.showcase), B an enemy blow
+ * art-src/lab/vfx/ult/ and 9 the next design of the skills expansion (art-src/lab/vfx/expansion/) as their video layers
+ * on the field, Shift+8 and Shift+9 back (showcase.ts; __lab.showcase, __lab.expansion), B an enemy blow
  * at the guard, R reset. A key is the word's last correct keystroke (canon
  * D58, instant cast): the release fires on that frame. ?typed=1 (or the
  * panel's checkbox) types the word at the chosen WPM first: the charge
@@ -80,7 +81,7 @@ import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, type ClipAudit } from "../view/skills/element-clips";
-import { UltShowcase } from "./showcase";
+import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -840,16 +841,20 @@ const auraSolo = new AuraSolo(view.layers.fx, textures.trace);
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
 const lightAt = new THREE.Vector3();
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k), light: (x, y, z, colour, intensity) => lights.flash(lightAt.set(x, y, z), view.camera.position, colour, intensity, true) });
-// Key 8: the pillar skills and the element ultimates as their video layers on the field (showcase.ts; not in the sim).
-const showcase = new UltShowcase(stage.flipbooks, {
+// Keys 8 and 9: the pillar skills and element ultimates, and the skills expansion's 30 designs, as their video layers on
+// the field (showcase.ts; not in the sim).
+const showcaseHost: ShowcaseHost = {
   camera: view.camera,
   nearest: (x, z, r) => herd.nearest(x, z, r),
   at: (i, out) => out.set(herd.x(i), 0, herd.z(i)),
+  caster: (out) => out.set(caster.x, 0, caster.z),
   light: (at, colour, intensity) => lights.flash(at, view.camera.position, colour, intensity, true),
   accent: (k) => screen.warm(k),
   shake: (px, seconds, roll) => screen.shake(px, seconds, roll),
   captionHost: document.body,
-});
+};
+const showcase = new Showcase(stage.flipbooks, showcaseHost, ULT_SHOWCASE);
+const expansion = new Showcase(stage.flipbooks, showcaseHost, EXPANSION_SHOWCASE);
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
@@ -1152,6 +1157,8 @@ window.addEventListener("keydown", (e) => {
   if (slot) type(slot);
   // 8 the next pillar or ultimate, Shift+8 the one before (Shift+8 types "*" on most layouts).
   else if (e.code === "Digit8" || e.key === "8" || e.key === "*") void (e.shiftKey || e.key === "*" ? showcase.prev() : showcase.play());
+  // 9 the next new skill (SKILLS_EXPANSION), Shift+9 the one before ("(" on most layouts).
+  else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? expansion.prev() : expansion.play());
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
@@ -1190,6 +1197,7 @@ if (params.get("ui") !== "0") {
     ["6", "Thiên Hà Kiếm Vũ · Milky-Way Sword Rain"],
     ["7", "Vạn Kiếm Triều Tông · Ten-Thousand Sword Convergence"],
     ["8", "Trình diễn cột trụ và tuyệt kỹ (Shift+8 lùi lại; lớp video, chưa vào sim) · Pillars and ultimates"],
+    ["9", "Kỹ năng mới: diện rộng, pháp tướng, thần thú, pháp bảo (Shift+9 lùi lại) · Skills expansion"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
@@ -1275,35 +1283,39 @@ if (params.get("ui") !== "0") {
   elementListeners.push((id) => (elSelect.value = id));
   el.append(elSelect);
   panel.append(el);
-  // Key 8's list (showcase.ts): any pillar or ultimate directly; it fills as their clips arrive.
-  const sl = document.createElement("label");
-  sl.textContent = "Trình diễn (8) ";
-  const scSelect = document.createElement("select");
-  scSelect.style.cssText = select.style.cssText;
-  const fillShowcase = (): void => {
-    const keep = scSelect.value;
-    scSelect.replaceChildren();
-    const none = document.createElement("option");
-    none.value = "";
-    none.textContent = "— chọn cột trụ hoặc tuyệt kỹ —";
-    scSelect.append(none);
-    for (const id of showcase.ids()) {
-      const it = showcase.item(id);
-      const o = document.createElement("option");
-      o.value = id;
-      o.textContent = `${it.kind === "pillar" ? "Cột trụ" : "Tuyệt kỹ"} · ${it.element[1] || "?"} · ${it.en}`;
-      scSelect.append(o);
-    }
-    scSelect.value = keep;
+  // Keys 8 and 9's lists (showcase.ts): any item directly; they fill as their clips arrive.
+  const showcaseList = (label: string, sc: Showcase, empty: string, kinds: Record<string, string>): void => {
+    const sl = document.createElement("label");
+    sl.textContent = label + " ";
+    const scSelect = document.createElement("select");
+    scSelect.style.cssText = select.style.cssText + ";max-width:300px";
+    const fill = (): void => {
+      const keep = scSelect.value;
+      scSelect.replaceChildren();
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = empty;
+      scSelect.append(none);
+      for (const id of sc.ids()) {
+        const it = sc.item(id);
+        const o = document.createElement("option");
+        o.value = id;
+        o.textContent = `${it.code !== undefined ? it.code + " · " : ""}${kinds[it.kind] ?? it.kind} · ${it.element[1] || "?"} · ${it.en}`;
+        scSelect.append(o);
+      }
+      scSelect.value = keep;
+    };
+    fill();
+    sc.onList(fill);
+    scSelect.onchange = () => {
+      if (scSelect.value !== "") sc.play(scSelect.value);
+      scSelect.blur();
+    };
+    sl.append(scSelect);
+    panel.append(sl);
   };
-  fillShowcase();
-  showcase.onList(fillShowcase);
-  scSelect.onchange = () => {
-    if (scSelect.value !== "") showcase.play(scSelect.value);
-    scSelect.blur();
-  };
-  sl.append(scSelect);
-  panel.append(sl);
+  showcaseList("Trình diễn (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" });
+  showcaseList("Kỹ năng mới (9)", expansion, "— chọn kỹ năng mới (chờ clip) —", { area: "Diện rộng", avatar: "Pháp tướng", beast: "Thần thú", treasure: "Pháp bảo" });
   // Sword aura selector (SWORD_AURA §5.1): off (today's look) or the owner's pick.
   const al = document.createElement("label");
   al.textContent = "Aura ";
@@ -1546,6 +1558,8 @@ declare global {
       crescents(): { metal: number; fire: number };
       /** Key 8 (showcase.ts): plays pillar or ultimate `id` (none: the next); what it played and every id it has. */
       showcase(id?: string): { played: string | null; ids: string[] };
+      /** Key 9 (showcase.ts, SKILLS_EXPANSION): plays new skill `id` (none: the next); what it played and every id it has. */
+      expansion(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
       fxSolo(prefix: string | null): number;
       /** Lab debugging: shows or hides every fx mesh whose name starts with `prefix` and redraws the frame (no time passes). */
@@ -1890,6 +1904,9 @@ void (async () => {
     },
     showcase(id) {
       return { played: showcase.play(id), ids: showcase.ids() };
+    },
+    expansion(id) {
+      return { played: expansion.play(id), ids: expansion.ids() };
     },
     clipKit() {
       const a = clipAudit(stage, fx.element.id);

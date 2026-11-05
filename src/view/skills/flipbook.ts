@@ -132,6 +132,8 @@ export interface FlipbookMeta {
    * under), and "rim", the light filmed on black (added on top). Absent: a clip that stands alone.
    */
   readonly layer?: "body" | "rim";
+  /** A design's code in its catalogue (the lab's showcases: "A1" … "D8" of the skills expansion); ignored by playback. */
+  readonly code?: string;
 }
 
 export function isFlipbookV2(meta: FlipbookMeta): boolean {
@@ -246,6 +248,7 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       ...frameOf(entry.timing, "peak", frames),
       ...frameOf(entry.timing, "holdEnd", frames),
       ...(entry.layer === "body" || entry.layer === "rim" ? { layer: entry.layer } : {}),
+      ...(typeof entry.code === "string" && /^[A-Za-z0-9-]{1,12}$/.test(entry.code) ? { code: entry.code } : {}),
     });
   }
   return out;
