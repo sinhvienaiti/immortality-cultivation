@@ -14,7 +14,7 @@ import type { Rgb } from "./weapons";
 
 /** Samples along the band, the length it trails (m), how long it takes to erode once its crescent is gone (s). */
 const N = 24;
-export const TRAIL_M = 5;
+export const TRAIL_M = 8;
 export const FADE_S = 0.5;
 /** History kept (head positions, one a frame). */
 const HISTORY = 64;
@@ -84,7 +84,7 @@ void main() {
   // Soft edges: faded over 45 % of the half width (never a hard edge).
   float soft = smoothstep(0.0, 0.45, side);
   // It rises out of the crescent's hollow (no straight edge at its head) and thins away to its tail.
-  float taper = pow(1.0 - vUv.x, 1.3) * smoothstep(0.0, 0.08, vUv.x);
+  float taper = (1.0 - vUv.x) * smoothstep(0.0, 0.05, vUv.x);
   float f;
   if (uWindow > 1.5) {
     float k = mod(floor(uTime * uFps), 2.0 * (uWindow - 1.0));
