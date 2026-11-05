@@ -13,6 +13,7 @@ import { ICE } from "./element-ice";
 import { DARK } from "./element-dark";
 import { LIGHT } from "./element-light";
 import { WOOD } from "./element-wood";
+import { EARTH } from "./element-earth";
 import { WATER } from "./element-water";
 
 export const DEFAULT_ELEMENT: ElementId = "metal";
@@ -27,6 +28,7 @@ const KITS = new Map<ElementId, ElementKit>([
   [DARK.id, DARK],
   [LIGHT.id, LIGHT],
   [WOOD.id, WOOD],
+  [EARTH.id, EARTH],
 ]);
 
 /** Adds or replaces a kit (load time). */
