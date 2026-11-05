@@ -80,3 +80,16 @@ Anh (06/11 00:05): "tạm thời chưa cần chấm, tôi sẽ là người ch�
 - D6, D7, D8 không có âm Firefly (hết lượt), tạm dùng âm tuyệt kỹ của hệ đầu.
 - Ám không có clip `groundMark` nên D8 không có ấn.
 - Kiểm: 1069 test qua. Chrome headless tung D1–D8, 0 lỗi; cú đầu lệch khung đỉnh của clip ≤ 1 khung.
+
+## Đợt 5: B1–B6 pháp tướng ở phím 9
+
+- Thêm 6 dòng B1–B6. Bảng `KEY9_SKILLS` nay đủ 30 kỹ năng mới.
+- Pháp tướng đứng sau người chơi như phím 9 cũ. Hình đánh trải theo clip:
+  - B1: sáu binh khí lần lượt nện xuống sáu điểm trên cụm quái (`perPoint`), mỗi điểm một cú;
+  - B2: mười sáu bàn tay lần lượt in xuống, vừa 13 điểm vì giữ khoảng cách giữa các điểm;
+  - B3: chém cung 270° quanh người chơi, quay về cụm quái dày nhất;
+  - B4: kiếm sao cắm dưới chân pháp tướng, sóng vòng 14 m quanh người chơi;
+  - B5: chữ X cắt ở 50° và 130° qua chỗ người chơi, hai cánh vươn tới hai góc xa, đúng hình clip (bảng ghi đường thẳng hai đường);
+  - B6: 24 binh khí tỏa ra, vừa 19 điểm.
+- Ám không có `groundMark` nên B5 không có ấn.
+- Kiểm: 1070 test qua. Chrome headless tung B1–B6, 0 lỗi; cú đầu lệch khung đỉnh của clip ≤ 1 khung.

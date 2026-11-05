@@ -153,6 +153,9 @@ export const KEY8_SKILLS: readonly ClipSkill[] = [
  * beast struck when the body reaches it; C2's tiger rakes four parallel claw lines along its clip's diagonal (30°).
  * Batch 4, the treasures: D1's seal drops onto the densest group; D3's gourd and D6's mirror work from the field's far
  * edge, where their clips draw them; D6, D7, D8 have no Firefly sound (their first element's ultimate stands in).
+ * Batch 5, the avatars (rising over the caster): B1's six weapons and B2's sixteen palms slam one point after another;
+ * B3 cleaves 270° round the caster; B4's star sword lands at its feet; B5's X crosses at the caster, its arms reaching
+ * the field's far corners.
  */
 export const KEY9_SKILLS: readonly ClipSkill[] = [
   // A1 Myriad Spirit Lotus Bloom · Vạn Linh Liên Hoa Trận
@@ -298,6 +301,42 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
     id: "twelve-stem-nether-banners", element: "dark", shape: "field", radius: 20, count: 12, damage: "heavy", mark: 0.15, linger: 1.8,
     strikes: [{ frame: "peak", power: 1 }, { after: 0.5, power: 0.3, kind: "tick" }, { after: 1, power: 0.3, kind: "tick" }, { after: 1.5, power: 0.3, kind: "tick" }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.62 s to the clip peak; no Firefly sound: its first element's ultimate stands in",
+  },
+  // B1 Three-Faced Six-Armed War Sovereign · Tam Đầu Lục Tí Chiến Tôn Pháp Tướng
+  {
+    id: "asura-six-arms-avatar", element: "fire", shape: "multi", radius: 3, count: 6, damage: "ult", mark: 0.15, linger: 1.8, perPoint: true, sfx: "tt-sfx-x-asura-six-arms-avatar/take2.wav",
+    strikes: [{ frame: "peak", power: 0.7 }, { after: 0.07, power: 0.7 }, { after: 0.14, power: 0.7 }, { after: 0.21, power: 0.7 }, { after: 0.28, power: 0.7 }, { after: 0.35, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak",
+  },
+  // B2 Thousand-Hand Bodhi Illuminator · Thiên Thủ Lưu Ly Minh Vương Pháp Tướng
+  {
+    id: "myriad-palm-bodhi-avatar", element: "light", shape: "multi", radius: 2.6, count: 16, damage: "ult", mark: 0.15, linger: 1.7, perPoint: true, sfx: "tt-sfx-x-myriad-palm-bodhi-avatar/take1.wav",
+    strikes: [{ frame: "peak", power: 0.6 }, { after: 0.1, power: 0.7 }, { after: 0.2, power: 0.8 }, { after: 0.3, power: 0.9 }, { after: 0.4, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak",
+  },
+  // B3 Primordial Heaven-and-Earth Titan · Pháp Thiên Tượng Địa Cự Thần
+  {
+    id: "heaven-earth-titan-avatar", element: "earth", shape: "sweep", radius: 18, count: 1, damage: "ult", mark: false, linger: 2, arc: 270, sfx: "tt-sfx-x-heaven-earth-titan-avatar/take1.wav",
+    strikes: [{ frame: "peak", power: 0.6 }, { after: 0.17, power: 0.8 }, { after: 0.35, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak; a 270° cleave round the caster",
+  },
+  // B4 Purple Micro Star Emperor · Tử Vi Tinh Quân Pháp Tướng
+  {
+    id: "polar-star-emperor-avatar", element: "star", shape: "ring", radius: 14, count: 1, damage: "ult", mark: 0.2, linger: 1.8, sfx: "tt-sfx-x-polar-star-emperor-avatar/take1.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.6, power: 0.4 }, { after: 1.2, power: 0.3, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.25 s to the clip peak; the star sword lands at the avatar's feet (its clip), the ring round the caster",
+  },
+  // B5 Nine-Nether Soul Arbiter · Cửu U Minh Đế Pháp Tướng
+  {
+    id: "nether-samsara-monarch-avatar", element: "dark", shape: "line", radius: 3.2, count: 2, damage: "ult", mark: false, linger: 1.9, angles: [50, 130], sfx: "tt-sfx-x-nether-samsara-monarch-avatar/take3.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.6, power: 0.25, kind: "tick" }, { after: 1.2, power: 0.25, kind: "tick" }, { after: 1.8, power: 0.25, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak; the X crosses at the avatar over the caster, its arms to the field's far corners (its clip)",
+  },
+  // B6 Taixu Sword Immortal Phantom · Thái Hư Kiếm Tiên Pháp Tướng
+  {
+    id: "immortal-sword-progenitor-avatar", element: "metal", shape: "multi", radius: 1.9, count: 24, damage: "ult", mark: false, linger: 1.6, sfx: "tt-sfx-x-immortal-sword-progenitor-avatar/take4.wav",
+    strikes: [{ frame: "peak", power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak; element any: its design's first, metal",
   },
 ];
 

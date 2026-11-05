@@ -342,4 +342,45 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     expect(mirror.hits.length).toBe(3);
     expect(new Set(mirror.hits.map((h) => h.delay.toFixed(3))).size).toBe(3);
   });
+
+  it("key 9's avatars (batch 5): weapons slam point after point, an X across the middle, a 270° cleave round the caster", () => {
+    const row = (id: string): ClipSkill => KEY9_SKILLS.find((s) => s.id === id)!;
+    for (const id of ["asura-six-arms-avatar", "myriad-palm-bodhi-avatar", "heaven-earth-titan-avatar", "polar-star-emperor-avatar", "nether-samsara-monarch-avatar", "immortal-sword-progenitor-avatar"]) {
+      expect(row(id), id).toBeDefined();
+    }
+    expect(KEY9_SKILLS.length).toBe(30);
+    const caster = { x: 0, z: 3 };
+    const centre = { x: 0, z: -6 };
+    // B5's X: two lines crossing at the caster (50° and 130°), their arms up to the far corners; the beasts off both spared.
+    const x = aimClipSkill(row("nether-samsara-monarch-avatar"), new Field([[10, -9], [-10, -9], [0, -6], [0, -13]]), caster, centre, "caster");
+    expect(x.hits.map((h) => h.i).sort()).toEqual([0, 1]);
+    // B3's cleave: 270° round the caster facing the densest group (north), the quarter behind it spared.
+    const cleave = aimClipSkill(row("heaven-earth-titan-avatar"), new Field([[2, -10], [2.5, -10.5], [8, 3], [-8, 3], [0, 12]]), caster, centre, "caster");
+    expect(cleave.hits.map((h) => h.i).sort()).toEqual([0, 1, 2, 3]);
+
+    // B1: six weapons on six points, one strike each.
+    const player = new FlipbookPlayer("/v/");
+    const show = new Showcase(player, {
+      camera: camera(), nearest: () => -1, at: (_i, out) => out.set(0, 0, -6), caster: (out) => out.set(0, 0, 3),
+      light: () => {}, accent: () => {}, shake: () => {}, captionHost: null,
+    }, EXPANSION_SHOWCASE);
+    const entries = { "asura-six-arms-avatar": { file: "b1.png", cols: 4, rows: 8, frames: 31, fps: 6, cell: [640, 360], role: "avatar", code: "B1", timing: { peak: 16, holdEnd: 22 } } };
+    for (const meta of parseFlipbookManifest({ flipbooks: entries }, "/v/expansion/").values()) player.library("expansion").add(meta, new THREE.Texture());
+    const spread: [number, number][] = Array.from({ length: 12 }, (_, k) => [(k % 4) * 8 - 12, Math.floor(k / 4) * 8 - 14]);
+    const field = new Field(spread);
+    const struck: number[][] = [];
+    let beat = -1;
+    const runner = new ClipSkillRunner(show, {
+      targets: field, layer: new THREE.Group(), player, caster: (out) => out.set(0, 0, 3), release: () => {},
+      blow: (_s, i) => ((struck[beat] ??= []).push(i), false),
+      strike: () => (beat += 1), status: () => {},
+    }, KEY9_SKILLS, KEY9_NAV);
+    runner.cast("asura-six-arms-avatar");
+    for (let k = 0; k < 120; k += 1) runner.update(1 / 60);
+    expect(runner.last!.points).toBe(6);
+    expect(struck.length).toBe(6);
+    const all = struck.flat();
+    expect(new Set(all).size).toBe(all.length);
+    for (const s of struck) expect(s.length).toBeGreaterThan(0);
+  });
 });
