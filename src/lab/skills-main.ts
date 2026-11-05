@@ -32,6 +32,7 @@
  * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
  * ?slash=tongues keeps Fire key 7's old finisher tongues for A/B (default: the owner's Firefly strip).
  * ?dark=b draws Dark in palette B (black, cold silver-grey rims) instead of the owner's pick A (black, ember crimson).
+ * ?cut=sabre draws every slash as the lopsided swept swing kept for the Sabre school, not the Sword's symmetric crescent.
  * ?stripK=<positive number> overrides Fire's measured finisher strip repeat count in this lab only.
  * Sword aura (docs/games/tu-tien/skills/SWORD_AURA.md §5.1): ?aura=off|a (default off: today's look; a =
  * wind-silk-mantle), the panel's Aura list, A toggles it, __lab.aura(id) sets it, __lab.auraLayer(name, on, intensity)
@@ -80,7 +81,7 @@ import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { FlameSlash } from "../view/skills/flame-slash";
-import { clipAudit, crescentOf, type ClipAudit } from "../view/skills/element-clips";
+import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
@@ -94,6 +95,8 @@ import { BodyProxy } from "./body-proxy";
 import { TwinPearlGreybox, type TwinCastReport } from "./twin-pearl-greybox";
 
 const params = new URLSearchParams(location.search);
+// ?cut=sabre: the lopsided swept swing (kept for the Sabre school) in place of the Sword's symmetric crescent (read once).
+if (params.get("cut") === "sabre") SLASH_STYLE.style = "sabre";
 // ?dark=b: Dark in palette B (black, silver-grey rims) in place of the owner's pick A, to compare them (read once).
 if (params.get("dark") === "b") registerElement(DARK_B);
 else if (params.get("dark") !== null && params.get("dark") !== "a") console.warn(`[lab] ?dark=${params.get("dark")}: a or b; a is used`);

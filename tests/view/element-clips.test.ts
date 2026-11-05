@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { CLIP_ROLES, clipAudit, crescentOf, SLASH } from "../../src/view/skills/element-clips";
+import { CLIP_ROLES, clipAudit, crescentOf, SLASH, SLASH_STYLE } from "../../src/view/skills/element-clips";
 import { CUT } from "../../src/view/skills/sword-grammar";
 import { DARK, DARK_B } from "../../src/view/skills/element-dark";
 import type { ClipRole, ElementKit, FoeStatusKind } from "../../src/view/skills/element-kit";
@@ -479,7 +479,7 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(a.bodies.groundImpact).toBe(0);
   });
 
-  it("presents every slash as a sweep, a hold and an erosion (owner ~20:50), the flying crescent held whole", () => {
+  it("draws the sword's crescent symmetric (owner ~21:20): mirrored half, bloom from the centre, erosion from both horns; the flying one whole", () => {
     const layer = new THREE.Group();
     const cam = camera();
     const tex = sheets();
@@ -504,7 +504,7 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     const cuts = spawns.filter((x) => x.alpha < 2);
     expect(flying.length).toBeGreaterThan(8);
     expect(cuts.length).toBe(1);
-    expect(cuts[0]!.life).toBeCloseTo(SLASH.sweep + SLASH.hold + SLASH.erode, 6);
+    expect(cuts[0]!.life).toBeCloseTo(SLASH.bloom + SLASH.flare + SLASH.erode, 6);
     // Held at the peak frame: the sweep animates it.
     expect(cuts[0]!.rate).toBe(0);
     // The fragment reads its alpha through the sweep.
@@ -512,7 +512,24 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     pool.mesh.material.onBeforeCompile(shader as never, null as never);
     expect(shader.fragmentShader).toContain("vAlphaS = vxSweep();");
     expect(shader.fragmentShader).toContain("varying float vAlpha;");
-    expect(shader.uniforms.uSweep).toBeDefined();
+    // The cell's uv mirrored across its centre: Water mirrors its thicker left half; the sword's path (w = 0).
+    expect(shader.fragmentShader).toContain("0.5 - abs(vUv.x - 0.5)");
+    expect((shader.uniforms.uMirror as { value: number }).value).toBe(0);
+    expect((shader.uniforms.uSweep as { value: THREE.Vector4 }).value.w).toBe(0);
+  });
+
+  it("keeps the lopsided swept swing for the Sabre school behind SLASH_STYLE (no mirror, origin to tip)", () => {
+    SLASH_STYLE.style = "sabre";
+    try {
+      const stage = new ElementStage({ layer: new THREE.Group(), camera: camera(), quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" });
+      giveClips(stage, "thunder", ["slash"]);
+      stage.hooksOf(elementById("thunder")!);
+      const u = stage.flipbooks.pool("thunder", "thunder-slash").mesh.material.uniforms;
+      expect((u.uMirror as { value: number }).value).toBe(-1);
+      expect((u.uSweep as { value: THREE.Vector4 }).value.w).toBe(1);
+    } finally {
+      SLASH_STYLE.style = "sword";
+    }
   });
 
   it("takes the ribbon clip as the flight trail once it arrives", () => {

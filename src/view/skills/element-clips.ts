@@ -30,7 +30,7 @@ import type {
   StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TrailLook, TravelArgs,
 } from "./element-kit";
 import type { ElementStage } from "./element-stage";
-import { ONE_FRAME, type FlipbookLibrary, type FlipbookMode, type FlipbookPool, type FlipOptions } from "./flipbook";
+import { ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type FlipbookMode, type FlipbookPool, type FlipOptions } from "./flipbook";
 import { CUT } from "./sword-grammar";
 import { glowOf, glowOfRamp, rimOf, type Rgb, type WeaponGlow } from "./weapons";
 
@@ -150,42 +150,77 @@ const isRole = (r: string | undefined): r is ClipRole => r !== undefined && (CLI
  * strip variant left out).
  */
 /**
- * Every slash is presented as a slash, not a stamp (owner 05/11 ~20:50: "bạn có hiểu dạng vệt chém không"): revealed by
- * a sweep from its origin to its tip in SLASH.sweep s with a hot head running along it, held SLASH.hold s, then eroded
- * from the origin toward the tip over SLASH.erode s; the clip is held at its peak frame (the whole crescent) while the
- * sweep, the hold and the erosion animate it. Its origin is the cell's left, its tip the right (the slash stills).
+ * The Sword school shoots its swords straight out, so its sword-qi crescent is SYMMETRIC (owner 05/11 ~21:20: "chúng ta
+ * đang bắn kiếm thẳng ra cơ mà"): both horns equal, the convex side forward along the flight, centred on the flight
+ * line. Our slash clips and stills are lopsided swings, so a slash card mirrors the better half of its cell across the
+ * centre (CRESCENT_HALF, measured on each clip's peak frame) until the symmetric stills (Codex, `<element>-crescent-sym`)
+ * land, which are preferred. A sword crescent blooms from the centre out to both horns in SLASH.bloom s, flares for
+ * SLASH.flare s, then erodes from both horn tips toward the centre over SLASH.erode s. The lopsided swing, swept from its
+ * origin to its tip and eroded from its tail (the 20:50 slash), is kept for the Sabre school (SLASH_STYLE.style = "sabre",
+ * the lab's ?cut=sabre): SABRE. The clip is held at its peak frame while the shader animates it.
  */
-export const SLASH = { sweep: 0.1, hold: 0.15, erode: 0.7 } as const;
-const SLASH_LIFE = SLASH.sweep + SLASH.hold + SLASH.erode;
+export const SLASH = { bloom: 0.08, flare: 0.07, erode: 0.6 } as const;
+export const SABRE = { sweep: 0.1, hold: 0.15, erode: 0.7 } as const;
+/** Sword (symmetric crescent) or Sabre (swept swing); read when a slash pool is made and a slash spawned. */
+export const SLASH_STYLE = { style: "sword" as "sword" | "sabre" };
+const slashLife = (): number => (SLASH_STYLE.style === "sword" ? SLASH.bloom + SLASH.flare + SLASH.erode : SABRE.sweep + SABRE.hold + SABRE.erode);
+
+/**
+ * Which half of each element's slash clip is mirrored into the symmetric crescent: the thicker one by the light of its
+ * peak frame (05/11 21:25; the Dark still: its clean blade-edge half, the right). Unknown folders: the right.
+ */
+const CRESCENT_HALF: Readonly<Record<string, "left" | "right">> = {
+  metal: "right", fire: "right", earth: "right", wood: "right", dark: "right",
+  water: "left", thunder: "left", wind: "left", ice: "left", light: "left", poison: "left", blood: "left", void: "left", star: "left",
+};
 
 const SWEEP_GLSL = /* glsl */ `
-// A slash card (element-clips.ts sweepCard): shown from its origin (cell left) to a head running to its tip (cell right)
-// over uSweep.x of its life, the head hot (uSweep.z wide); from uSweep.y of its life it erodes from the origin toward the
-// tip, broken by noise. vAlpha >= 2 marks a held card (key 2's flying crescent): no sweep, its alpha vAlpha - 2.
+// A slash card (element-clips.ts sweepCard). vAlpha >= 2 marks a held card (key 2's flying crescent): shown whole, its
+// alpha vAlpha - 2. Sword (uSweep.w = 0): a symmetric crescent shown from its centre out to both horns over uSweep.x of
+// its life, its head hot (uSweep.z wide), flaring until uSweep.y, then eroded from both horn tips toward the centre.
+// Sabre (uSweep.w = 1): shown from its origin (cell left) to a head running to its tip, eroded from the origin.
 float vxSweep() {
   if (vAlpha >= 2.0) return vAlpha - 2.0;
   float k = vAge.x;
-  float x = vUv.x;
-  float head = clamp(k / uSweep.x, 0.0, 1.0) * 1.1;
-  float shown = 1.0 - smoothstep(head - 0.03, head + 0.03, x);
-  float hot = smoothstep(head - uSweep.z, head, x) * shown * (1.0 - smoothstep(0.8, 1.0, k / uSweep.x));
-  float e = clamp((k - uSweep.y) / max(1e-3, 1.0 - uSweep.y), 0.0, 1.0);
   float n = vxNoise(vUv * vec2(9.0, 5.0) + vAge.z * 7.0);
-  float kept = smoothstep(e * 1.2 - 0.1, e * 1.2 + 0.02, x + (n - 0.5) * 0.2);
-  return vAlpha * shown * kept * (1.0 + 1.8 * hot);
+  float e = clamp((k - uSweep.y) / max(1e-3, 1.0 - uSweep.y), 0.0, 1.0);
+  float x = uSweep.w > 0.5 ? vUv.x : abs(vUv.x - 0.5) * 2.0;
+  float head = clamp(k / uSweep.x, 0.0, 1.0) * 1.1;
+  float shown = 1.0 - smoothstep(head - 0.04, head + 0.04, x);
+  float hot = smoothstep(head - uSweep.z, head, x) * shown * (1.0 - smoothstep(0.8, 1.0, k / uSweep.x));
+  if (uSweep.w > 0.5) {
+    float kept = smoothstep(e * 1.2 - 0.1, e * 1.2 + 0.02, x + (n - 0.5) * 0.2);
+    return vAlpha * shown * kept * (1.0 + 1.8 * hot);
+  }
+  float kept = 1.0 - smoothstep(1.0 - e * 1.15 - 0.02, 1.0 - e * 1.15 + 0.1, x + (n - 0.5) * 0.18);
+  float flare = k < uSweep.x ? 0.0 : 1.0 - smoothstep(uSweep.x, uSweep.y + 0.08, k);
+  return vAlpha * shown * kept * (1.0 + 1.6 * hot + 0.7 * flare);
 }
 `;
 
-/** Gives a slash pool the sweep, hold and erosion (SLASH; its fragment's vAlpha through vxSweep). */
-function sweepCard(pool: FlipbookPool): void {
+/**
+ * Gives a slash pool the crescent's mirror and its bloom or sweep, hold and erosion (its fragment's cell uv mirrored
+ * across the centre from `half` for a sword; its vAlpha through vxSweep).
+ */
+function sweepCard(pool: FlipbookPool, half: "left" | "right"): void {
   const material = pool.mesh.material;
-  const uSweep = { value: new THREE.Vector4(SLASH.sweep / SLASH_LIFE, (SLASH.sweep + SLASH.hold) / SLASH_LIFE, 0.16, 0) };
+  const sword = SLASH_STYLE.style === "sword";
+  const life = slashLife();
+  const uSweep = { value: sword
+    ? new THREE.Vector4(SLASH.bloom / life, (SLASH.bloom + SLASH.flare) / life, 0.22, 0)
+    : new THREE.Vector4(SABRE.sweep / life, (SABRE.sweep + SABRE.hold) / life, 0.16, 1) };
+  const uMirror = { value: sword ? (half === "right" ? 1 : 0) : -1 };
   material.uniforms.uSweep = uSweep;
+  material.uniforms.uMirror = uMirror;
   material.customProgramCacheKey = () => "element-sweep-card";
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uSweep = uSweep;
+    shader.uniforms.uMirror = uMirror;
     let f = shader.fragmentShader.replace(/\bvAlpha\b/g, "vAlphaS");
-    f = f.replace("varying float vAlphaS;", "varying float vAlpha;\nuniform vec4 uSweep;\nfloat vAlphaS;");
+    f = f.replace("varying float vAlphaS;", "varying float vAlpha;\nuniform vec4 uSweep;\nuniform float uMirror;\nfloat vAlphaS;");
+    const uv = "  vec2 uv = clamp(vUv, 0.004, 0.996);";
+    if (f.indexOf(uv) < 0) throw new Error("[element-clips] sweep-card uv anchor missing");
+    f = f.replace(uv, "  vec2 uv = clamp(vec2(uMirror < -0.5 ? vUv.x : uMirror > 0.5 ? 0.5 + abs(vUv.x - 0.5) : 0.5 - abs(vUv.x - 0.5), vUv.y), 0.004, 0.996);");
     const main = "void main() {";
     const at = f.indexOf(main);
     if (at < 0 || f.indexOf(main, at + 1) >= 0) throw new Error("[element-clips] sweep-card fragment anchor missing");
@@ -193,13 +228,55 @@ function sweepCard(pool: FlipbookPool): void {
   };
 }
 
-/** A slash's options on `o`: its life the sweep, hold and erosion, held at the clip's peak frame (the whole crescent). */
+/** A slash's options on `o`: its life the bloom (or sweep), flare and erosion, held at the clip's peak frame. */
 function slashTiming(p: FlipbookPool, o: FlipOptions): FlipOptions {
   const [first, last] = span(p);
-  o.life = SLASH_LIFE;
+  o.life = slashLife();
   o.rate = 0;
   o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
   return o;
+}
+
+/** The half a slash clip mirrors: a symmetric still either (the right), else its folder's (CRESCENT_HALF). */
+const halfOf = (folder: string, id: string): "left" | "right" => (id.endsWith("-crescent-sym") ? "right" : CRESCENT_HALF[folder] ?? "right");
+
+/** The symmetric crescent still Codex draws per element (preferred over the mirrored clip once it lands). */
+const SYM_STILL = (folder: string): string => `/art-src/lab/firefly-sprint-2026-11-05/stills/skills/${folder}-crescent-sym.v1-try1.png`;
+
+/**
+ * Registers `folder`'s symmetric crescent still in its library as a one-frame slash clip `<folder>-crescent-sym`, when
+ * the file exists (browser only; a missing file is skipped without an error).
+ */
+async function loadSymStill(lib: FlipbookLibrary, folder: string): Promise<void> {
+  if (typeof location === "undefined" || !/^https?:$/.test(location.protocol)) return;
+  const url = SYM_STILL(folder);
+  try {
+    const head = await fetch(url, { method: "HEAD" });
+    if (!head.ok || !(head.headers.get("content-type") ?? "").startsWith("image/")) return;
+    await lib.load();
+    const texture = await stillTexture(url);
+    lib.add(stillMeta(folder + "-crescent-sym", url, texture), texture);
+  } catch {
+    // No symmetric still yet: the mirrored clip stays.
+  }
+}
+
+/** A still's texture (sRGB, mipmapped). */
+async function stillTexture(url: string): Promise<THREE.Texture> {
+  const texture = await new THREE.TextureLoader().loadAsync(url);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.premultiplyAlpha = false;
+  return texture;
+}
+
+/** A one-frame slash clip's layout for a still. */
+function stillMeta(id: string, url: string, texture: THREE.Texture): FlipbookMeta {
+  const img = texture.image as { width?: number; height?: number } | undefined;
+  const aspect = img?.width !== undefined && img.height !== undefined && img.height > 0 ? img.width / img.height : 16 / 9;
+  return { id, url, cols: 1, rows: 1, frames: 1, fps: 24, loop: false, mode: "fire", aspect, pivot: [0.5, 0.5], start: 0, heading: 0, role: "slash" };
 }
 
 /**
@@ -217,7 +294,9 @@ export function alongSlash(camera: THREE.Camera, cx: number, cy: number, cz: num
   for (let i = 0; i < n; i += 1) {
     const u = (i + 0.5) / n;
     const d = (u - 0.5) * width * 0.8;
-    at(cx + ax * d, cy + ay * d, cz + az * d, u * SLASH.sweep, u);
+    // A sword crescent blooms from its centre out to both horns; a sabre swing runs from its origin to its tip.
+    const delay = SLASH_STYLE.style === "sword" ? Math.abs(u - 0.5) * 2 * SLASH.bloom : u * SABRE.sweep;
+    at(cx + ax * d, cy + ay * d, cz + az * d, delay, u);
   }
 }
 
@@ -299,6 +378,7 @@ class ClipLayers {
     this.lib = stage.flipbooks.library(spec.id);
     this.lib.watch((id) => this.adopt(id));
     if (spec.stillSlash !== undefined) void this.stillSlash(spec.stillSlash);
+    void loadSymStill(this.lib, spec.id);
   }
 
   /** Registers the kit's still as its slash clip (one frame) when the loaded manifest has none (browser only). */
@@ -307,16 +387,8 @@ class ClipLayers {
     await this.lib.load();
     if (this.lib.declares().some((m) => m.role === "slash")) return;
     try {
-      const texture = await new THREE.TextureLoader().loadAsync(url);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.generateMipmaps = true;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.premultiplyAlpha = false;
-      const img = texture.image as { width?: number; height?: number } | undefined;
-      const aspect = img?.width !== undefined && img.height !== undefined && img.height > 0 ? img.width / img.height : 16 / 9;
-      this.lib.add({ id: this.spec.id + "-slash-still", url, cols: 1, rows: 1, frames: 1, fps: 24, loop: false, mode: "fire",
-        aspect, pivot: [0.5, 0.5], start: 0, heading: 0, role: "slash" }, texture);
+      const texture = await stillTexture(url);
+      this.lib.add(stillMeta(this.spec.id + "-slash-still", url, texture), texture);
     } catch (error) {
       console.warn("[element-clips] " + this.spec.id + ": the slash still did not load", error);
     }
@@ -354,7 +426,7 @@ class ClipLayers {
     // A vertical sheath (9:16) flows up its cell: its height follows the blade.
     if (role === "sheath" && e.meta.aspect < 1 && e.meta.heading === 0) pool.attach({ ...e.meta, heading: Math.PI / 2 }, e.texture, e.controls);
     if (role === "groundMark") layFlat(pool);
-    if (role === "slash" && !body) sweepCard(pool);
+    if (role === "slash" && !body) sweepCard(pool, halfOf(this.spec.id, id));
     list.push(pool);
     lists.set(role, list);
     this.modes.set(pool, mode);
@@ -374,6 +446,9 @@ class ClipLayers {
   private pick(role: ClipRole): FlipbookPool | null {
     const list = this.pools.get(role);
     const t = this.turn.get(role) ?? 0;
+    // The symmetric crescent still, once it lands, is the slash.
+    const sym = role === "slash" ? list?.find((p) => p.ready && p.id.endsWith("-crescent-sym")) : undefined;
+    if (sym !== undefined) return sym;
     if (list !== undefined) {
       for (let k = 0; k < list.length; k += 1) {
         const p = list[(t + k) % list.length]!;
@@ -546,23 +621,25 @@ class ClipLayers {
   }
 
   /**
-   * Water's law: the blow's water flows on past the beast along (dx, dz), carried and slowing: the ribbon clip's band,
-   * else (`crescent`) the slash clip as a wave. A line of hits (key 2) never takes the crescent: one per beast read as
-   * a chain of small crescents along the line (owner ~19:45).
+   * Water's and Wind's law: the blow's matter flows on past the beast along (dx, dz), carried and slowing, as the
+   * sword's symmetric crescent itself, its convex side forward (the ribbon band read as a hard-edged block, owner
+   * ~21:20). A line of hits (key 2) never takes it (`crescent` false): one per beast read as a chain of crescents.
    */
   private flowOn(x: number, y: number, z: number, dx: number, dz: number, size: number, crescent: boolean): void {
-    const role: ClipRole = this.has("ribbon") ? "ribbon" : "slash";
-    if (role === "slash" && !crescent) return;
-    const p = this.pick(role);
+    if (!crescent) return;
+    const p = this.pick("slash");
     if (p === null) return;
-    const o = role === "slash" ? this.slashOpts(p) : this.once(p, role, 1.2);
-    o.dir = dirV.set(dx, 0, dz);
+    const o = this.slashOpts(p);
+    // Across the blow on screen, so the crescent's convex side (its cell's bottom) leads.
+    const e = this.stage.camera.matrixWorldInverse.elements;
+    o.rot = Math.atan2(e[1]! * dx + e[9]! * dz, e[0]! * dx + e[8]! * dz) + Math.PI / 2;
     o.vx = dx * 5;
     o.vz = dz * 5;
     o.drag = 2.4;
     o.lift = 0.2;
     o.ground = 0;
-    this.spawn(role, p, x + dx * 0.4, y, z + dz * 0.4, size, o);
+    o.delay = 0.06;
+    this.spawn("slash", p, x + dx * 0.6, y, z + dz * 0.6, size, o);
   }
 
   /** A blow on the ground at (x, z): the ground impact rising off it, `size` m. */
@@ -1015,9 +1092,10 @@ export class CrescentClip {
       if (e === null || e.meta.role !== "slash" || e.meta.layer === "body" || this.pools.some((p) => p.id === id)) return;
       const pool = stage.flipbooks.pool(folder, id, { mode: e.meta.mode, capacity: CAPACITY.slash, renderOrder: ORDER.slash });
       pool.softM = 0.25;
-      sweepCard(pool);
+      sweepCard(pool, halfOf(folder, id));
       this.pools.push(pool);
     });
+    void loadSymStill(lib, folder);
   }
 
   get ready(): boolean {
@@ -1025,6 +1103,9 @@ export class CrescentClip {
   }
 
   private pick(): FlipbookPool | null {
+    // The symmetric crescent still, once it lands, is the crescent.
+    const sym = this.pools.find((p) => p.ready && p.id.endsWith("-crescent-sym"));
+    if (sym !== undefined) return sym;
     for (let k = 0; k < this.pools.length; k += 1) {
       const p = this.pools[(this.turn + k) % this.pools.length]!;
       if (p.ready) {
@@ -1036,7 +1117,8 @@ export class CrescentClip {
   }
 
   /**
-   * The cut at `at` (turned `rot`, `size` m as the cut's args give it): swept from origin to tip, held, eroded (SLASH),
+   * The cut at `at` (turned `rot`, `size` m as the cut's args give it): a symmetric crescent blooming, flaring and eroding
+   * (SLASH; a sabre swing with SLASH_STYLE "sabre"),
    * light × `tint` (null: the clip's own colours). Its card's width (m), or 0 when the folder has no slash clip.
    */
   cut(at: THREE.Vector3, rot: number, size: number, tint: THREE.Color | null): number {
