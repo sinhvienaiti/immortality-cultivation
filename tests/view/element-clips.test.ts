@@ -596,9 +596,10 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     // The band shows from the crescent's first frames and lingers ≥ 0.4 s after it lands at the hit tick (12 ticks).
     expect(shown).toBeGreaterThan(10);
     expect((lastShown - 12) / 60).toBeGreaterThanOrEqual(0.4);
-    // Afterimages at 0.45, 0.25, 0.12 (and fading after the landing), never above the crescent itself.
-    expect(alphas.some((a) => Math.abs(a - 0.45) < 1e-6)).toBe(true);
-    expect(alphas.some((a) => Math.abs(a - 0.12) < 1e-6)).toBe(true);
+    // Afterimages, a lesser layer under the stream: 0.3, 0.15, 0.06 (and fading after the landing), never above the
+    // crescent itself.
+    expect(alphas.some((a) => Math.abs(a - 0.3) < 1e-6)).toBe(true);
+    expect(alphas.some((a) => Math.abs(a - 0.06) < 1e-6)).toBe(true);
     expect(Math.max(...alphas)).toBeLessThanOrEqual(1);
   });
 

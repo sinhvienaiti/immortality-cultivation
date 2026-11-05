@@ -2,11 +2,12 @@
  * The soft energy trail behind a flying sword-qi crescent (key 2, Nhất Tuyến Xuyên Vân; owner 05/11 ~22:40: "chưa tạo ra
  * hiệu ứng ánh sáng dạng năng lượng mềm đẹp bay theo sau nó cho sống động"; docs/work/tasks/crescent-trail.md): a
  * camera-facing band laid along the crescent's path, from the concave side of its crescent back TRAIL_M m, as wide as
- * most of the crescent's span at its head and thinning to nothing at its tail. Its matter is an authored band (the
- * element's ribbon clip, else a strip of the sword aura's, aura/strips/), scrolled along it, coloured by the clip or the
- * element's ramp; its edges fade over most of its half width (never a hard edge), its halo held ≤ 0.9 a channel with a
- * thin brighter core. When the crescent lands it stays and erodes from its tail over FADE_S. Added light (or, for a
- * body layer, ink under it). No allocation per frame.
+ * most of the crescent's span at its head and thinning to nothing at its tail. Its matter is the element's own clip
+ * (its ribbon, else the energy band cut from its crescent's arc; round 2, 23:10: never another element's strip
+ * recoloured), flowing back along it (scrolled, mirrored as it repeats, warped by soft noise) so it reads as one stream;
+ * its edges fade over most of its half width (never a hard edge), its halo held ≤ 0.9 a channel with a thin brighter
+ * core. When the crescent lands it stays and erodes from its tail over FADE_S. Added light (or, for a body layer, ink
+ * under it, normal blend). No allocation per frame.
  */
 import * as THREE from "three";
 import type { Rgb } from "./weapons";
@@ -36,6 +37,13 @@ export interface TrailMatter {
   readonly ink?: Rgb;
   /** Share of the band's (or cell's) height laid across the trail's width (default 0.5, its bright middle). */
   readonly across?: number;
+  /**
+   * The part of a cell the band is cut from (uv from the cell's bottom left): x0, x1 along the trail (mirrored as it
+   * repeats), y0, y1 across it. Default: the whole width (wrapped), the middle `across` of its height.
+   */
+  readonly band?: readonly [number, number, number, number];
+  /** Frames it plays back and forth from its first (a crescent video's bright start); 0: every frame, looped. */
+  readonly window?: number;
 }
 
 const VERTEX = /* glsl */ `
@@ -55,7 +63,9 @@ uniform float uLen;
 uniform float uFade;
 uniform float uClip;
 uniform float uInk;
-uniform float uAcross;
+uniform vec4 uBand;
+uniform float uMirror;
+uniform float uWindow;
 uniform vec3 uCore;
 uniform vec3 uEdge;
 uniform vec3 uBody;
@@ -75,11 +85,19 @@ void main() {
   float soft = smoothstep(0.0, 0.45, side);
   // It rises out of the crescent's hollow (no straight edge at its head) and thins away to its tail.
   float taper = pow(1.0 - vUv.x, 1.3) * smoothstep(0.0, 0.08, vUv.x);
-  float f = mod(floor(uTime * uFps), uFrames);
+  float f;
+  if (uWindow > 1.5) {
+    float k = mod(floor(uTime * uFps), 2.0 * (uWindow - 1.0));
+    f = k < uWindow ? k : 2.0 * (uWindow - 1.0) - k;
+  } else f = mod(floor(uTime * uFps), uFrames);
   vec2 cell = vec2(mod(f, uGrid.x), uGrid.y - 1.0 - floor(f / uGrid.x));
-  // The band scrolls back along the trail (the matter flows off the crescent), one tile every 8 m; its middle (uAcross of
-  // its height) spans the band's width, so the light fills the band instead of one thin line.
-  vec2 tuv = vec2(clamp(fract(vUv.x * uLen * 0.125 + uTime * 2.0), 0.004, 0.996), clamp(0.5 + (vUv.y - 0.5) * uAcross, 0.004, 0.996));
+  // The matter flows back along the trail, one tile every 8 m, warped by soft noise; its band (uBand) spans the trail's
+  // width, so the light fills it as one stream instead of one thin line.
+  float w = tNoise(vec2(vUv.x * uLen * 0.5 - uTime * 2.5, vUv.y * 2.5));
+  float sx = vUv.x * uLen * 0.125 + uTime * 2.0 + (w - 0.5) * 0.15;
+  float along = uMirror > 0.5 ? 1.0 - abs(fract(sx * 0.5) * 2.0 - 1.0) : fract(sx);
+  float across = clamp(vUv.y + (w - 0.5) * 0.2, 0.0, 1.0);
+  vec2 tuv = clamp(vec2(mix(uBand.x, uBand.y, along), mix(uBand.z, uBand.w, across)), 0.004, 0.996);
   vec4 t = texture2D(map, (cell + tuv) / uGrid);
   float l = max(t.r, max(t.g, t.b));
   // It erodes from the tail toward the crescent once the crescent is gone.
@@ -88,7 +106,8 @@ void main() {
   float a = soft * taper * keep;
   if (a <= 0.002) discard;
   if (uInk > 0.5) {
-    float cover = min(1.0, (t.a < 0.999 ? t.a : l) * 1.6) * a;
+    // Where its smoke is, it covers: a black body under the rim's light, never a grey veil.
+    float cover = smoothstep(0.03, 0.35, t.a < 0.999 ? t.a : l) * a;
     gl_FragColor = vec4(uInkCol * cover, cover);
     return;
   }
@@ -99,6 +118,13 @@ void main() {
   col += uCore * core * 0.9;
   gl_FragColor = vec4(col * a, 0.0);
 }`;
+
+/** The cell region a matter's band is cut from (uv from the bottom left: x0, x1, y0, y1). */
+function bandOf(m: TrailMatter): THREE.Vector4 {
+  if (m.band !== undefined) return new THREE.Vector4(...m.band);
+  const a = m.across ?? 0.5;
+  return new THREE.Vector4(0, 1, 0.5 - a / 2, 0.5 + a / 2);
+}
 
 const v = new THREE.Vector3();
 const t = new THREE.Vector3();
@@ -150,7 +176,9 @@ export class CrescentTrail {
         uFade: { value: 0 },
         uClip: { value: matter.colours === "clip" ? 1 : 0 },
         uInk: { value: ink ? 1 : 0 },
-        uAcross: { value: matter.across ?? 0.5 },
+        uBand: { value: bandOf(matter) },
+        uMirror: { value: matter.band !== undefined ? 1 : 0 },
+        uWindow: { value: matter.window ?? 0 },
         uCore: { value: new THREE.Vector3(...matter.core) },
         uEdge: { value: new THREE.Vector3(...matter.edge) },
         uBody: { value: new THREE.Vector3(...matter.body) },

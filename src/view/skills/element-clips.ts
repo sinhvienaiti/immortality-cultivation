@@ -475,6 +475,8 @@ class ClipLayers {
   /** The trail's bands from the element's ribbon clip (its light, and its body as ink under it). */
   private ribbonRim: CrescentTrail | null = null;
   private ribbonInk: CrescentTrail | null = null;
+  /** The slash clip the trail is cut from while the element has no ribbon (its crescent video preferred). */
+  private trailClip = "";
 
   constructor(private readonly stage: ElementStage, private readonly spec: ClipKitSpec, private readonly trail: { flame?: FlameTrail }) {
     this.lib = stage.flipbooks.library(spec.id);
@@ -482,7 +484,6 @@ class ClipLayers {
     this.flight = new CrescentFlight(stage,
       (x, y, z, rot, size, alpha) => this.heldCrescent(x, y, z, rot, size, alpha),
       (x, y, z, vx, vy, vz) => this.hornSpark(x, y, z, vx, vy, vz));
-    this.flight.setTrails([trailOf(stripMatter(stage, spec.id, spec.ramp))]);
     this.lib.watch((id) => this.adopt(id));
     if (spec.stillSlash !== undefined) void this.stillSlash(spec.stillSlash);
     void loadSymStill(this.lib, spec.id);
@@ -508,8 +509,10 @@ class ClipLayers {
     if (e === null || !isRole(role)) return;
     if (this.spec.rejected?.some((md5) => e.meta.url.includes("?v=" + md5)) === true) return;
     const body = e.meta.layer === "body";
-    // The ribbon clip is the flying crescent's trail (its body as ink under its light).
+    // The ribbon clip is the flying crescent's trail (its body as ink under its light); without one, the energy band
+    // of its crescent.
     if (role === "ribbon") this.ribbonTrail(e.meta, e.texture, body);
+    if (role === "slash" && !body) this.slashTrail(e.meta, e.texture);
     // A body (smoke on white) belongs to the ground blows and the big bursts only, as wisps (owner ~20:50: never a flat
     // blob under a slash).
     if (body && role !== "groundImpact" && role !== "burst") return;
@@ -1022,7 +1025,14 @@ class ClipLayers {
     this.motes.emit();
   }
 
-  /** The element's ribbon clip becomes the trail's bands (in place of the aura strip). */
+  /** The element's crescent (its video, else a slash clip) gives the trail its band while it has no ribbon. */
+  private slashTrail(meta: FlipbookMeta, texture: THREE.Texture): void {
+    if (this.ribbonRim !== null || this.trailClip.endsWith("-crescent-sym")) return;
+    this.trailClip = meta.id;
+    this.flight.setTrails([trailOf(crescentMatter(meta, texture, this.spec.ramp))]);
+  }
+
+  /** The element's ribbon clip becomes the trail's bands (in place of its crescent's band). */
   private ribbonTrail(meta: FlipbookMeta, texture: THREE.Texture, body: boolean): void {
     // Its band (a smoke body, its rims at both edges) spans most of the cell's height.
     const base = { map: texture, cols: meta.cols, rows: meta.rows, frames: meta.frames, fps: meta.fps, core: this.spec.ramp.core, edge: this.spec.ramp.edge, body: this.spec.ramp.body, across: 0.7 };
@@ -1224,10 +1234,11 @@ class ClipLayers {
   }
 }
 
-/** The authored band a trail takes when its element has no ribbon clip: the sword aura's strips (aura/strips/). */
-const TRAIL_STRIP = (folder: string): string => (folder === "fire" ? "aura/strips/strip-fire-ribbon-v2.png" : "aura/strips/strip-metal-windsilk-v2.png");
-/** Afterimages behind a flying crescent: seconds back, opacity, size (crescent-trail.md §2). */
-const AFTERIMAGES: readonly (readonly [back: number, alpha: number, size: number])[] = [[0.04, 0.45, 0.92], [0.08, 0.25, 0.84], [0.12, 0.12, 0.76]];
+/**
+ * Afterimages behind a flying crescent: seconds back, opacity, size (crescent-trail.md §2; round 2, 23:10: a lesser
+ * layer under the stream, fainter, never a ladder of crescents).
+ */
+const AFTERIMAGES: readonly (readonly [back: number, alpha: number, size: number])[] = [[0.04, 0.3, 0.92], [0.08, 0.15, 0.84], [0.12, 0.06, 0.76]];
 /** Sparkles a second off each horn while a crescent flies; how long the afterimages linger after it lands (s). */
 const HORN_RATE = 45;
 const LINGER_S = 0.25;
@@ -1276,7 +1287,7 @@ export class CrescentFlight {
   }
 
   /** This frame's crescent: centre, screen angle, card height and width (m), its shown share. */
-  fly(x: number, y: number, z: number, rot: number, size: number, width: number, fade: number, dt: number): void {
+  fly(x: number, y: number, z: number, rot: number, size: number, width: number, fade: number, dt: number, trail = true): void {
     const now = this.stage.time;
     if (now - this.lastAt > 0.3) this.count = 0;
     if (this.count === this.hx.length) {
@@ -1299,7 +1310,7 @@ export class CrescentFlight {
     const xx = m[0]! * c + m[4]! * sn, xy = m[1]! * c + m[5]! * sn, xz = m[2]! * c + m[6]! * sn;
     const yx = -m[0]! * sn + m[4]! * c, yy = -m[1]! * sn + m[5]! * c, yz = -m[2]! * sn + m[6]! * c;
     const span = width * SPAN;
-    for (const t of this.trails) t.head(x + yx * size * 0.12, y + yy * size * 0.12, z + yz * size * 0.12, span * TRAIL_W * fade);
+    if (trail) for (const t of this.trails) t.head(x + yx * size * 0.12, y + yy * size * 0.12, z + yz * size * 0.12, span * TRAIL_W * fade);
     // Two streams of sparkles shed from its horns, drifting back.
     this.hornAcc += 2 * HORN_RATE * this.stage.dens * dt;
     const R = this.stage.rand;
@@ -1349,11 +1360,55 @@ function trailOf(matter: TrailMatter): CrescentTrail {
 }
 
 /**
- * The sword aura's strip as a band (a trail's matter before the element's ribbon clip lands): Fire's flame strip in its
- * own colours, the wind-silk strip coloured through the element's ramp.
+ * A crescent clip's energy band as a trail's matter (round 2, 23:10: each element's trail is its own clip): the middle
+ * of its arc (arcBand), in the clip's own colours, played as the crescent is (a video's bright first frames at
+ * SYM_RATE; a slash clip up to its hold's end).
  */
-function stripMatter(stage: ElementStage, folder: string, r: ElementRamp): TrailMatter {
-  return { map: stage.texture(TRAIL_STRIP(folder)), cols: 1, rows: 1, frames: 1, fps: 1, colours: folder === "fire" ? "clip" : "ramp", core: r.core, edge: r.edge, body: r.body, blend: "add" };
+function crescentMatter(meta: FlipbookMeta, texture: THREE.Texture, r: ElementRamp): TrailMatter {
+  const video = meta.frames > 1 && meta.id.endsWith("-crescent-sym");
+  const window = video ? SYM_WINDOW + 1 : Math.max(2, Math.min(meta.frames, (meta.holdEnd ?? meta.frames - 1) + 1));
+  return { map: texture, cols: meta.cols, rows: meta.rows, frames: meta.frames, fps: meta.fps * (video ? SYM_RATE : 1), window, band: arcBand(texture, meta),
+    colours: "clip", core: r.core, edge: r.edge, body: r.body, blend: "add" };
+}
+
+/** The band of a crescent whose arc cannot be measured (tests): the lower middle of its cell. */
+const LOWER_MIDDLE = [0.35, 0.65, 0.18, 0.42] as const;
+
+/**
+ * Where a crescent's arc crosses its cell's middle, on its first frame (uv from the cell's bottom left: x0, x1 along,
+ * y0, y1 across): the run of rows of the middle fifth's columns brighter than 0.3 of the brightest, padded by a
+ * quarter. A bowl's is near its bottom, Earth's dome near its top.
+ */
+function arcBand(texture: THREE.Texture, meta: FlipbookMeta): readonly [number, number, number, number] {
+  const img = texture.image as (CanvasImageSource & { width?: number; height?: number }) | undefined;
+  if (typeof document === "undefined" || img === undefined || !((img.width ?? 0) > 0) || !((img.height ?? 0) > 0)) return LOWER_MIDDLE;
+  const w = 128;
+  const h = 72;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (ctx === null) return LOWER_MIDDLE;
+  const cw = img.width! / meta.cols;
+  const ch = img.height! / meta.rows;
+  ctx.drawImage(img, (meta.start % meta.cols) * cw, Math.floor(meta.start / meta.cols) * ch, cw, ch, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const row = new Float32Array(h);
+  let top = 0;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = Math.round(w * 0.4); x < Math.round(w * 0.6); x += 1) {
+      const o = (y * w + x) * 4;
+      row[y] = row[y]! + Math.max(data[o]!, data[o + 1]!, data[o + 2]!);
+    }
+    if (row[y]! > row[top]!) top = y;
+  }
+  if (row[top]! <= 0) return LOWER_MIDDLE;
+  let lo = top;
+  let hi = top;
+  while (lo > 0 && row[lo - 1]! > 0.3 * row[top]!) lo -= 1;
+  while (hi < h - 1 && row[hi + 1]! > 0.3 * row[top]!) hi += 1;
+  const pad = (hi - lo + 1) * 0.25;
+  return [0.35, 0.65, 1 - Math.min(1, (hi + 1 + pad) / h), 1 - Math.max(0, (lo - pad) / h)];
 }
 
 /**
@@ -1380,10 +1435,15 @@ export class CrescentClip {
       (x, y, z, rot, size, alpha) => this.held(v.set(x, y, z), rot, size, alpha, this.tint),
       (x, y, z, vx, vy, vz) => this.hornSpark(x, y, z, vx, vy, vz));
     const r = ramp ?? { core: [1, 1, 1], edge: [0.8, 0.85, 0.9], body: [0.3, 0.45, 0.6], soot: [0, 0, 0] };
-    this.flight.setTrails([trailOf(stripMatter(stage, folder, r))]);
+    let trailClip = "";
     lib.watch((id) => {
       const e = lib.get(id);
       if (e === null || e.meta.role !== "slash" || e.meta.layer === "body" || this.pools.some((p) => p.id === id)) return;
+      // Its trail is cut from its own crescent (its video preferred).
+      if (!trailClip.endsWith("-crescent-sym")) {
+        trailClip = id;
+        this.flight.setTrails([trailOf(crescentMatter(e.meta, e.texture, r))]);
+      }
       const pool = stage.flipbooks.pool(folder, id, { mode: e.meta.mode, capacity: CAPACITY.slash, renderOrder: ORDER.slash });
       pool.softM = 0.25;
       sweepCard(pool, halfOf(folder, id));
@@ -1440,7 +1500,8 @@ export class CrescentClip {
       this.sparkRgb[1] = ramp.core[1];
       this.sparkRgb[2] = ramp.core[2];
     }
-    this.flight.fly(at.x, at.y, at.z, rot, size * 1.2, width, fade, 1 / 60);
+    // Standing in for another element (tinted), it trails nothing: a trail is the element's own matter.
+    this.flight.fly(at.x, at.y, at.z, rot, size * 1.2, width, fade, 1 / 60, tint === null);
     return true;
   }
 
