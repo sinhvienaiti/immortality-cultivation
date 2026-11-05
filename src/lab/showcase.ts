@@ -187,6 +187,8 @@ export interface PlayOptions {
   /** The caption's stats line and its keys line (a castable skill's). */
   readonly detail?: string;
   readonly nav?: string;
+  /** Its sound file under the sound folder ("tt-sfx-x-<id>/take2.wav"; none: its item's take 1). */
+  readonly sound?: string;
 }
 
 /** A clip's time map: to its peak frame in ATTACK_S, then the rest over its tail (or all of it over its tail). */
@@ -428,16 +430,16 @@ export class Showcase {
       this.host.shake(tier.shakePx, tier.shakeS, tier.rollDeg);
       this.host.accent(big ? 0.6 : 0.35);
     }
-    this.sound(it);
+    this.sound(it, opts.sound);
     this.show(it, ids, opts.detail, opts.nav);
     return pick;
   }
 
-  /** Its Firefly sound, take 1 (dev lab only); the previous one (any showcase's) stops. */
-  private sound(it: ShowcaseItem): void {
-    if (it.sound === "" || typeof Audio === "undefined") return;
+  /** Its Firefly sound, take 1, or the file a castable skill names (dev lab only); the previous one (any showcase's) stops. */
+  private sound(it: ShowcaseItem, file?: string): void {
+    if ((it.sound === "" && file === undefined) || typeof Audio === "undefined") return;
     playing?.pause();
-    const a = new Audio(SOUND_BASE + it.sound + "/take1.wav");
+    const a = new Audio(SOUND_BASE + (file ?? it.sound + "/take1.wav"));
     a.volume = 0.85;
     void a.play().catch(() => undefined);
     playing = a;

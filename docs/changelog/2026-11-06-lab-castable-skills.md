@@ -28,3 +28,20 @@ Anh (06/11 00:05): "tạm thời chưa cần chấm, tôi sẽ là người ch�
 
 - `tsc --noEmit -p .` sạch; Vitest 1066 test qua (test mới `tests/lab/clip-skills.test.ts`).
 - Chrome headless, tung cả 17 mục ở camera chơi, 0 lỗi: phím tới khung phát chiêu là chính khung của phím (phát lệnh và ấn ngay trong lúc bấm, hiện ở khung kế tiếp); cú trúng đầu lệch khung đỉnh của clip 0–1 khung ở mọi kỹ năng; Thunder Field chia 12 điểm, trúng 49 con; tuyệt kỹ trúng cả 87 con.
+
+## Đợt 2: A1–A8 diện rộng ở phím 9
+
+- Bảng `KEY9_SKILLS` chép từ `docs/work/tasks/clip-skills-expansion.json` (lab-flipbooks, 06/11): hình, bán kính, số điểm, các cú (cú đầu, rồi số giây sau nó), bậc, trạng thái, ấn, dư âm, file âm `tt-sfx-x-<id>/takeN.wav` (bảng chọn take nào thì phát take đó).
+- **Chỗ đã sửa so với bảng (ghi lại theo lời điều phối):**
+  - cú đầu của bảng là giờ phỏng đoán (0,2–0,4 s; clip đã sáng hết từ khung 0, không đo được khung chạm). Nay cú đầu rơi đúng khung đỉnh của clip theo luật nghiệm thu; các cú sau giữ đúng nhịp của bảng tính từ cú đầu;
+  - bảng không ghi trạng thái kéo dài bao lâu, lab tạm dùng choáng 1 s, trói 1,8 s, chậm 2 s;
+  - A2: vực chém chạy chéo 35° trên màn hình, tức 40° trên mặt đất ở camera 55°; nay là một đường qua giữa sân theo góc đó, không bắn từ người chơi;
+  - A8: gai mọc từ mép sân quất vào trong, nên vòng khép từ mép vào tâm;
+  - A5 quét cả vòng quanh tâm clip.
+- **Khung chung thêm:**
+  - hình trải theo chỗ clip đứng: clip cảnh đứng giữa sân, clip hình người đứng trên cụm quái dày nhất (A6);
+  - cú `tick`: sát thương nhẹ, không hit-stop, không rung;
+  - số sát thương theo `power` của cú;
+  - hai phím dùng chung ấn đất, mỗi hệ một atlas.
+- Phím 9 tung mục đang chọn, Shift+9 chọn mục kế. Mục chưa có dòng trong bảng (B, C, D) vẫn chỉ phát video.
+- Kiểm: 1067 test qua. Chrome headless tung A1–A8, 0 lỗi; cú đầu lệch khung đỉnh của clip ≤ 1 khung. Bị trúng mỗi chiêu: A1 81 con, A2 30, A3 47 (7 điểm), A7 58 (7 điểm), các chiêu cả sân 68–87 con.

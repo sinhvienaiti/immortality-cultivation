@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { aimClipSkill, ClipSkillRunner, KEY8_SKILLS, MARK_S, type ClipSkill, type ClipSkillHost } from "../../src/lab/clip-skills";
-import { SHOWCASE, Showcase, ULT_SHOWCASE } from "../../src/lab/showcase";
+import { aimClipSkill, ClipSkillRunner, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, MARK_S, type ClipSkill, type ClipSkillHost } from "../../src/lab/clip-skills";
+import { EXPANSION, EXPANSION_SHOWCASE, SHOWCASE, Showcase, ULT_SHOWCASE } from "../../src/lab/showcase";
 import { FlipbookPlayer, parseFlipbookManifest } from "../../src/view/skills/flipbook";
 import type { TargetField } from "../../src/view/skills/targets";
 
@@ -240,5 +240,58 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     expect(runner.last!.marks).toBeGreaterThan(1);
     step(0.1);
     expect(player.live).toBe(0);
+  });
+
+  it("key 9's area designs (batch 2) cast from the expansion table: their rows, their aim, ticks without the tier's strike", () => {
+    // A1 … A8, one each, each a design of the catalogue (matched by the clip's manifest code in the lab).
+    const codes = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"];
+    expect(KEY9_SKILLS.filter((s) => codes.some((c) => EXPANSION.find((e) => e.code === c) !== undefined)).length).toBeGreaterThanOrEqual(8);
+    for (const s of KEY9_SKILLS) {
+      expect(s.strikes[0]!.frame).toBe("peak");
+      for (const st of s.strikes.slice(1)) expect(st.after).toBeGreaterThan(0);
+      expect(s.sfx).toMatch(/^tt-sfx-x-[a-z-]+\/take[1-4]\.wav$/);
+      expect(s.guess).toBeDefined();
+    }
+    const row = (id: string): ClipSkill => KEY9_SKILLS.find((s) => s.id === id)!;
+    const field = new Field(HERD);
+    const caster = { x: 0, z: 3 };
+    const centre = { x: 0, z: -6 };
+    // A8's thorns close from the rim: the farthest beast first.
+    const briar = aimClipSkill(row("miasma-briar-abyss"), field, caster, centre);
+    const far = briar.hits.reduce((a, b) => (Math.hypot(field.x(a.i) - 0, field.z(a.i) + 6) > Math.hypot(field.x(b.i) - 0, field.z(b.i) + 6) ? a : b));
+    expect(far.delay).toBe(0);
+    // A2's chasm: a 40° line through the field's middle, its marks along it.
+    const rift = aimClipSkill(row("firmament-sundering-cleave"), new Field([[0, -6], [7, -12], [-7, 0], [7, 0]]), caster, centre);
+    expect(rift.hits.map((h) => h.i).sort()).toEqual([0, 1, 2]);
+    expect(rift.points.length).toBe(5);
+    // A6 stands over the foes: its field centres on the densest group.
+    const mandala = aimClipSkill(row("samsara-blood-mandala"), field, caster, centre, "foes");
+    expect(Math.hypot(mandala.anchor.x - 6, mandala.anchor.z + 10)).toBeLessThan(1.5);
+
+    const player = new FlipbookPlayer("/v/");
+    const show = new Showcase(player, {
+      camera: camera(), nearest: () => -1, at: (_i, out) => out.set(0, 0, -6), caster: (out) => out.set(0, 0, 3),
+      light: () => {}, accent: () => {}, shake: () => {}, captionHost: null,
+    }, EXPANSION_SHOWCASE);
+    const lib = player.library("expansion");
+    const entries = { "myriad-lotus-domain": { file: "a1.png", cols: 4, rows: 8, frames: 31, fps: 6, cell: [640, 360], role: "area", code: "A1", timing: { peak: 0, holdEnd: 22 } } };
+    for (const meta of parseFlipbookManifest({ flipbooks: entries }, "/v/expansion/").values()) lib.add(meta, new THREE.Texture());
+    const strikes: string[] = [];
+    const blows: { t: number; role: string }[] = [];
+    let t = 0;
+    const runner = new ClipSkillRunner(show, {
+      targets: new Field(HERD), layer: new THREE.Group(), player, caster: (out) => out.set(0, 0, 3), release: () => {},
+      blow: (_s, _i, _dx, _dz, _p, role) => (blows.push({ t, role }), false),
+      strike: (_s, _at, role) => strikes.push(role), status: () => {},
+    }, KEY9_SKILLS, KEY9_NAV);
+    expect(runner.cast("myriad-lotus-domain")).toBe("myriad-lotus-domain");
+    for (let k = 0; k < 180; k += 1) {
+      t += 1 / 60;
+      runner.update(1 / 60);
+    }
+    // Three petal waves strike (the tier's reaction), three ticks bite without it; every beast takes all six.
+    expect(strikes).toEqual(["primary", "secondary", "secondary"]);
+    expect(blows.length).toBe(HERD.length * 6);
+    expect(blows[0]!.t).toBeLessThanOrEqual(1 / 60 + 1e-9);
   });
 });

@@ -30,10 +30,16 @@ export type ClipDamage = "light" | "heavy" | "ult";
 export type ClipStatus = "stun" | "bind" | "slow";
 export type ClipElement = "metal" | "wood" | "water" | "fire" | "earth" | "thunder" | "wind" | "ice" | "dark" | "light" | "poison" | "blood" | "void" | "star";
 
-/** One strike: the clip frame it lands on ("peak": the manifest's timing.peak) and its power (0–1, the herd's). */
+/**
+ * One strike: the clip frame it lands on ("peak": the manifest's timing.peak) or its seconds after the first strike
+ * (`after`: the expansion table's rhythm), its power (0–1, the herd's; relative within the skill) and its kind: a hit
+ * (the tier's reaction and hit-stop) or a tick (a light damage-over-time blow, no hit-stop).
+ */
 export interface ClipStrike {
-  readonly frame: number | "peak";
+  readonly frame?: number | "peak";
+  readonly after?: number;
   readonly power: number;
+  readonly kind?: "hit" | "tick";
 }
 
 /** One castable skill: its clip, element and how it lands (lab-castable-skills.md §1). */
@@ -49,19 +55,28 @@ export interface ClipSkill {
   readonly strikes: readonly ClipStrike[];
   readonly damage: ClipDamage;
   readonly status?: { readonly kind: ClipStatus; readonly seconds: number };
-  /** A mark on the ground MARK_S before a blow from the sky. */
-  readonly mark: boolean;
+  /** A mark on the ground before a blow from the sky or onto a point: MARK_S (true) or this many seconds. */
+  readonly mark: boolean | number;
   /** Seconds its marks stay on the ground after the first strike, eroding (1.5–2.5); 0: none. */
   readonly linger: number;
   /** What in the row is a guess (not measured on the clip). */
   readonly guess?: string;
+  /** A line at this world angle (degrees from +x toward −z, screen up) through where the clip stands (its drawn chasm or slashes). */
+  readonly angle?: number;
+  /** A ring that closes from its edge onto its centre (thorns from the field's rim). */
+  readonly inward?: boolean;
+  /** Its Firefly sound and take ("tt-sfx-x-<id>/take2.wav"; none: its showcase item's). */
+  readonly sfx?: string;
 }
+
+/** Where a clip stands (showcase.ts ShowcasePlace): its shapes centre there. */
+export type ClipPlace = "foe" | "field" | "caster" | "foes";
 
 /** Cells a field groups its beasts in (m: key 7's), how long a mark leads a blow from the sky (s). */
 export const CELL_M = 8;
 export const MARK_S = 0.2;
 /** A field skill's blows run out from its centre (m/s); a ring widens over RING_S, a sweep turns in SWEEP_S. */
-const SPREAD_MPS: Readonly<Record<ClipShape, number>> = { point: 0, multi: 0, field: 60, line: 70, ring: 0, sweep: 0, path: 26, cone: 40 };
+const SPREAD_MPS: Readonly<Record<ClipShape, number>> = { point: 0, multi: 0, field: 60, line: 120, ring: 0, sweep: 0, path: 26, cone: 40 };
 const RING_S = 0.5;
 const SWEEP_S = 0.45;
 /** A line's length and a path's half length (m); a cone's half angle (rad). */
@@ -72,6 +87,8 @@ const CONE_HALF = (35 * Math.PI) / 180;
 const FIELD_MARKS = 5;
 /** A blow's element rim on a struck beast (s) when the skill has no status. */
 const RIM_S = 1.2;
+/** Marks along a line (its chasm). */
+const LINE_MARKS = 5;
 
 /** The status rim each element leaves on a beast (element-kit.ts FoeStatusKind). */
 const RIM: Readonly<Record<ClipElement, FoeStatusKind>> = {
@@ -109,20 +126,81 @@ export const KEY8_SKILLS: readonly ClipSkill[] = [
   { id: "ult-star", element: "star", shape: "field", radius: 30, count: 1, strikes: [peak(0.8), at(6, 0.8), at(12, 1)], damage: "ult", mark: true, linger: 2, guess: "frames 6, 12: the next meteors" },
 ];
 
+/**
+ * Key 9's rows, batch by batch (lab-castable-skills.md), transcribed from docs/work/tasks/clip-skills-expansion.json
+ * (lab-flipbooks, 06/11; Gemini's gameplay lines, the arena 40 × 26 m): shape, radius, count, strikes (the first, then
+ * seconds after it), damage, status (seconds: a lab default, stun 1, bind 1.8, slow 2), mark (s), linger, sound take.
+ * The clips are at full strength from frame 0 (the table measured no impact frame): their first strike lands on the
+ * clip's peak frame (the acceptance rule), the table's later strikes keep its rhythm after it. A2's chasm runs 35° on
+ * screen (40° on the ground at the 55° camera); A8's thorns close from the field's rim.
+ */
+export const KEY9_SKILLS: readonly ClipSkill[] = [
+  // A1 Myriad Spirit Lotus Bloom · Vạn Linh Liên Hoa Trận
+  {
+    id: "myriad-lotus-domain", element: "wood", shape: "ring", radius: 18, count: 3, damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: false, linger: 1.8, sfx: "tt-sfx-x-myriad-lotus-domain/take1.wav",
+    strikes: [{ frame: "peak", power: 0.6 }, { after: 0.12, power: 0.8 }, { after: 0.24, power: 1 }, { after: 0.8, power: 0.2, kind: "tick" }, { after: 1.3, power: 0.2, kind: "tick" }, { after: 1.8, power: 0.2, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak",
+  },
+  // A2 Firmament-Sundering Rift · Liệt Thiên Trảm Ngân
+  {
+    id: "firmament-sundering-cleave", element: "void", shape: "line", radius: 3, count: 1, damage: "heavy", mark: 0.15, linger: 1.6, angle: 40, sfx: "tt-sfx-x-firmament-sundering-cleave/take3.wav",
+    strikes: [{ frame: "peak", power: 0.4 }, { after: 0.4, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak",
+  },
+  // A3 Nine-Heavens Tribulation Grid · Cửu Tiêu Lôi Kiếp Võng
+  {
+    id: "nine-heavens-tribulation-net", element: "thunder", shape: "multi", radius: 2.4, count: 7, damage: "heavy", mark: 0.2, linger: 1.5, sfx: "tt-sfx-x-nine-heavens-tribulation-net/take2.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.5, power: 0.3, kind: "tick" }, { after: 1, power: 0.3, kind: "tick" }, { after: 1.5, power: 0.3, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.25 s to the clip peak",
+  },
+  // A4 Karmic Ember Tempest · Hồng Liên Nghiệp Hỏa Vũ
+  {
+    id: "karmic-ember-tempest", element: "fire", shape: "field", radius: 22, count: 1, damage: "heavy", mark: false, linger: 2, sfx: "tt-sfx-x-karmic-ember-tempest/take1.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.5, power: 0.25, kind: "tick" }, { after: 1, power: 0.25, kind: "tick" }, { after: 1.5, power: 0.25, kind: "tick" }, { after: 2, power: 0.25, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.4 s to the clip peak",
+  },
+  // A5 Glacial Moon Reflection Tide · Hàn Nguyệt Kính Triều
+  {
+    id: "glacial-moon-tide", element: "ice", shape: "sweep", radius: 20, count: 1, damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: false, linger: 1.5, sfx: "tt-sfx-x-glacial-moon-tide/take2.wav",
+    strikes: [{ frame: "peak", power: 0.6 }, { after: 0.5, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak",
+  },
+  // A6 Scarlet Samsara Compass · Huyết Luân Luân Hồi Bàn
+  {
+    id: "samsara-blood-mandala", element: "blood", shape: "field", radius: 20, count: 1, damage: "heavy", mark: false, linger: 1.8, sfx: "tt-sfx-x-samsara-blood-mandala/take2.wav",
+    strikes: [{ frame: "peak", power: 0.7 }, { after: 0.45, power: 0.7 }, { after: 0.9, power: 0.25, kind: "tick" }, { after: 1.35, power: 0.25, kind: "tick" }, { after: 1.8, power: 0.25, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.25 s to the clip peak",
+  },
+  // A7 Seven-Star Astral Fall · Thất Tinh Tinh Hà Trụy
+  {
+    id: "astral-meteor-constellation", element: "star", shape: "multi", radius: 2.8, count: 7, damage: "heavy", mark: 0.2, linger: 1.7, sfx: "tt-sfx-x-astral-meteor-constellation/take2.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.5, power: 0.4 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak",
+  },
+  // A8 Netherworld Briar Vortex · U Minh Kinh Cức Uyên
+  {
+    id: "miasma-briar-abyss", element: "poison", shape: "ring", radius: 19, count: 1, damage: "heavy", status: { kind: "bind", seconds: 1.8 }, mark: false, linger: 1.9, inward: true, sfx: "tt-sfx-x-miasma-briar-abyss/take2.wav",
+    strikes: [{ frame: "peak", power: 0.7 }, { after: 0.6, power: 0.3, kind: "tick" }, { after: 1.2, power: 0.3, kind: "tick" }, { after: 1.8, power: 0.3, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak",
+  },
+];
+
 const SHAPE_VI: Readonly<Record<ClipShape, string>> = {
   point: "một điểm", multi: "nhiều điểm", field: "cả sân", line: "đường thẳng", ring: "vòng nở", sweep: "cung quét", path: "đường bay", cone: "hình quạt",
 };
 const DAMAGE_VI: Readonly<Record<ClipDamage, string>> = { light: "nhẹ", heavy: "nặng", ult: "tuyệt kỹ" };
 const STATUS_VI: Readonly<Record<ClipStatus, string>> = { stun: "choáng", bind: "trói", slow: "chậm" };
-/** The caption's keys line for key 8. */
+/** The caption's keys line for keys 8 and 9. */
 export const KEY8_NAV = "phím 8: tung · Shift+8: chọn mục kế · không hồi chiêu";
+export const KEY9_NAV = "phím 9: tung · Shift+9: chọn mục kế · không hồi chiêu";
 
 /** A skill's stats for the panel and the caption (Vietnamese): shape, radius, points, strikes, damage, status. */
 export function describeClipSkill(s: ClipSkill): string {
   const fmt = (n: number): string => String(n).replace(".", ",");
   const parts = [SHAPE_VI[s.shape], `${fmt(s.radius)} m`];
   if (s.count > 1) parts.push(`${s.count} điểm`);
-  parts.push(`${s.strikes.length} cú`, `sát thương ${DAMAGE_VI[s.damage]}`);
+  const ticks = s.strikes.filter((x) => x.kind === "tick").length;
+  parts.push(`${s.strikes.length - ticks} cú` + (ticks > 0 ? ` + ${ticks} nhịp` : ""), `sát thương ${DAMAGE_VI[s.damage]}`);
   if (s.status !== undefined) parts.push(`${STATUS_VI[s.status.kind]} ${fmt(s.status.seconds)} s`);
   return parts.join(" · ");
 }
@@ -168,12 +246,16 @@ const scratch = new Int32Array(512);
 
 /**
  * Aims `skill` from where the beasts stand (never the map: rule of 04/11): the caster's ground point and the field's
- * middle (the ground under the screen's centre) as given. A spread (field, line, path, cone) starts at the beast it
- * reaches first, so the first blow lands on the strike's own frame.
+ * middle (the ground under the screen's centre) as given, its clip standing at `place` (a field scene over the middle, a
+ * figure over the densest group or the caster): a field, ring, sweep or angled line centres where its clip stands. A
+ * spread starts at the beast it reaches first, so the first blow lands on the strike's own frame.
  */
-export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, centre: XZ): ClipAim {
+export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, centre: XZ, place: ClipPlace = "field"): ClipAim {
   const groups = denseCells(field);
   const dense: XZ = groups[0] ?? centre;
+  // Where its clip stands: the densest group's beast for a figure over the foes, the caster, else the field's middle.
+  const near = field.nearest(dense.x, dense.z, CELL_M * 2);
+  const origin: XZ = place === "foes" || place === "foe" ? (near >= 0 ? { x: field.x(near), z: field.z(near) } : dense) : place === "caster" ? caster : centre;
   const hits: { i: number; delay: number; dx: number; dz: number }[] = [];
   const seen = new Set<number>();
   const add = (i: number, delay: number, ox: number, oz: number): void => {
@@ -239,17 +321,45 @@ export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, c
       break;
     }
     case "field": {
-      anchor = centre;
+      anchor = origin;
       for (const g of groups.slice(0, FIELD_MARKS)) points.push({ x: g.x, z: g.z });
-      circle(centre, r, (i) => Math.hypot(field.x(i) - centre.x, field.z(i) - centre.z) / SPREAD_MPS.field);
+      circle(origin, r, (i) => Math.hypot(field.x(i) - origin.x, field.z(i) - origin.z) / SPREAD_MPS.field);
       break;
     }
     case "ring": {
+      // Widening from where its clip stands (or closing onto it from its edge).
+      anchor = origin;
       points.push(anchor);
-      circle(anchor, r, (i) => (Math.hypot(field.x(i) - anchor.x, field.z(i) - anchor.z) / r) * RING_S);
+      circle(anchor, r, (i) => {
+        const k = Math.min(1, Math.hypot(field.x(i) - anchor.x, field.z(i) - anchor.z) / r);
+        return (skill.inward === true ? 1 - k : k) * RING_S;
+      });
       break;
     }
     case "line": {
+      if (skill.angle !== undefined) {
+        // A line drawn in its clip (a chasm across the field): through where the clip stands at its angle, `count`
+        // parallel lines, run end to end.
+        const a = (skill.angle * Math.PI) / 180;
+        const d = { x: Math.cos(a), z: -Math.sin(a) };
+        anchor = origin;
+        const half = LINE_M * 0.7;
+        for (let k = 0; k < skill.count; k += 1) {
+          const off = (k - (skill.count - 1) / 2) * r * 2.5;
+          const ox = origin.x - d.z * off;
+          const oz = origin.z + d.x * off;
+          const n = field.inCapsule(ox - d.x * half, oz - d.z * half, ox + d.x * half, oz + d.z * half, r, scratch);
+          for (let q = 0; q < n; q += 1) {
+            const i = scratch[q]!;
+            add(i, ((field.x(i) - ox) * d.x + (field.z(i) - oz) * d.z + half) / SPREAD_MPS.line, field.x(i) + d.z, field.z(i) - d.x);
+          }
+        }
+        for (let k = 0; k < LINE_MARKS; k += 1) {
+          const u = (k / (LINE_MARKS - 1) - 0.5) * 2 * half * 0.8;
+          points.push({ x: origin.x + d.x * u, z: origin.z + d.z * u });
+        }
+        break;
+      }
       const d = toward(caster);
       anchor = caster;
       const n = field.inCapsule(caster.x, caster.z, caster.x + d.x * LINE_M, caster.z + d.z * LINE_M, r, scratch);
@@ -272,20 +382,24 @@ export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, c
     }
     case "sweep":
     case "cone": {
-      const d = toward(caster);
-      const facing = Math.atan2(d.z, d.x);
-      const half = skill.shape === "cone" ? CONE_HALF : Math.PI / 2;
-      anchor = caster;
-      const n = field.inCircle(caster.x, caster.z, r, scratch);
+      // A cone fans from the caster; a sweep turns round where its clip stands (all the way round), or from the caster
+      // across the half facing the densest group.
+      const o = skill.shape === "cone" ? caster : origin;
+      const round = skill.shape === "sweep" && place !== "caster";
+      const d = toward(o);
+      const facing = round ? Math.PI : Math.atan2(d.z, d.x);
+      const half = skill.shape === "cone" ? CONE_HALF : round ? Math.PI : Math.PI / 2;
+      anchor = o;
+      const n = field.inCircle(o.x, o.z, r, scratch);
       for (let k = 0; k < n; k += 1) {
         const i = scratch[k]!;
-        let a = Math.atan2(field.z(i) - caster.z, field.x(i) - caster.x) - facing;
+        let a = Math.atan2(field.z(i) - o.z, field.x(i) - o.x) - facing;
         a = Math.atan2(Math.sin(a), Math.cos(a));
         if (Math.abs(a) > half) continue;
-        const delay = skill.shape === "sweep" ? ((a + half) / (2 * half)) * SWEEP_S : Math.hypot(field.x(i) - caster.x, field.z(i) - caster.z) / SPREAD_MPS.cone;
-        add(i, delay, caster.x, caster.z);
+        const delay = skill.shape === "sweep" ? ((a + half) / (2 * half)) * SWEEP_S : Math.hypot(field.x(i) - o.x, field.z(i) - o.z) / SPREAD_MPS.cone;
+        add(i, delay, o.x, o.z);
       }
-      points.push(dense);
+      points.push(skill.shape === "sweep" ? o : dense);
       break;
     }
   }
@@ -340,7 +454,7 @@ interface Running {
   readonly anchor: THREE.Vector3;
   readonly aim: ClipAim;
   /** Each strike's time on the cast's clock once the clip is out. */
-  readonly beats: { at: number; role: ImpactRole; done: boolean }[];
+  readonly beats: { at: number; role: ImpactRole; tick: boolean; done: boolean }[];
   readonly hits: { at: number; i: number; dx: number; dz: number; power: number; role: ImpactRole; first: boolean }[];
   next: number;
   readonly colour: string;
@@ -355,12 +469,16 @@ export class ClipSkillRunner {
   private readonly table: ReadonlyMap<string, ClipSkill>;
   private readonly running: Running[] = [];
   private readonly marks: GroundMarks;
+  /** Whether it ages and clears the marks (a runner sharing another's leaves that to it). */
+  private readonly ownsMarks: boolean;
   /** The last cast's report. */
   last: ClipCastReport | null = null;
 
-  constructor(private readonly showcase: Showcase, private readonly host: ClipSkillHost, rows: readonly ClipSkill[] = KEY8_SKILLS, private readonly nav = KEY8_NAV) {
+  /** `marksOf`: a runner whose ground marks it shares (keys 8 and 9: one atlas per element, not two). */
+  constructor(private readonly showcase: Showcase, private readonly host: ClipSkillHost, rows: readonly ClipSkill[] = KEY8_SKILLS, private readonly nav = KEY8_NAV, marksOf?: ClipSkillRunner) {
     this.table = new Map(rows.map((r) => [r.id, r]));
-    this.marks = new GroundMarks(host.layer, host.player);
+    this.marks = marksOf?.marks ?? new GroundMarks(host.layer, host.player);
+    this.ownsMarks = marksOf === undefined;
   }
 
   /** The row of clip `id`, if the table has one. */
@@ -396,21 +514,25 @@ export class ClipSkillRunner {
     this.marks.prepare(skill.element);
     this.host.caster(c);
     this.showcase.centre(m);
-    const aim = aimClipSkill(skill, this.host.targets, c, m);
+    const place = this.showcase.item(pick).place;
+    const aim = aimClipSkill(skill, this.host.targets, c, m, place);
+    // Each strike on its clip frame (the first on the manifest's peak), or its seconds after the first strike.
     const peakFrame = this.showcase.peakOf(pick);
-    const frames = skill.strikes.map((s) => (s.frame === "peak" ? peakFrame : s.frame));
-    const times = frames.map((f) => this.showcase.timeOf(pick, f));
-    // A blow from the sky is marked first: the clip waits until its first strike comes MARK_S after the key.
-    const lead = skill.mark ? Math.max(0, MARK_S - times[0]!) : 0;
+    const frames = skill.strikes.map((s) => (s.after !== undefined ? -1 : s.frame === undefined || s.frame === "peak" ? peakFrame : s.frame));
+    const first = this.showcase.timeOf(pick, frames[0]! < 0 ? peakFrame : frames[0]!);
+    const times = skill.strikes.map((s, k) => (s.after !== undefined ? first + s.after : this.showcase.timeOf(pick, frames[k]!)));
+    // A blow from the sky is marked first: the clip waits until its first strike comes its mark's lead after the key.
+    const markS = skill.mark === true ? MARK_S : skill.mark === false ? 0 : skill.mark;
+    const lead = Math.max(0, markS - times[0]!);
     const colour = this.showcase.item(pick).light;
     const report: ClipCastReport = {
       id: pick, shape: skill.shape, points: aim.points.length, targets: aim.hits.length, clipAt: -1, strikeAt: [], strikeFrames: frames,
       firstBlowAt: -1, blows: 0, kills: 0, marks: 0,
     };
     // Its marks: on the ground from the key (a mark) or from the first strike (a linger), eroding after it.
-    if (skill.mark || skill.linger > 0) {
-      const size = skill.shape === "field" ? 6 : Math.max(2.4, skill.radius * 2.2);
-      const from = skill.mark ? 0 : lead + times[0]!;
+    if (markS > 0 || skill.linger > 0) {
+      const size = skill.shape === "field" || skill.shape === "ring" || skill.shape === "sweep" ? 6 : Math.max(2.4, Math.min(8, skill.radius * 2.2));
+      const from = markS > 0 ? 0 : lead + times[0]!;
       const life = lead + times[0]! - from + Math.max(0.4, skill.linger);
       for (const p of aim.points) if (this.marks.spawn(skill.element, p.x, p.z, size, from, life)) report.marks += 1;
     }
@@ -431,10 +553,10 @@ export class ClipSkillRunner {
     r.report.clipAt = t0;
     const it = this.showcase.item(r.skill.id);
     // A pillar or a beast stands on its point; a field scene over the screen's centre.
-    this.showcase.play(r.skill.id, { at: it.place === "foe" || it.place === "foes" ? r.anchor : undefined, feel: false, detail: describeClipSkill(r.skill), nav: this.nav });
+    this.showcase.play(r.skill.id, { at: it.place === "foe" || it.place === "foes" ? r.anchor : undefined, feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx });
     r.times.forEach((time, k) => {
       const role: ImpactRole = k === 0 ? "primary" : "secondary";
-      r.beats.push({ at: t0 + time, role, done: false });
+      r.beats.push({ at: t0 + time, role, tick: r.skill.strikes[k]!.kind === "tick", done: false });
       r.report.strikeAt.push(t0 + time);
       const power = r.skill.strikes[k]!.power;
       for (const h of r.aim.hits) r.hits.push({ at: t0 + time + h.delay, i: h.i, dx: h.dx, dz: h.dz, power, role, first: k === 0 });
@@ -444,7 +566,7 @@ export class ClipSkillRunner {
 
   /** On world time (a hit-stop holds it, as it holds the clip): spawns, strikes, blows; the marks age. */
   update(dt: number): void {
-    this.marks.update(dt);
+    if (this.ownsMarks) this.marks.update(dt);
     for (let k = this.running.length - 1; k >= 0; k -= 1) {
       const r = this.running[k]!;
       r.t += dt;
@@ -453,7 +575,8 @@ export class ClipSkillRunner {
       for (const b of r.beats) {
         if (b.done || r.t < b.at - 1e-6) continue;
         b.done = true;
-        this.host.strike(r.skill, r.anchor, b.role, r.colour);
+        // A tick bites without the tier's reaction (no stop, no shake).
+        if (!b.tick) this.host.strike(r.skill, r.anchor, b.role, r.colour);
       }
       while (r.next < r.hits.length && r.hits[r.next]!.at <= r.t + 1e-6) {
         const h = r.hits[r.next]!;
@@ -484,7 +607,7 @@ export class ClipSkillRunner {
 
   clear(): void {
     this.running.length = 0;
-    this.marks.clear();
+    if (this.ownsMarks) this.marks.clear();
   }
 }
 
