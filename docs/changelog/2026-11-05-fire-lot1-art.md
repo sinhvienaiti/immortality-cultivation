@@ -33,3 +33,14 @@ Phiếu 277, 278 và 280, nền `ee3ee97` sau phiếu 264. Đổi lớp nhìn tr
 Build API của wrapper 274 qua, thoát 0; grep bundle không có `fxcode`, đã xóa `/private/tmp/codex-278-dist`. Wrapper gốc khóa cứng thư mục 274 nên lệnh nguyên văn của phiếu bị từ chối; chỉ thay chuỗi đường dẫn sang 278 trong bộ nhớ, giữ nguyên cờ và kiểm cache sạch, không sửa wrapper trên đĩa. Lệnh tái lập và từng ca cũ: `docs/codex-queue/278-report.md` ở repo cha.
 
 Chưa nghiệm thu hình ảnh hoặc GPU. Claude tiếp tục parity ONLY lô 1, perf, video trước/sau ở camera chơi và hai giám khảo mù ≥ 8,5 theo phiếu.
+
+## Bổ sung phiếu 283 · Làm ấm phần chung
+
+- Lab đợi các ảnh sprite, texture của kit và năm mặt nạ impact nạp xong. `ScreenFx.prewarmTextures()` tải mặt nạ lên GPU; `SkillNumbersImpl.prewarm()` tạo atlas số thật sau khi font nạp, dùng lại atlas đó ở các lần vẽ sau.
+- `ElementStage.prewarm(kit, renderer, scene, target, textures)` dùng chung cho Hỏa và Kim. Lab chọn lần lượt hai nguyên tố trước `__lab.ready`, rồi trả lại nguyên tố ban đầu. Giữ prewarm Hỏa của 280 để đợi brush, mask và dải riêng; không cần sửa `element-fire.ts`.
+- `prewarmScene()` tạm hiện các mesh của scene thật, gồm qi slash, các kiếm instanced và vật thể đổ bóng; tải các sampler, biên dịch biến thể màn hình và HDR. Mỗi lần gọi vẽ **đúng một khung** vào target **64×64**, sao chép định dạng, kiểu texture, không gian màu và MSAA của buffer bloom. Có hai lượt lúc nạp: một Hỏa, một Kim. Lượt render thật cũng chạy đường shadow map của các mesh có `castShadow`.
+- Mẫu thẻ chỉ ghi tạm vào phần tử đầu của buffer GPU, ở tuổi 0; không gọi cast, emit, update, âm thanh hoặc sim. Atlas số dùng một trường số riêng. Trả lại visibility, culling, số instance, draw range, dữ liệu attribute và uniform bằng `finally`; gỡ mẫu số và giải phóng target kể cả khi lỗi. Pool rỗng vẫn có count 0; thẻ sống có sẵn giữ nguyên.
+- `__lab.prewarmReport()` trả bản sao hai hồ sơ, mỗi hồ sơ có `element`, danh sách texture (`id`, tên/URL), chương trình WebGL (`id`, `name`, `cacheKey`), vật thể/vật liệu, target và số lượt render. Đọc không phát thẻ hoặc render; bản production không chứa `prewarmReport`.
+- Test mới `tests/view/skill-prewarm-shared.test.ts`: **6 ca**, gồm Hỏa/Kim, upload mặt nạ và atlas số 1024×256, đúng một lượt render nhỏ mỗi lần gọi, mọi pool rỗng sau đó, nhánh lỗi upload/compile/render, bảo toàn thẻ sống/uniform/phiên bản texture và dùng lại atlas. Không sửa test cũ.
+
+**Kiểm 283:** TypeScript qua; **1006/1006 test, 93/93 tệp** qua (mốc 1000 + 6 ca mới). Build bằng wrapper 274 với thư mục riêng `/private/tmp/codex-283-dist` qua; grep không có `prewarmReport`; đã xóa thư mục build. Chưa đo GPU: Claude đo lại cổng 7 cho cả Hỏa và Kim, khung bấm phím và khung trúng đầu ≤ 11,5 ms. Báo cáo ở repo cha: `docs/codex-queue/283-report.md`.

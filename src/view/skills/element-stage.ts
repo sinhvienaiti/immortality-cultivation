@@ -15,6 +15,7 @@ import { BeamPool, Rand, RibbonPool, SpritePool, type SpriteBlend, type SpriteFa
 import { GroundDecalPool } from "./ground-decals";
 import { HeatRingPool } from "./heat-rings";
 import type { SwordSkillTextures } from "./sword-skills";
+import { prewarmScene, type ScenePrewarmReport } from "../renderer";
 
 export type StageQuality = "low" | "medium" | "high" | "ultra";
 
@@ -104,6 +105,13 @@ export class ElementStage {
       if (missing.length > 0) console.warn(`[element-stage] ${kit.id}: clips not found in its manifest: ${missing.join(", ")}`);
     }
     return h;
+  }
+
+  /** Load time only; the host selects the element, loads its media and lends overlays before calling. */
+  prewarm(kit: ElementKit, renderer: THREE.WebGLRenderer, scene: THREE.Scene,
+    target: THREE.WebGLRenderTarget, textures: readonly THREE.Texture[] = []): ScenePrewarmReport & { element: ElementId } {
+    this.hooksOf(kit);
+    return { element: kit.id, ...prewarmScene(renderer, scene, this.camera, target, textures) };
   }
 
   /** A kit's screen accent on a big blow at (x, y, z), strength 0–1 (the host's, when it gave one). */

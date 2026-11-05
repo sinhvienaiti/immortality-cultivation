@@ -77,6 +77,119 @@ export interface Overlay {
   draw(renderer: THREE.WebGLRenderer, width: number, height: number): void;
 }
 
+export interface ScenePrewarmReport {
+  textures: { id: number; name: string }[];
+  programs: { id: number; name: string; cacheKey: string }[];
+  objects: { name: string; materials: number[]; shadow: boolean }[];
+  target: { width: number; height: number; type: number; format: number; colorSpace: string; samples: number };
+  renders: number;
+}
+
+/** Load-time only: exercise the real buffers/programs, without entering any pool's emit/update path. */
+export function prewarmScene(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera,
+  template: THREE.WebGLRenderTarget, extraTextures: readonly THREE.Texture[] = []): ScenePrewarmReport {
+  const target = template.clone();
+  target.setSize(64, 64);
+  const was = renderer.getRenderTarget();
+  const restore: (() => void)[] = [];
+  const textures = new Set<THREE.Texture>();
+  const objects: ScenePrewarmReport["objects"] = [];
+  const upload = (value: unknown): void => {
+    if (!(value instanceof THREE.Texture) || value.isRenderTargetTexture || textures.has(value)) return;
+    renderer.initTexture(value);
+    textures.add(value);
+  };
+  try {
+    for (const texture of extraTextures) upload(texture);
+    scene.traverse((object) => {
+      const visible = object.visible;
+      // Keep the scene's light count, including zero-intensity flash lights, unchanged.
+      if (!(object instanceof THREE.Light)) object.visible = true;
+      restore.push(() => { object.visible = visible; });
+      const mesh = object as THREE.Mesh;
+      if (mesh.geometry === undefined || mesh.material === undefined) return;
+      const culled = mesh.frustumCulled;
+      mesh.frustumCulled = false;
+      restore.push(() => { mesh.frustumCulled = culled; });
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      objects.push({ name: mesh.name || `${mesh.type}:${mesh.id}`, materials: materials.map((m) => m.id), shadow: mesh.castShadow });
+      for (const material of [...materials, mesh.customDepthMaterial, mesh.customDistanceMaterial]) {
+        if (material === undefined) continue;
+        for (const value of Object.values(material)) upload(value);
+        if (material instanceof THREE.ShaderMaterial) {
+          for (const uniform of Object.values(material.uniforms)) {
+            upload(uniform.value);
+            // onBeforeRender may write viewport/time uniforms: keep the live material intact.
+            const value = uniform.value;
+            const saved = !(value instanceof THREE.Texture) && value?.clone instanceof Function ? value.clone() : value;
+            restore.push(() => {
+              if (value?.copy instanceof Function && saved !== value) value.copy(saved);
+              else uniform.value = saved;
+            });
+          }
+          // QiSlash starts hidden with coincident endpoints and zero fade.
+          if (material.uniforms.uHead !== undefined && material.uniforms.uHasMask !== undefined) {
+            material.uniforms.uFade!.value = 1;
+            (material.uniforms.uA!.value as THREE.Vector3).set(-0.5, 1, 0);
+            (material.uniforms.uB!.value as THREE.Vector3).set(0.5, 1, 0);
+          }
+        }
+      }
+      const geometry = mesh.geometry;
+      // One GPU card at age zero. Logical pool state, cursors, clocks and RNG are never touched.
+      if (geometry instanceof THREE.InstancedBufferGeometry && geometry.instanceCount === 0) {
+        geometry.instanceCount = 1;
+        restore.push(() => { geometry.instanceCount = 0; });
+        for (const [name, attr] of Object.entries(geometry.attributes)) {
+          if (!(attr instanceof THREE.InstancedBufferAttribute)) continue;
+          const saved = attr.array.slice(0, attr.itemSize);
+          const sample: Record<string, number[]> = {
+            iPos: [0, 1, 0, 1], iCol: [1, 1, 1, 1], iRot: [0, 0, 1, 0], iVel: [0, 0, 0],
+            iData: [1, 0, 0, 1], iColor: [1, 1, 1, -1e5], iDir: [1, 0, 0, 0], iAge: [0, 0, 0, 0],
+            iLift: [0, 1], iCtl: [1, -0.08, 0.08, 0], iVar: [0],
+            iP0: [0, 1, 0, Number((materials[0] as THREE.ShaderMaterial).uniforms?.uTime?.value ?? 0)],
+            iV0: [0, 0, 0, 1], iA: [1, 0, 1, 1], iB: [0, 0, 0, 0],
+          };
+          for (let i = 0; i < attr.itemSize; i += 1) attr.array[i] = sample[name]?.[i] ?? 1;
+          attr.needsUpdate = true;
+          restore.push(() => { attr.array.set(saved); attr.needsUpdate = true; });
+        }
+      }
+      if (mesh instanceof THREE.InstancedMesh && mesh.count === 0) {
+        const matrix = new THREE.Matrix4();
+        mesh.getMatrixAt(0, matrix);
+        mesh.setMatrixAt(0, new THREE.Matrix4().makeTranslation(0, 1, 0));
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.count = 1;
+        restore.push(() => { mesh.count = 0; mesh.setMatrixAt(0, matrix); mesh.instanceMatrix.needsUpdate = true; });
+      }
+      if (geometry.drawRange.count === 0) {
+        const { start, count } = geometry.drawRange;
+        geometry.setDrawRange(0, 6);
+        restore.push(() => geometry.setDrawRange(start, count));
+      }
+    });
+    // Also compile the display variant used by overlays and Low/Medium.
+    renderer.setRenderTarget(null);
+    renderer.compile(scene, camera);
+    renderer.setRenderTarget(target);
+    renderer.compile(scene, camera);
+    renderer.render(scene, camera);
+    return {
+      textures: [...textures].map((t) => ({ id: t.id, name: t.name || t.image?.src || t.uuid })),
+      programs: (renderer.info.programs ?? []).map((p) => ({ id: p.id, name: p.name, cacheKey: p.cacheKey })),
+      objects,
+      target: { width: target.width, height: target.height, type: target.texture.type, format: target.texture.format,
+        colorSpace: target.texture.colorSpace, samples: target.samples },
+      renders: 1,
+    };
+  } finally {
+    for (let i = restore.length - 1; i >= 0; i -= 1) restore[i]!();
+    renderer.setRenderTarget(was);
+    target.dispose();
+  }
+}
+
 // ── The fixed camera (canon §21.1) ──────────────────────────────────────────
 
 /** The field in metres (rules.ts FIELD, canon §8.1): heart at the origin, gates north (−z), the camera south (+z). */

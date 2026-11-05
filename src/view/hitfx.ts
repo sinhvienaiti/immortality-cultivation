@@ -874,6 +874,28 @@ export class IcNumberSprites {
     renderer.autoClear = clear;
   }
 
+  /** Include the real atlas and one age-zero glyph in the host's single off-screen prewarm draw. */
+  prewarm<T>(scene: THREE.Scene, draw: () => T): T {
+    const field = new SkillNumberField(IC_SKILL_NUMBERS);
+    field.alive[0] = 1;
+    field.value[0] = 8;
+    field.count[0] = 1;
+    field.life[0] = 1;
+    field.size[0] = 1;
+    field.tier[0] = 1;
+    field.x[0] = field.y[0] = 32;
+    field.rgb[0] = 0xffffff;
+    this.write(field, 64, 64);
+    scene.add(this.scene);
+    try {
+      return draw();
+    } finally {
+      this.scene.removeFromParent();
+      // Restore the live field on its next overlay draw; the warm glyph never enters that field.
+      this.mesh.geometry.instanceCount = 0;
+    }
+  }
+
   dispose(): void {
     this.mesh.geometry.dispose();
     (this.mesh.material.uniforms.uAtlas!.value as THREE.Texture).dispose();
@@ -1110,6 +1132,11 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
     return this.field.live;
   }
 
+  prewarm<T>(scene: THREE.Scene, draw: () => T): T {
+    this.sprites ??= new IcNumberSprites(IC_SKILL_NUMBERS, this.look);
+    return this.sprites.prewarm(scene, draw);
+  }
+
   /** Is number i one of the headlines? */
   private isHeadline(i: number): boolean {
     const k = this.field.key[i]!;
@@ -1317,7 +1344,10 @@ class SkillNumbersImpl implements SkillNumbers, Overlay {
  * with short labels, the skill's colour, gold-edged crits. `digitFont` should
  * be loaded before the first number is drawn (the atlas is painted once).
  */
-export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont: string = NUMBER_ATLAS.digitFont): SkillNumbers {
+export function createSkillNumbers(renderer: Renderer3D, capacity: number, digitFont: string = NUMBER_ATLAS.digitFont): SkillNumbers & {
+  /** Load time, after fonts: lend the real atlas and an age-zero glyph to the prewarm scene. */
+  prewarm<T>(scene: THREE.Scene, draw: () => T): T;
+} {
   // A bold dark outline and a soft shadow: never thin white over bright VFX (round 2), in 96 px rows so a
   // descending figure's ink, outline and shadow stay inside its own cell (in 64 px rows they bled and were cut).
   return new SkillNumbersImpl(renderer, capacity, { glyphs: SKILL_GLYPHS, digitFont, goldRow: true, advance: digitFont === NUMBER_ATLAS.digitFont ? 1 : 0.8, outline: 15, shadow: true, rowH: 96, midY: 44 });

@@ -162,12 +162,22 @@ const savedFog = { near: 0, far: 0 };
 buildField(view, { tint: params.get("ground") ?? "#7c848b", repeat: 6 });
 
 const texLoader = new THREE.TextureLoader();
+const prewarmLoads: Promise<void>[] = [];
+/** Keep load completion for GPU prewarm; callers retain the same texture and colour-space setup. */
+function prewarmTexture(url: string): THREE.Texture {
+  let done!: () => void, failed!: (reason: unknown) => void;
+  const loaded = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
+  prewarmLoads.push(loaded);
+  // The load-time prewarm awaits the original rejection; avoid an unhandled rejection before it starts.
+  void loaded.catch(() => undefined);
+  return texLoader.load(url, done, undefined, failed);
+}
 const texCache = new Map<string, THREE.Texture>();
 /** A Kenney CC0 particle texture (art-src/lab/tex), loaded once however many layers share it. */
 function tex(name: string): THREE.Texture {
   let t = texCache.get(name);
   if (t === undefined) {
-    t = texLoader.load(LAB_ASSETS + "tex/" + name + ".png");
+    t = prewarmTexture(LAB_ASSETS + "tex/" + name + ".png");
     t.colorSpace = THREE.SRGBColorSpace;
     texCache.set(name, t);
   }
@@ -274,7 +284,7 @@ let slashCrescent: THREE.Texture | null = null;
 {
   const dir = "/art-src/skills/impact-tex/";
   const mask = (name: string): THREE.Texture => {
-    const t = texLoader.load(dir + name + "-mask.png");
+    const t = prewarmTexture(dir + name + "-mask.png");
     t.colorSpace = THREE.NoColorSpace;
     return t;
   };
@@ -786,7 +796,7 @@ function kitTexture(name: string): THREE.Texture {
   if (!name.includes("/")) return tex(name);
   let t = texCache.get(name);
   if (t === undefined) {
-    t = texLoader.load(VFX_BASE + name);
+    t = prewarmTexture(VFX_BASE + name);
     t.colorSpace = THREE.SRGBColorSpace;
     texCache.set(name, t);
   }
@@ -818,6 +828,7 @@ const auraSolo = new AuraSolo(view.layers.fx, textures.trace);
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
 const lightAt = new THREE.Vector3();
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k), light: (x, y, z, colour, intensity) => lights.flash(lightAt.set(x, y, z), view.camera.position, colour, intensity, true) });
+const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
 const BLADE_HEAT = params.get("bladeHeat");
@@ -1389,6 +1400,8 @@ declare global {
       ready: boolean;
       /** Ticket 258b: GPU checks of FlipbookPool v2 (programs, GPU vs CPU, mask decode); off-screen, no time passes. */
       flipbookProbe(): Promise<FlipbookProbeReport>;
+      /** Load-time GPU uploads/programs for Fire and Metal; reading this does not render or emit. */
+      prewarmReport(): ReturnType<ElementStage["prewarm"]>[];
       type(slot: SwordSlot | "k7"): void;
       cast(slot: SwordSlot, tx: number, tz: number): void;
       enemyShot(): void;
@@ -1598,6 +1611,7 @@ void (async () => {
   }
   // The graphic frame's programs (the mask over instanced and skinned figures, the frame) compile now, not on the
   // first climax.
+  await Promise.all(prewarmLoads);
   screen.prewarm(view.stage.renderer);
   // The aura's programs (mantle, tip star, the silk ribbons, the far swords' halo) compile now, aura on or off, for both
   // targets they may draw into: the post chain's buffer (bloom on: linear, no tone map in the material) and the screen
@@ -1617,6 +1631,18 @@ void (async () => {
       // Fire uploads once and compiles with the real scene/lights in the active pipeline's target.
       r.setRenderTarget(view.stage.bloom.enabled ? view.stage.composer.readBuffer : null);
       await prewarmFire(stage, r, view.camera, view.scene);
+      const active = fx.element.id;
+      try {
+        for (const id of ["fire", "metal"]) {
+          await setElement(id);
+          await Promise.all(prewarmLoads);
+          const masks = screen.prewarm(r);
+          prewarmReports.push(numbers.prewarm(view.scene, () =>
+            stage.prewarm(fx.element, r, view.scene, view.stage.composer.readBuffer, masks)));
+        }
+      } finally {
+        await setElement(active);
+      }
     } finally {
       r.setRenderTarget(was);
     }
@@ -1629,6 +1655,7 @@ void (async () => {
   window.__lab = {
     ready: true,
     flipbookProbe: () => runFlipbookProbe(view.stage.renderer),
+    prewarmReport: () => structuredClone(prewarmReports),
     type,
     // The caster acts the slot first: SwordSkillHost.play names only a clip (K4 asks for Skill2 like the guard, K1 for Attack
     // like Phi Kiếm), so a cast left to play() acted the wrong skill (review fix).

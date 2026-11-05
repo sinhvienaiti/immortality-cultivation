@@ -764,9 +764,18 @@ export class ScreenFx {
     this.focusSet = true;
   }
 
+  /** Upload loaded authored masks, including burst/slash used only on the first local hit. */
+  prewarmTextures(renderer: THREE.WebGLRenderer): THREE.Texture[] {
+    const textures = [...new Set(Object.values(this.shapes))].filter((t) => t.image != null);
+    for (const texture of textures) renderer.initTexture(texture);
+    return textures;
+  }
+
   /** Compiles the graphic frame's programs (and the host's mask) now: the first climax must not compile them. */
-  prewarm(renderer: THREE.WebGLRenderer): void {
+  prewarm(renderer: THREE.WebGLRenderer): THREE.Texture[] {
+    const textures = this.prewarmTextures(renderer);
     this.impactPass.prewarm(renderer);
+    return textures;
   }
 
   /**
