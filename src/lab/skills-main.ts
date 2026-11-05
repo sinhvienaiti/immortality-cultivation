@@ -874,6 +874,10 @@ const showcaseHost: ShowcaseHost = {
 };
 const showcase = new Showcase(stage.flipbooks, showcaseHost, ULT_SHOWCASE);
 const expansion = new Showcase(stage.flipbooks, showcaseHost, EXPANSION_SHOWCASE);
+// Their video cards play in real time; with fixed steps (captures) they are seeked along world time (one bank for both).
+showcase.driven = fixed;
+// ?video=0: the atlases (6 fps) instead of the clips' 1080p videos, to compare.
+showcase.videos = params.get("video") !== "0";
 // Keys 8 and 9 cast their skills on the herd (clip-skills.ts, lab-castable-skills.md): key 8 the pillars and ultimates,
 // key 9 the expansion batch by batch. The strikes land on the clip's frames through the same hit path as keys 0–7
 // (emitImpact, the screen's tier, the kick, the lights).

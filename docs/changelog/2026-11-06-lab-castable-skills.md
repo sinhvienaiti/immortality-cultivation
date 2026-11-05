@@ -93,3 +93,20 @@ Anh (06/11 00:05): "tạm thời chưa cần chấm, tôi sẽ là người ch�
   - B6: 24 binh khí tỏa ra, vừa 19 điểm.
 - Ám không có `groundMark` nên B5 không có ấn.
 - Kiểm: 1070 test qua. Chrome headless tung B1–B6, 0 lỗi; cú đầu lệch khung đỉnh của clip ≤ 1 khung.
+
+## Phím 8 và 9 phát bằng video 1080p (anh 06/11 ~02:20)
+
+- Anh: "hơi mờ, nhìn như video kém chất lượng". Nguyên nhân: atlas chỉ 640×360, 6 khung/giây, trong khi nguồn là 1080p, 24 khung/giây.
+- Agent lab-flipbooks đã thêm trường `video` (file, w, h, fps, frames, start, peakTime, pivot) và file `<id>.mp4` vào manifest `ult` và `expansion`. `flipbook.ts` nay đọc trường này.
+- `showcase.ts`:
+  - mục có video thì phát bằng `THREE.VideoTexture` trên cùng thẻ: cùng cách trộn (cộng sáng, đen là trong suốt), cùng chỗ, cỡ, góc;
+  - tối đa 3 video cùng lúc, chung cho phím 8 và 9; dư thì dùng atlas;
+  - chọn mục (Shift+8/9) là nạp sẵn video của mục đó;
+  - chiêu hết thì `pause()`, bỏ `src`, giải phóng texture;
+  - video không lên khung nào sau 1,5 s thì atlas thay vào; trình duyệt không chạy được H.264 thì dùng atlas.
+- `clip-skills.ts`: các cú trúng chạy theo đồng hồ của chính clip, tức thời gian video. Cú đầu ở `peakTime`, cú khác theo khung tương ứng trên video.
+- Lab chạy bước cố định (`?fixed=1`, để quay): video đứng yên và được tua theo thời gian của lab. `?video=0` tắt video để so với atlas.
+- Kiểm:
+  - 1071 test qua;
+  - Chrome headless chạy thời gian thật, 5 chiêu, 0 lỗi: cả 5 phát video, cú đầu trễ 7–23 ms so với `peakTime` (Hỏa Tinh Trụy 2,667 s → 2,677 s);
+  - khung trước/sau trong `owner-review/2026-11-06/tu-tien/lab-skills-video/`.

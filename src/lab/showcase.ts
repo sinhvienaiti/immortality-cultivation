@@ -14,9 +14,12 @@
  * shakes and flashes at the ultimate tier for ultimates, avatars and beasts, the skill tier for the rest. Not wired to
  * the sim. Key 8's items are cast on the lab's herd by clip-skills.ts (play with `at` and `feel: false`, `timeOf`): the
  * strikes, not the spawn, bring the light and the shake.
+ * A clip with its own video (the manifest's `video`, 1080p at 24 fps; owner 06/11 ~02:20: the 640 × 360 atlases at 6 fps
+ * "hơi mờ, nhìn như video kém chất lượng") plays it on the same card, the same blend (added light, black clear), place
+ * and turn: up to MAX_VIDEOS at once (VideoBank), the rest from their atlas.
  */
 import * as THREE from "three";
-import type { FlipbookMeta, FlipbookPlayer, FlipbookPool } from "../view/skills/flipbook";
+import { FlipbookPool, type FlipbookMeta, type FlipbookPlayer, type FlipbookVideo } from "../view/skills/flipbook";
 import { SCREEN_TIERS } from "../view/screen-fx";
 
 /** Where a pillar's column meets the ground in its cell (x from the left, y from the top). */
@@ -178,6 +181,163 @@ const v = new THREE.Vector3();
 const f = new THREE.Vector3();
 const p = new THREE.Vector3();
 
+/** Videos playing at once (a 1080p decode each); a cast beyond them takes its atlas. */
+export const MAX_VIDEOS = 3;
+
+/**
+ * What a video card tells its caster: the time it shows (s; −1 before it starts; Infinity once its slot has moved on;
+ * VIDEO_FAILED when it never started and its atlas took over: the caster keeps its own clock).
+ */
+export interface VideoHandle {
+  time(): number;
+}
+export const VIDEO_FAILED = -2;
+/** A video not showing a frame this long after its cast (real ms) gives way to its atlas. */
+const VIDEO_STALL_MS = 1500;
+
+/** A video slot: its element, texture and one-cell card; the clip it holds, its cast's number, its card's time left. */
+interface VideoSlot {
+  readonly el: HTMLVideoElement;
+  readonly texture: THREE.VideoTexture;
+  readonly pool: FlipbookPool;
+  id: string;
+  gen: number;
+  left: number;
+  /** Its clock when the lab drives it (fixed steps). */
+  clock: number;
+  duration: number;
+  /** Real time it started (ms), what draws instead if it never shows a frame (its atlas card). */
+  startedAt: number;
+  fallback: (() => void) | null;
+}
+
+/**
+ * The lab's video cards, shared by keys 8 and 9 (one bank per flipbook player). A slot keeps its clip's file between
+ * casts (a selected item preloads into one); when its card is done it pauses. Fixed steps (the lab's ?fixed=1, captures):
+ * the videos hold still and are seeked along world time.
+ */
+class VideoBank {
+  readonly slots: VideoSlot[] = [];
+  driven = false;
+  /** Off: every card plays its atlas (the lab's ?video=0, to compare). */
+  enabled = true;
+  private readonly blank: THREE.DataTexture;
+
+  constructor(private readonly player: FlipbookPlayer) {
+    this.blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
+    this.blank.needsUpdate = true;
+  }
+
+  /** Whether this page plays the clips' H.264 (a browser without it keeps the atlases). */
+  private readonly playable = typeof document !== "undefined" && document.createElement("video").canPlayType('video/mp4; codecs="avc1.640028"') !== "";
+
+  /** Whether a cast of `id` could take a slot now (one idle, or a new one under MAX_VIDEOS). */
+  free(): boolean {
+    return this.enabled && this.playable && (this.slots.length < MAX_VIDEOS || this.slots.some((s) => s.left <= 0));
+  }
+
+  /** A slot for clip `id` at `url`: an idle one holding it, an empty one, a new one, any idle one; null: all playing. */
+  take(id: string, url: string): VideoSlot | null {
+    if (typeof document === "undefined") return null;
+    let s = this.slots.find((x) => x.left <= 0 && x.id === id) ?? this.slots.find((x) => x.left <= 0 && x.id === "");
+    if (s === undefined && this.slots.length < MAX_VIDEOS) s = this.make();
+    s ??= this.slots.find((x) => x.left <= 0);
+    if (s === undefined) return null;
+    if (s.id !== id) {
+      s.id = id;
+      s.el.src = url;
+      s.el.load();
+    }
+    return s;
+  }
+
+  private make(): VideoSlot {
+    const el = document.createElement("video");
+    el.muted = true;
+    el.playsInline = true;
+    el.preload = "auto";
+    el.crossOrigin = "anonymous";
+    const texture = new THREE.VideoTexture(el);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const pool = new FlipbookPool("video", "fire", 1, 15, this.blank);
+    pool.vignette = 0.35;
+    this.player.group.add(pool.mesh);
+    const s: VideoSlot = { el, texture, pool, id: "", gen: 0, left: 0, clock: 0, duration: 0, startedAt: 0, fallback: null };
+    this.slots.push(s);
+    return s;
+  }
+
+  /** Starts `s` from its first frame for `life` s of card (`fallback`: its atlas card, if it never starts); its handle. */
+  start(s: VideoSlot, life: number, duration: number, fallback: () => void): VideoHandle {
+    s.gen += 1;
+    s.left = life;
+    s.clock = 0;
+    s.duration = duration;
+    s.startedAt = performance.now();
+    s.el.currentTime = 0;
+    if (this.driven) s.el.pause();
+    else void s.el.play().catch(() => undefined);
+    const gen = s.gen;
+    let failed = false;
+    s.fallback = () => {
+      failed = true;
+      fallback();
+    };
+    return {
+      time: () => {
+        if (failed) return VIDEO_FAILED;
+        if (s.gen !== gen || s.left <= 0) return Infinity;
+        if (this.driven) return s.clock;
+        return s.el.readyState >= 2 && (!s.el.paused || s.el.ended) ? s.el.currentTime : -1;
+      },
+    };
+  }
+
+  /** World time: the cards age; a driven video is seeked to its clock; a card done pauses its video. */
+  update(dt: number): void {
+    for (const s of this.slots) {
+      if (s.left <= 0) continue;
+      s.pool.update(dt);
+      if (this.driven) {
+        s.clock += dt;
+        const t = Math.min(s.clock, Math.max(0, s.duration - 0.02));
+        if (Math.abs(s.el.currentTime - t) > 0.5 / 24) s.el.currentTime = t;
+      }
+      // Not showing a frame well after its cast (an error, a stalled load): its atlas takes over.
+      else if (s.el.error !== null || (s.el.readyState < 2 && performance.now() - s.startedAt > VIDEO_STALL_MS)) {
+        const fb = s.fallback;
+        this.stop(s);
+        fb?.();
+        continue;
+      }
+      s.left -= dt;
+      if (s.left <= 0) this.stop(s);
+    }
+  }
+
+  /** A card done: its video paused, its file let go (the decoder freed), its texture released. */
+  stop(s: VideoSlot): void {
+    s.left = 0;
+    s.pool.clear();
+    s.el.pause();
+    s.el.removeAttribute("src");
+    s.el.load();
+    s.texture.dispose();
+    s.id = "";
+  }
+
+  stopAll(): void {
+    for (const s of this.slots) if (s.left > 0) this.stop(s);
+  }
+}
+
+const BANKS = new WeakMap<FlipbookPlayer, VideoBank>();
+function bankOf(player: FlipbookPlayer): VideoBank {
+  let b = BANKS.get(player);
+  if (b === undefined) BANKS.set(player, (b = new VideoBank(player)));
+  return b;
+}
+
 /** How a castable skill plays its clip (clip-skills.ts). */
 export interface PlayOptions {
   /** Where a pillar or a beast stands (a ground point) instead of on the foe nearest the screen's centre. */
@@ -192,6 +352,8 @@ export interface PlayOptions {
   /** A divine beast's flight: its card moves at this ground velocity (m/s), drawn at `scale` of its size. */
   readonly velocity?: THREE.Vector3;
   readonly scale?: number;
+  /** Its video when it has one and a slot is free (default true; false: its atlas). */
+  readonly video?: boolean;
 }
 
 /** A clip's time map: to its peak frame in ATTACK_S, then the rest over its tail (or all of it over its tail). */
@@ -241,8 +403,12 @@ export class Showcase {
   private readonly items = new Map<string, ShowcaseItem>();
   private readonly listeners: (() => void)[] = [];
   private turn = -1;
+  private readonly bank: VideoBank;
+  /** The video card the last play started (null: it played its atlas). */
+  played: VideoHandle | null = null;
 
   constructor(player: FlipbookPlayer, private readonly host: ShowcaseHost, private readonly cfg: ShowcaseConfig = ULT_SHOWCASE) {
+    this.bank = bankOf(player);
     const lib = player.library(cfg.folder);
     lib.watch((id) => {
       const e = lib.get(id);
@@ -317,6 +483,52 @@ export class Showcase {
     cam.getWorldDirection(f);
     const t = f.y < -1e-3 ? -cam.position.y / f.y : 30;
     return out.set(cam.position.x + f.x * t, 0, cam.position.z + f.z * t);
+  }
+
+  /** Its clip's video, if the manifest gives one. */
+  videoOf(id: string): FlipbookVideo | null {
+    return this.pools.get(id)?.meta?.video ?? null;
+  }
+
+  /** Whether a cast of `id` now plays its video (it has one, a slot is free, the page can play one). */
+  canVideo(id: string): boolean {
+    return this.videoOf(id) !== null && this.bank.free();
+  }
+
+  /** Loads `id`'s video into an idle slot (a selected item: its cast starts at once). */
+  preload(id: string): void {
+    const vid = this.videoOf(id);
+    if (vid !== null && this.bank.free()) this.bank.take(id, vid.url);
+  }
+
+  /** Seconds after its spawn that `id` shows `frame` ("peak": its peak): on its video's clock, else its atlas's time map. */
+  clipTime(id: string, frame: number | "peak", video: boolean): number {
+    const vid = this.videoOf(id);
+    if (video && vid !== null) {
+      if (frame === "peak") return vid.peakTime;
+      const frames = this.pools.get(id)?.meta?.frames ?? 1;
+      return (frame / frames) * (vid.frames / vid.fps);
+    }
+    return this.timeOf(id, frame === "peak" ? this.peakOf(id) : frame);
+  }
+
+  /** The lab steps its world in fixed frames (captures): videos are seeked along world time instead of playing. */
+  set driven(on: boolean) {
+    this.bank.driven = on;
+  }
+
+  /** Videos on (default) or every card from its atlas (?video=0). */
+  set videos(on: boolean) {
+    this.bank.enabled = on;
+  }
+
+  /** The video cards age (world time; once a frame for both showcases). */
+  updateVideos(dt: number): void {
+    this.bank.update(dt);
+  }
+
+  stopVideos(): void {
+    this.bank.stopAll();
   }
 
   /** Its clip's peak frame (the manifest's timing.peak, inside the clip). */
@@ -430,8 +642,27 @@ export class Showcase {
       // A smaller figure (a beast, an avatar) stands on the ground under it; a scene drawn on the ground stays on it.
       if (figure && it.place !== "caster") v.y = size * 0.3;
     }
-    pool.clear();
-    pool.spawn(v, size, o);
+    // Its video on the same card (one cell, held: the video moves), else its atlas.
+    const vid = opts.video !== false ? meta.video : undefined;
+    const slot = vid !== undefined ? this.bank.take(pick, vid.url) : null;
+    this.played = null;
+    if (vid !== undefined && slot !== null) {
+      const duration = vid.frames / vid.fps;
+      slot.pool.attach({ ...meta, id: pick + "#video", cols: 1, rows: 1, frames: 1, fps: vid.fps, start: 0, aspect: vid.w / vid.h,
+        pivot: it.place === "foe" ? FOOT : vid.pivot, peak: undefined, holdEnd: undefined, video: undefined }, slot.texture);
+      const life = duration + 0.3;
+      slot.pool.clear();
+      slot.pool.spawn(v, size, { ...o, frame: 0, rate: 0, slowFrom: undefined, slowRate: undefined, life });
+      const at = v.clone();
+      const spawnAtlas = (): void => {
+        pool.clear();
+        pool.spawn(at, size, o);
+      };
+      this.played = this.bank.start(slot, life, duration, spawnAtlas);
+    } else {
+      pool.clear();
+      pool.spawn(v, size, o);
+    }
     if (opts.feel !== false) {
       this.host.light(p.set(v.x, 1.5, v.z), it.light, it.place === "foe" ? 6 : 8);
       // The ultimate tier's shake and flash for ultimates, avatars and beasts; the skill tier's for the rest.

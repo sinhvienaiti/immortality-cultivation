@@ -383,4 +383,38 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     expect(new Set(all).size).toBe(all.length);
     for (const s of struck) expect(s.length).toBeGreaterThan(0);
   });
+
+  it("plays a clip's 1080p video when it has one: strikes follow the video's own clock, the first at its peakTime", () => {
+    const meta = parseFlipbookManifest({ flipbooks: { "pillar-fire-meteor": { file: "m.png", cols: 4, rows: 8, frames: 31, fps: 6, cell: [640, 360], role: "pillar",
+      timing: { peak: 16 }, video: { file: "pillar-fire-meteor.mp4", w: 1920, h: 1080, fps: 24, frames: 121, start: 0, peakTime: 2.667, pivot: [0.5, 0.56] } } } }, "/v/ult/").get("pillar-fire-meteor")!;
+    expect(meta.video).toEqual({ url: "/v/ult/pillar-fire-meteor.mp4", w: 1920, h: 1080, fps: 24, frames: 121, start: 0, peakTime: 2.667, pivot: [0.5, 0.56] });
+    // A bad file name or a missing number: no video (the atlas plays).
+    expect(parseFlipbookManifest({ flipbooks: { a: { file: "a.png", cols: 1, rows: 1, video: { file: "../x.mp4", w: 1, h: 1, fps: 24, frames: 1, start: 0, peakTime: 0 } } } }, "/v/").get("a")!.video).toBeUndefined();
+    const { runner, show, log, step, player } = setup();
+    player.library("ult").add(meta, new THREE.Texture());
+    // The page plays it (a browser stand-in): its clock is the video's time, which this test turns.
+    let videoT = -1;
+    show.canVideo = () => true;
+    const play = show.play.bind(show);
+    show.play = (id, opts) => {
+      const r = play(id, opts);
+      show.played = { time: () => videoT };
+      return r;
+    };
+    expect(show.clipTime("pillar-fire-meteor", "peak", true)).toBeCloseTo(2.667, 6);
+    expect(show.clipTime("pillar-fire-meteor", 12, true)).toBeCloseTo((12 / 31) * (121 / 24), 6);
+    runner.cast("pillar-fire-meteor");
+    expect(runner.last!.video).toBe(true);
+    // World time runs while the video loads: nothing lands.
+    step(1);
+    expect(log.blows.length).toBe(0);
+    videoT = 2.6;
+    step(0.05);
+    expect(log.blows.length).toBe(0);
+    videoT = 2.67;
+    step(1 / 60);
+    expect(log.blows.length).toBeGreaterThan(0);
+    expect(runner.last!.firstBlowClip).toBeCloseTo(2.67, 6);
+    expect(runner.last!.peakClip).toBeCloseTo(2.667, 6);
+  });
 });

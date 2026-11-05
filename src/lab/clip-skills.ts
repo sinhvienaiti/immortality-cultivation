@@ -17,7 +17,7 @@ import { layFlat } from "../view/skills/element-clips";
 import { FlipbookPool, parseFlipbookManifest, type FlipbookMeta, type FlipbookPlayer, type FlipOptions } from "../view/skills/flipbook";
 import type { TargetField } from "../view/skills/targets";
 import type { ImpactRole } from "../view/screen-fx";
-import type { Showcase } from "./showcase";
+import { VIDEO_FAILED, type Showcase, type VideoHandle } from "./showcase";
 
 /**
  * How a skill lands: on the densest group (point), on the N densest (multi), on the whole field (field), from the caster
@@ -622,6 +622,10 @@ export interface ClipCastReport {
   blows: number;
   kills: number;
   marks: number;
+  /** Whether its clip played as its video; on the clip's own clock, its first strike's time and the clock at the first blow. */
+  video: boolean;
+  readonly peakClip: number;
+  firstBlowClip: number;
 }
 
 interface Running {
@@ -630,10 +634,14 @@ interface Running {
   /** When its clip spawns (s after the key) and the strikes' times on the clip's own clock. */
   readonly clipAt: number;
   readonly times: readonly number[];
+  /** Whether it plays its video (its clip's clock: the video's time), the cast's clock when its clip came out. */
+  readonly video: boolean;
+  handle: VideoHandle | null;
+  t0: number;
   clipped: boolean;
   readonly anchor: THREE.Vector3;
   readonly aim: ClipAim;
-  /** Each strike's time on the cast's clock once the clip is out. */
+  /** Each strike's time on the clip's own clock once the clip is out. */
   readonly beats: { at: number; role: ImpactRole; tick: boolean; done: boolean }[];
   readonly hits: { at: number; i: number; dx: number; dz: number; power: number; role: ImpactRole; first: boolean }[];
   next: number;
@@ -683,6 +691,8 @@ export class ClipSkillRunner {
   private preview(id: string): void {
     const s = this.table.get(id);
     if (s !== undefined) this.marks.prepare(s.element);
+    // Its video loads now, so its cast starts at once.
+    this.showcase.preload(id);
     this.showcase.caption(id, s !== undefined ? describeClipSkill(s) : undefined, s !== undefined ? this.nav : undefined);
   }
 
@@ -698,18 +708,21 @@ export class ClipSkillRunner {
     this.showcase.centre(m);
     const place = this.showcase.item(pick).place;
     const aim = aimClipSkill(skill, this.host.targets, c, m, place);
-    // Each strike on its clip frame (the first on the manifest's peak), or its seconds after the first strike.
+    // Each strike on its clip frame (the first on its peak: its video's peakTime, else the manifest's peak frame through
+    // the atlas's time map), or its seconds after the first strike.
+    const video = this.showcase.canVideo(pick);
     const peakFrame = this.showcase.peakOf(pick);
-    const frames = skill.strikes.map((s) => (s.after !== undefined ? -1 : s.frame === undefined || s.frame === "peak" ? peakFrame : s.frame));
-    const first = this.showcase.timeOf(pick, frames[0]! < 0 ? peakFrame : frames[0]!);
-    const times = skill.strikes.map((s, k) => (s.after !== undefined ? first + s.after : this.showcase.timeOf(pick, frames[k]!)));
+    const frameOf = (x: ClipStrike): number | "peak" => (x.frame === undefined ? "peak" : x.frame);
+    const frames = skill.strikes.map((x) => (x.after !== undefined ? -1 : frameOf(x) === "peak" ? peakFrame : (x.frame as number)));
+    const first = this.showcase.clipTime(pick, skill.strikes[0]!.after !== undefined ? "peak" : frameOf(skill.strikes[0]!), video);
+    const times = skill.strikes.map((x) => (x.after !== undefined ? first + x.after : this.showcase.clipTime(pick, frameOf(x), video)));
     // A blow from the sky is marked first: the clip waits until its first strike comes its mark's lead after the key.
     const markS = skill.mark === true ? MARK_S : skill.mark === false ? 0 : skill.mark;
     const lead = Math.max(0, markS - times[0]!);
     const colour = this.showcase.item(pick).light;
     const report: ClipCastReport = {
       id: pick, shape: skill.shape, points: aim.points.length, targets: aim.hits.length, clipAt: -1, strikeAt: [], strikeFrames: frames,
-      firstBlowAt: -1, blows: 0, kills: 0, marks: 0,
+      firstBlowAt: -1, blows: 0, kills: 0, marks: 0, video, peakClip: times[0]!, firstBlowClip: -1,
     };
     // Its marks: on the ground from the key (a mark) or from the first strike (a linger), eroding after it.
     if (markS > 0 || skill.linger > 0) {
@@ -719,8 +732,8 @@ export class ClipSkillRunner {
       for (const p of aim.points) if (this.marks.spawn(skill.element, p.x, p.z, size, from, life)) report.marks += 1;
     }
     const run: Running = {
-      skill, t: 0, clipAt: lead, times, clipped: false, anchor: new THREE.Vector3(aim.anchor.x, 0, aim.anchor.z), aim, beats: [], hits: [], next: 0,
-      colour, report,
+      skill, t: 0, clipAt: lead, times, video, handle: null, t0: 0, clipped: false, anchor: new THREE.Vector3(aim.anchor.x, 0, aim.anchor.z), aim,
+      beats: [], hits: [], next: 0, colour, report,
     };
     this.host.release(skill, run.anchor);
     this.running.push(run);
@@ -729,9 +742,10 @@ export class ClipSkillRunner {
     return pick;
   }
 
-  /** Its clip out now, its strikes on the clip's clock from `t0` (the cast's clock when the clip's age is 0). */
+  /** Its clip out now, its strikes on the clip's own clock (`t0`: the cast's clock when the clip's age is 0). */
   private spawnClip(r: Running, t0: number): void {
     r.clipped = true;
+    r.t0 = t0;
     r.report.clipAt = t0;
     const it = this.showcase.item(r.skill.id);
     // A pillar or a beast stands on its point; a field scene over the screen's centre.
@@ -743,46 +757,61 @@ export class ClipSkillRunner {
       velocity: fl !== undefined ? flyV.set(fl.vx, 0, fl.vz) : undefined,
       // A flying beast, or a field scene dropped on a point (D1's seal), drawn smaller so it sits on its point.
       scale: fl !== undefined || (r.skill.shape === "point" && it.place === "field") ? FLY_SCALE : undefined,
-      feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx,
+      feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx, video: r.video,
     });
+    // Its video's clock (none: it fell back to its atlas, and the strikes keep the cast's clock).
+    r.handle = r.video ? this.showcase.played : null;
     // One point after another (perPoint): hit strike k takes points k, k + n, … of its n hit strikes.
     const hitStrikes = r.skill.strikes.filter((x) => x.kind !== "tick").length;
     let hitNo = 0;
     r.times.forEach((time, k) => {
       const role: ImpactRole = k === 0 ? "primary" : "secondary";
       const tick = r.skill.strikes[k]!.kind === "tick";
-      r.beats.push({ at: t0 + time, role, tick, done: false });
+      r.beats.push({ at: time, role, tick, done: false });
       r.report.strikeAt.push(t0 + time);
       const power = r.skill.strikes[k]!.power;
       const turn = tick ? -1 : hitNo++;
       for (const h of r.aim.hits) {
         if (r.skill.perPoint === true && turn >= 0 && h.point % hitStrikes !== turn) continue;
-        r.hits.push({ at: t0 + time + h.delay, i: h.i, dx: h.dx, dz: h.dz, power, role, first: k === 0 || (r.skill.perPoint === true && turn >= 0 && h.point % hitStrikes === turn) });
+        r.hits.push({ at: time + h.delay, i: h.i, dx: h.dx, dz: h.dz, power, role, first: k === 0 || (r.skill.perPoint === true && turn >= 0 && h.point % hitStrikes === turn) });
       }
     });
     r.hits.sort((a, b) => a.at - b.at || a.i - b.i);
   }
 
-  /** On world time (a hit-stop holds it, as it holds the clip): spawns, strikes, blows; the marks age. */
+  /**
+   * On world time (a hit-stop holds it, as it holds the atlas clip): spawns, strikes, blows; the marks and the video
+   * cards age. A strike lands when its clip's own clock reaches it: the video's time, else the time since the clip came out.
+   */
   update(dt: number): void {
-    if (this.ownsMarks) this.marks.update(dt);
+    if (this.ownsMarks) {
+      this.marks.update(dt);
+      this.showcase.updateVideos(dt);
+    }
     for (let k = this.running.length - 1; k >= 0; k -= 1) {
       const r = this.running[k]!;
       r.t += dt;
       // Spawned inside this frame, the clip ages by this frame's step with the other flipbooks: its clock starts a step back.
       if (!r.clipped && r.t >= r.clipAt - 1e-6) this.spawnClip(r, r.t - dt);
+      if (!r.clipped) continue;
+      // Its video's time; a video that never started gave way to its atlas, and the cast's own clock runs it.
+      let ct = r.handle !== null ? r.handle.time() : r.t - r.t0;
+      if (ct === VIDEO_FAILED) ct = r.t - r.t0;
       for (const b of r.beats) {
-        if (b.done || r.t < b.at - 1e-6) continue;
+        if (b.done || ct < b.at - 1e-6) continue;
         b.done = true;
         // A tick bites without the tier's reaction (no stop, no shake).
         if (!b.tick) this.host.strike(r.skill, r.anchor, b.role, r.colour);
       }
-      while (r.next < r.hits.length && r.hits[r.next]!.at <= r.t + 1e-6) {
+      while (r.next < r.hits.length && r.hits[r.next]!.at <= ct + 1e-6) {
         const h = r.hits[r.next]!;
         r.next += 1;
         if (!this.host.targets.alive(h.i)) continue;
         const killed = this.host.blow(r.skill, h.i, h.dx, h.dz, h.power, h.role);
-        if (r.report.firstBlowAt < 0) r.report.firstBlowAt = r.t;
+        if (r.report.firstBlowAt < 0) {
+          r.report.firstBlowAt = r.t;
+          r.report.firstBlowClip = ct;
+        }
         r.report.blows += 1;
         if (killed) r.report.kills += 1;
         else if (h.first) {
@@ -806,7 +835,10 @@ export class ClipSkillRunner {
 
   clear(): void {
     this.running.length = 0;
-    if (this.ownsMarks) this.marks.clear();
+    if (this.ownsMarks) {
+      this.marks.clear();
+      this.showcase.stopVideos();
+    }
   }
 }
 

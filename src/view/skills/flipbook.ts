@@ -134,6 +134,20 @@ export interface FlipbookMeta {
   readonly layer?: "body" | "rim";
   /** A design's code in its catalogue (the lab's showcases: "A1" … "D8" of the skills expansion); ignored by playback. */
   readonly code?: string;
+  /** The clip's own video (lab-flipbooks, 06/11): the lab's showcases play it in place of the atlas, sharper. */
+  readonly video?: FlipbookVideo;
+}
+
+/** A clip's video: its file, size, rate and length, its peak (s) and its origin in the frame (from the top left). */
+export interface FlipbookVideo {
+  readonly url: string;
+  readonly w: number;
+  readonly h: number;
+  readonly fps: number;
+  readonly frames: number;
+  readonly start: number;
+  readonly peakTime: number;
+  readonly pivot: readonly [number, number];
 }
 
 export function isFlipbookV2(meta: FlipbookMeta): boolean {
@@ -150,6 +164,17 @@ const ID = /^[a-z0-9][a-z0-9._-]*$/;
 const FILE = /^[a-z0-9][a-z0-9._-]*\.(png|webp)$/i;
 
 /** `{ [key]: frame }` when `timing[key]` is a frame of the clip, else nothing (an optional hint, never an error). */
+/** An entry's `video` (a file in its folder, its size, rate, frames, peak and pivot), when every field is sound. */
+function videoOf(video: unknown, base: string): { video?: FlipbookVideo } {
+  if (!record(video) || typeof video.file !== "string" || !/^[A-Za-z0-9._-]{1,120}\.(mp4|webm)$/.test(video.file)) return {};
+  const n = (k: string): number => (typeof video[k] === "number" && Number.isFinite(video[k]) ? (video[k] as number) : NaN);
+  const [w, h, fps, frames, start, peakTime] = [n("w"), n("h"), n("fps"), n("frames"), n("start"), n("peakTime")];
+  if (!(w > 0 && h > 0 && fps > 0 && frames > 0 && start >= 0 && peakTime >= 0)) return {};
+  const p = video.pivot;
+  const pivot: readonly [number, number] = Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === "number" && x >= 0 && x <= 1) ? [p[0] as number, p[1] as number] : [0.5, 0.5];
+  return { video: { url: base + video.file, w, h, fps, frames, start, peakTime, pivot } };
+}
+
 function frameOf(timing: unknown, key: "peak" | "holdEnd", frames: number): { peak?: number; holdEnd?: number } {
   const f = record(timing) ? timing[key] : undefined;
   return typeof f === "number" && Number.isInteger(f) && f >= 0 && f < frames ? { [key]: f } : {};
@@ -249,6 +274,7 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       ...frameOf(entry.timing, "holdEnd", frames),
       ...(entry.layer === "body" || entry.layer === "rim" ? { layer: entry.layer } : {}),
       ...(typeof entry.code === "string" && /^[A-Za-z0-9-]{1,12}$/.test(entry.code) ? { code: entry.code } : {}),
+      ...videoOf(entry.video, base),
     });
   }
   return out;
