@@ -602,6 +602,53 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(Math.max(...alphas)).toBeLessThanOrEqual(1);
   });
 
+  it("plays a crescent video (<element>-crescent-sym) in key 2's flying crescent, turning Earth's dome over", () => {
+    const run = (id: string): { frames: number[]; rot: number } => {
+      const cam = camera();
+      const layer = new THREE.Group();
+      const tex = sheets();
+      const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+      giveClips(stage, id, ["slash"]);
+      const sym = `${id}-crescent-sym`;
+      const entry = { file: `${sym}.png`, cols: 8, rows: 8, frames: 41, fps: 8, cell: [512, 288], loop: false, mode: "fire", role: "slash", shape: "crescent-sym", timing: { peak: 15, holdEnd: 32 } };
+      const lib = stage.flipbooks.library(id);
+      for (const meta of parseFlipbookManifest({ version: 1, flipbooks: { [sym]: entry } }, `/v/${id}/`).values()) lib.add(meta, new THREE.Texture());
+      const fx = new SwordSkillFx(swordHost(field(12), new THREE.Group(), cam), tex, "high");
+      fx.setElement(elementById(id)!, stage);
+      const pool = stage.flipbooks.pool(id, sym);
+      const frames: number[] = [];
+      let rot = Number.NaN;
+      const spawn = pool.spawn.bind(pool);
+      pool.spawn = (at, size, o = {}) => {
+        // The flying crescent itself (held whole at full strength), not its afterimages.
+        if ((o.alpha ?? 1) >= 2.99) {
+          frames.push(o.frame ?? -1);
+          if (Number.isNaN(rot)) rot = o.rot ?? 0;
+        }
+        spawn(at, size, o);
+      };
+      fx.cast("k2", 0, -10);
+      for (let i = 0; i < 12; i += 1) {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+      }
+      return { frames, rot };
+    };
+    const water = run("water");
+    // The video is the crescent (never the mirrored slash clip), its frames flowing over its first nine (its bright
+    // start, the approved still it was made from; some takes dim in their middle).
+    expect(water.frames.length).toBeGreaterThan(5);
+    expect(new Set(water.frames.map((f) => f.toFixed(3))).size).toBeGreaterThan(3);
+    for (const f of water.frames) {
+      expect(f).toBeGreaterThanOrEqual(0);
+      expect(f).toBeLessThanOrEqual(8);
+    }
+    // Earth's video is drawn convex side up: turned half a turn so its convex side leads like the rest.
+    const earth = run("earth");
+    expect(Math.abs(Math.abs(earth.rot - water.rot) - Math.PI)).toBeLessThan(1e-6);
+  });
+
   it("takes the ribbon clip as the flight trail once it arrives", () => {
     const kit = elementById("thunder")!;
     const stage = new ElementStage({ layer: new THREE.Group(), camera: camera(), quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" });

@@ -155,8 +155,9 @@ const isRole = (r: string | undefined): r is ClipRole => r !== undefined && (CLI
  * The Sword school shoots its swords straight out, so its sword-qi crescent is SYMMETRIC (owner 05/11 ~21:20: "chúng ta
  * đang bắn kiếm thẳng ra cơ mà"): both horns equal, the convex side forward along the flight, centred on the flight
  * line. Our slash clips and stills are lopsided swings, so a slash card mirrors the better half of its cell across the
- * centre (CRESCENT_HALF, measured on each clip's peak frame) until the symmetric stills (Codex, `<element>-crescent-sym`)
- * land, which are preferred. A sword crescent blooms from the centre out to both horns in SLASH.bloom s, flares for
+ * centre (CRESCENT_HALF, measured on each clip's peak frame) until the symmetric crescent lands, which is preferred: its
+ * video (`<element>-crescent-sym` in the manifest, Firefly image-to-video from Codex's still; lab-flipbooks 05/11 23:05),
+ * else the still. A sword crescent blooms from the centre out to both horns in SLASH.bloom s, flares for
  * SLASH.flare s, then erodes from both horn tips toward the centre over SLASH.erode s. The lopsided swing, swept from its
  * origin to its tip and eroded from its tail (the 20:50 slash), is kept for the Sabre school (SLASH_STYLE.style = "sabre",
  * the lab's ?cut=sabre): SABRE. The clip is held at its peak frame while the shader animates it.
@@ -236,21 +237,64 @@ function sweepCard(pool: FlipbookPool, half: "left" | "right" | "none"): void {
   };
 }
 
-/** A slash's options on `o`: its life the bloom (or sweep), flare and erosion, held at the clip's peak frame. */
-function slashTiming(p: FlipbookPool, o: FlipOptions): FlipOptions {
+/**
+ * A slash's options on `o`: its life the bloom (or sweep), flare and erosion, held at the clip's peak frame; a crescent
+ * video plays on from its live frame at `time` (s), so the energy flows in the crescent while the shader animates it.
+ */
+function slashTiming(p: FlipbookPool, o: FlipOptions, time: number): FlipOptions {
   const [first, last] = span(p);
   o.life = slashLife();
   o.rate = 0;
   o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
+  if (symVideo(p)) {
+    o.frame = flowFrame(p, time);
+    o.rate = SYM_RATE;
+    o.until = last;
+  }
   return o;
 }
+
+/**
+ * A symmetric crescent's video plays SYM_RATE × its fps: its image-to-video drift is slow (5 s), and a crescent lives
+ * under a second (key 2 flies 0.2 s).
+ */
+const SYM_RATE = 3;
+
+/** A symmetric crescent's video (a clip of several frames; the still has one). */
+const symVideo = (p: FlipbookPool): boolean => p.id.endsWith("-crescent-sym") && (p.meta?.frames ?? 1) > 1;
+
+/** Frames a crescent video loops over from its first. */
+const SYM_WINDOW = 8;
+
+/**
+ * A crescent video's frame at `time` (s): from its first frame (the approved still it was made from) over SYM_WINDOW
+ * frames and back, at SYM_RATE × its fps, so a crescent held whole (key 2's flight, its afterimages) still flows and
+ * never jumps. Not on to its hold's end: some takes dim in their middle (measured 05/11: Fire to 0.2 of its light over
+ * frames 16–20, Poison to 0.5); every take keeps ≥ 0.6 over its first 9 frames.
+ */
+function flowFrame(p: FlipbookPool, time: number): number {
+  const m = p.meta!;
+  const [first, last] = span(p);
+  const a = first;
+  const b = Math.min(last, a + SYM_WINDOW, Math.max(a + 1, m.holdEnd ?? last));
+  const n = Math.max(1, b - a);
+  const k = (time * m.fps * SYM_RATE) % (2 * n);
+  return a + (k <= n ? k : 2 * n - k);
+}
+
+/**
+ * The turn a crescent video takes (rad): π for a folder drawn convex side up (CONVEX_UP; a still is flipped on upload
+ * instead, an atlas cannot be), so its convex side is its cell's bottom like the rest.
+ */
+const turnOf = (p: FlipbookPool): number => (symVideo(p) && CONVEX_UP.has(p.id.slice(0, -"-crescent-sym".length)) ? Math.PI : 0);
 
 /** The half a slash clip mirrors: none for a symmetric still, else its folder's (CRESCENT_HALF). */
 const halfOf = (folder: string, id: string): "left" | "right" | "none" => (id.endsWith("-crescent-sym") ? "none" : CRESCENT_HALF[folder] ?? "right");
 
 /**
- * Symmetric stills drawn convex side UP (Codex 302: Earth; the rest are bowls, convex down): flipped on upload, so every
- * crescent's convex side is its cell's bottom, which the cut turns forward along the flight.
+ * Symmetric crescents drawn convex side UP (Codex 302: Earth, its still and so its video; the rest are bowls, convex
+ * down): a still flipped on upload, a video turned (turnOf), so every crescent's convex side is its cell's bottom, which
+ * the cut turns forward along the flight.
  */
 const CONVEX_UP: ReadonlySet<string> = new Set(["earth"]);
 
@@ -259,15 +303,17 @@ const SYM_STILL = (folder: string): string => `/art-src/lab/firefly-sprint-2026-
 
 /**
  * Registers `folder`'s symmetric crescent still in its library as a one-frame slash clip `<folder>-crescent-sym`, when
- * the file exists (browser only; a missing file is skipped without an error).
+ * the file exists and the manifest has no video of that id (browser only; a missing file is skipped without an error).
  */
 async function loadSymStill(lib: FlipbookLibrary, folder: string): Promise<void> {
   if (typeof location === "undefined" || !/^https?:$/.test(location.protocol)) return;
   const url = SYM_STILL(folder);
   try {
+    await lib.load();
+    // Its video is the crescent once the manifest has it (the still would take its id).
+    if (lib.declares().some((m) => m.id === folder + "-crescent-sym")) return;
     const head = await fetch(url, { method: "HEAD" });
     if (!head.ok || !(head.headers.get("content-type") ?? "").startsWith("image/")) return;
-    await lib.load();
     const texture = await stillTexture(url);
     const flip = CONVEX_UP.has(folder);
     if (flip) texture.flipY = false;
@@ -509,7 +555,7 @@ class ClipLayers {
   private pick(role: ClipRole): FlipbookPool | null {
     const list = this.pools.get(role);
     const t = this.turn.get(role) ?? 0;
-    // The symmetric crescent still, once it lands, is the slash.
+    // The symmetric crescent (its video, else its still), once it lands, is the slash.
     const sym = role === "slash" ? list?.find((p) => p.ready && p.id.endsWith("-crescent-sym")) : undefined;
     if (sym !== undefined) return sym;
     if (list !== undefined) {
@@ -569,6 +615,7 @@ class ClipLayers {
   private spawn(role: ClipRole, p: FlipbookPool, x: number, y: number, z: number, size: number, o: FlipOptions): void {
     // A body drawn alone is thin wisps: lower opacity.
     if (this.bodies.get(role)?.includes(p) === true) o.alpha = (o.alpha ?? 1) * BODY_ALPHA;
+    if (role === "slash") o.rot = (o.rot ?? 0) + turnOf(p);
     p.spawn(v.set(x, y, z), size * this.spec.look.scale, o);
     this.audit.spawned[role] += 1;
     // A body drawn alone (its role has no rim yet) has no body under it.
@@ -910,7 +957,7 @@ class ClipLayers {
 
   /** A slash's spawn options (SLASH timing, the element's light or matter, no fade: the sweep erodes it). */
   private slashOpts(p: FlipbookPool): FlipOptions {
-    const o = slashTiming(p, flip());
+    const o = slashTiming(p, flip(), this.stage.time);
     this.matter(p, o);
     o.cool = undefined;
     o.fadeOut = 0;
@@ -938,7 +985,7 @@ class ClipLayers {
     const o = flip();
     o.life = ONE_FRAME;
     o.rate = 0;
-    o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
+    o.frame = symVideo(p) ? flowFrame(p, this.stage.time) : Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
     o.rot = rot;
     o.lift = 0.7;
     o.ground = 0;
@@ -1350,7 +1397,7 @@ export class CrescentClip {
   }
 
   private pick(): FlipbookPool | null {
-    // The symmetric crescent still, once it lands, is the crescent.
+    // The symmetric crescent (its video, else its still), once it lands, is the crescent.
     const sym = this.pools.find((p) => p.ready && p.id.endsWith("-crescent-sym"));
     if (sym !== undefined) return sym;
     for (let k = 0; k < this.pools.length; k += 1) {
@@ -1371,8 +1418,8 @@ export class CrescentClip {
   cut(at: THREE.Vector3, rot: number, size: number, tint: THREE.Color | null): number {
     const p = this.pick();
     if (p === null) return 0;
-    const o = slashTiming(p, flip());
-    this.finish(o, rot, tint);
+    const o = slashTiming(p, flip(), this.stage.time);
+    this.finish(o, rot + turnOf(p), tint);
     o.fadeOut = 0;
     p.spawn(at, size * 1.2, o);
     this.spawned += 1;
@@ -1426,8 +1473,8 @@ export class CrescentClip {
     const o = flip();
     o.life = ONE_FRAME;
     o.rate = 0;
-    o.frame = Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
-    this.finish(o, rot, tint);
+    o.frame = symVideo(p) ? flowFrame(p, this.stage.time) : Math.min(last, Math.max(first, p.meta!.peak ?? Math.round(first + (last - first) * PEAK)));
+    this.finish(o, rot + turnOf(p), tint);
     o.fadeOut = 0;
     // Held whole while it flies (the sweep card's flag: alpha + 2).
     o.alpha = fade + 2;

@@ -44,6 +44,8 @@ Thiết kế theo: `docs/games/tu-tien/skills/ELEMENT_LAYER.md` §1–3 (vũ kh�
 - `crescent-trail.ts` (`CrescentTrail`): dải mềm quay về camera, bắt đầu từ lòng lưỡi liềm, rộng khoảng 85 % sải lưỡi liềm rồi thon về 0 sau 5 m; mép mờ dần trên 45 % nửa bề rộng, không có mép cứng; hào quang giữ ≤ 0,9 mỗi kênh, chỉ một lõi mảnh sáng hơn. Chất của dải là clip `ribbon` của hệ (Ám: thân khói đen + viền đỏ thẫm bảng A), chưa có thì là dải của hào quang kiếm (`aura/strips/`: Hỏa dải lửa giữ màu gốc, các hệ khác dải lụa gió tô theo dải màu của hệ). Lưỡi liềm chạm đích thì dải mòn dần từ đuôi trong 0,5 s.
 - `CrescentFlight` (`element-clips.ts`): 3 bóng mờ cách nhau 0,04 s, độ đậm 0,45 / 0,25 / 0,12, nhỏ dần và mòn từ hai đầu sừng; hai dòng lấp lánh rơi từ hai sừng (clip `sparkle` của hệ, chưa có thì chấm sáng màu lõi). `ElementStage.everyFrame` chạy chúng mỗi khung.
 
+- Lưỡi liềm là **video** `<hệ>-crescent-sym` khi manifest có (lab-flipbooks 23:05, cả 14 hệ; ảnh tĩnh không nạp nữa để khỏi trùng id): chạy vòng đi về trên 9 khung đầu (khung 0 chính là ảnh tĩnh đã duyệt) ở 3 lần tốc độ gốc, nên năng lượng chảy trong lưỡi liềm cả lúc bay lẫn nhát chém cuối. Không chạy tới hết đoạn giữ vì vài bản tối đi ở giữa (đo 05/11: Hỏa còn 0,2 độ sáng ở khung 16–20, Độc còn 0,5). Thổ vẽ vòm lên trên nên quay nửa vòng.
+
 ## Kiểm
 
 - `tsc --noEmit -p .` sạch.
