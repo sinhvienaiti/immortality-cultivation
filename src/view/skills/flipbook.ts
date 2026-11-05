@@ -122,6 +122,11 @@ export interface FlipbookMeta {
   readonly sourceFps?: number;
   /** Default reveal/erosion schedule; requires controlA. */
   readonly timingProfile?: FlipbookTimingName;
+  /** What the clip is for in its element's kit (charge, release, ribbon, …; element-clips.ts); ignored by playback. */
+  readonly role?: string;
+  /** The frame of its peak energy and the last frame still near it (the manifest's timing; the kits time a hit by them). */
+  readonly peak?: number;
+  readonly holdEnd?: number;
 }
 
 export function isFlipbookV2(meta: FlipbookMeta): boolean {
@@ -136,6 +141,12 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const count = (value: unknown, max: number): value is number => typeof value === "number" && Number.isInteger(value) && value > 0 && value <= max;
 const ID = /^[a-z0-9][a-z0-9._-]*$/;
 const FILE = /^[a-z0-9][a-z0-9._-]*\.(png|webp)$/i;
+
+/** `{ [key]: frame }` when `timing[key]` is a frame of the clip, else nothing (an optional hint, never an error). */
+function frameOf(timing: unknown, key: "peak" | "holdEnd", frames: number): { peak?: number; holdEnd?: number } {
+  const f = record(timing) ? timing[key] : undefined;
+  return typeof f === "number" && Number.isInteger(f) && f >= 0 && f < frames ? { [key]: f } : {};
+}
 
 /** Reads an element folder's manifest (format above). Unknown fields are ignored; a bad entry throws. */
 export function parseFlipbookManifest(value: unknown, base: string): Map<string, FlipbookMeta> {
@@ -226,6 +237,9 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       start,
       heading: typeof entry.heading === "number" && Number.isFinite(entry.heading) ? (entry.heading * Math.PI) / 180 : 0,
       ...extra,
+      ...(typeof entry.role === "string" && ID.test(entry.role.toLowerCase()) ? { role: entry.role } : {}),
+      ...frameOf(entry.timing, "peak", frames),
+      ...frameOf(entry.timing, "holdEnd", frames),
     });
   }
   return out;

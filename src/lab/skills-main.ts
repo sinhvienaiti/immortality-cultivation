@@ -23,7 +23,8 @@
  * the bloom pass's bright buffer). ?k5n=<n> sets Thiên Hà's swarm size (≤ K5_MAX) and __lab.perf /
  * __lab.swarm measure its frame cost with the full mesh, the LOD or the
  * stand-in (lab-k5-perf.mjs).
- * Element (canon D59, ELEMENT_LAYER.md): ?element=metal|fire (default metal), the panel's Element list, E cycles the
+ * Element (canon D59, ELEMENT_LAYER.md): ?element=metal|fire|water|thunder|… (default metal; elements.ts lists them; the
+ * elements after Fire draw their folder's clips by role, element-clips.ts, __lab.clipKit()), the panel's Element list, E cycles the
  * registered elements, __lab.element(id) sets one (resolves the active id; no id: the active one). The skills keep
  * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
  * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
@@ -75,6 +76,7 @@ import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { FlameSlash } from "../view/skills/flame-slash";
+import { clipAudit, type ClipAudit } from "../view/skills/element-clips";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -1489,6 +1491,8 @@ declare global {
       fxNamed(): { name: string; order: number; count: number }[];
       /** Key 1's Fire hit mode, clip readiness, hit counters, drawn age (ticks) and impact-light levels (ticket 264). */
       fireImpact(mode?: "brush" | "lotus"): FirePrewarm & { mode: "brush" | "lotus"; ready: boolean; audit: FireAudit; ageTicks: number; lights: number[] };
+      /** An element kit drawn from clips (element-clips.ts): its clips' spawns by role since the last reset and its pools by role (null: Metal, Fire). */
+      clipKit(): ClipAudit | null;
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
       fxSolo(prefix: string | null): number;
       /** Lab debugging: shows or hides every fx mesh whose name starts with `prefix` and redraws the frame (no time passes). */
@@ -1827,6 +1831,10 @@ void (async () => {
         ageTicks: audit.firstAt < 0 ? -1 : Math.round((stage.time - audit.firstAt - lastWorldDt) * 60) + 0,
         lights: lights.levels(),
       };
+    },
+    clipKit() {
+      const a = clipAudit(stage, fx.element.id);
+      return a === null ? null : { spawned: { ...a.spawned }, pools: { ...a.pools } };
     },
     fxSolo(prefix) {
       let n = 0;

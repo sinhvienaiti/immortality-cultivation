@@ -18,7 +18,16 @@ import type { SwordSlot, SwordSkillTextures } from "./sword-skills";
 import type { Rgb, WeaponDef, WeaponElement, WeaponGlow } from "./weapons";
 import type { ElementStage } from "./element-stage";
 
-export type ElementId = WeaponElement;
+/** The weapons' eight elements and the six added on 05/11/2026 (PRODUCTION_LIST_2026-11-05 §7). */
+export type ElementId = WeaponElement | "dark" | "light" | "poison" | "blood" | "void" | "star";
+
+/**
+ * What a clip of an element's flipbook folder is for (the `role` of its manifest entry, art-src/lab/vfx/<id>/
+ * manifest.json; docs/work/tasks/lab-flipbooks.md): gathering into the hand, the flash at the caster, the flight's
+ * ribbon (a horizontal loop) and the weapon's sheath (a vertical loop), a hit, a big burst, a blow on the ground, the
+ * sparkle loop of every phase, the crescent slash and the mark left on the ground (seen from above).
+ */
+export type ClipRole = "charge" | "release" | "ribbon" | "sheath" | "impact" | "burst" | "groundImpact" | "sparkle" | "slash" | "groundMark";
 
 /** VFX_STANDARD §3's five phases. */
 export type ElementPhase = "charge" | "release" | "travel" | "impact" | "aftermath";
@@ -562,6 +571,11 @@ export interface ElementKit {
   readonly textures: Partial<Record<SwordTextureLayer, string>>;
   /** Flipbook clips it draws, by phase (ids in art-src/lab/vfx/<id>/manifest.json); the stage loads them with the kit. */
   readonly flipbooks: Partial<Record<ElementPhase, readonly string[]>>;
+  /**
+   * Clips it draws by their manifest role instead of by id (element-clips.ts): the stage loads the kit's folder before
+   * the kit is used; a role with no clip yet leaves the base layer to draw.
+   */
+  readonly roles?: readonly ClipRole[];
   readonly ground: GroundAftermath | null;
   readonly foe: FoeStatus | null;
   readonly screen: ScreenAccent;

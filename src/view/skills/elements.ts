@@ -1,17 +1,20 @@
 /**
  * The element registry (canon D59): every material kit the skills can be drawn in, by id. Metal is the default and
- * the base layers; Fire is built (Sword × Fire, key 1 and key 7). A new element: write its kit (element-kit.ts,
- * like element-fire.ts) and add it to KITS, or call registerElement at load time.
+ * the base layers; Fire is built (Sword × Fire, key 1 and key 7); the elements after them are drawn from their folder's
+ * Firefly clips by role (element-clips.ts). A new element: write its kit (element-kit.ts, like element-water.ts) and
+ * add it to KITS, or call registerElement at load time.
  */
 import type { ElementId, ElementKit } from "./element-kit";
 import { FIRE } from "./element-fire";
 import { METAL } from "./element-metal";
+import { WATER } from "./element-water";
 
 export const DEFAULT_ELEMENT: ElementId = "metal";
 
 const KITS = new Map<ElementId, ElementKit>([
   [METAL.id, METAL],
   [FIRE.id, FIRE],
+  [WATER.id, WATER],
 ]);
 
 /** Adds or replaces a kit (load time). */

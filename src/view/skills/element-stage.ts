@@ -98,11 +98,17 @@ export class ElementStage {
   async prepare(kit: ElementKit): Promise<ElementHooks> {
     const h = this.hooksOf(kit);
     const clips = Object.values(kit.flipbooks).flat();
-    if (clips.length > 0) {
+    const roles = kit.roles ?? [];
+    if (clips.length > 0 || roles.length > 0) {
       await this.flipbooks.ready(kit.id);
       const loaded = new Set(this.flipbooks.loaded(kit.id));
       const missing = clips.filter((c) => c !== undefined && !loaded.has(c));
       if (missing.length > 0) console.warn(`[element-stage] ${kit.id}: clips not found in its manifest: ${missing.join(", ")}`);
+      // Clips by role arrive over the evening (lab-flipbooks): a role still missing draws the base layer.
+      const lib = this.flipbooks.library(kit.id);
+      const have = new Set(lib.ids().map((id) => lib.get(id)!.meta.role));
+      const waiting = roles.filter((r) => !have.has(r));
+      if (waiting.length > 0) console.info(`[element-stage] ${kit.id}: no clip yet for ${waiting.join(", ")} (base layers draw there)`);
     }
     return h;
   }
