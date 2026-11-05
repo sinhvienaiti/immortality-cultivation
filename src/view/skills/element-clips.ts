@@ -202,14 +202,14 @@ float vxSweep() {
  * Gives a slash pool the crescent's mirror and its bloom or sweep, hold and erosion (its fragment's cell uv mirrored
  * across the centre from `half` for a sword; its vAlpha through vxSweep).
  */
-function sweepCard(pool: FlipbookPool, half: "left" | "right"): void {
+function sweepCard(pool: FlipbookPool, half: "left" | "right" | "none"): void {
   const material = pool.mesh.material;
   const sword = SLASH_STYLE.style === "sword";
   const life = slashLife();
   const uSweep = { value: sword
     ? new THREE.Vector4(SLASH.bloom / life, (SLASH.bloom + SLASH.flare) / life, 0.22, 0)
     : new THREE.Vector4(SABRE.sweep / life, (SABRE.sweep + SABRE.hold) / life, 0.16, 1) };
-  const uMirror = { value: sword ? (half === "right" ? 1 : 0) : -1 };
+  const uMirror = { value: sword && half !== "none" ? (half === "right" ? 1 : 0) : -1 };
   material.uniforms.uSweep = uSweep;
   material.uniforms.uMirror = uMirror;
   material.customProgramCacheKey = () => "element-sweep-card";
@@ -237,8 +237,14 @@ function slashTiming(p: FlipbookPool, o: FlipOptions): FlipOptions {
   return o;
 }
 
-/** The half a slash clip mirrors: a symmetric still either (the right), else its folder's (CRESCENT_HALF). */
-const halfOf = (folder: string, id: string): "left" | "right" => (id.endsWith("-crescent-sym") ? "right" : CRESCENT_HALF[folder] ?? "right");
+/** The half a slash clip mirrors: none for a symmetric still, else its folder's (CRESCENT_HALF). */
+const halfOf = (folder: string, id: string): "left" | "right" | "none" => (id.endsWith("-crescent-sym") ? "none" : CRESCENT_HALF[folder] ?? "right");
+
+/**
+ * Symmetric stills drawn convex side UP (Codex 302: Earth; the rest are bowls, convex down): flipped on upload, so every
+ * crescent's convex side is its cell's bottom, which the cut turns forward along the flight.
+ */
+const CONVEX_UP: ReadonlySet<string> = new Set(["earth"]);
 
 /** The symmetric crescent still Codex draws per element (preferred over the mirrored clip once it lands). */
 const SYM_STILL = (folder: string): string => `/art-src/lab/firefly-sprint-2026-11-05/stills/skills/${folder}-crescent-sym.v1-try1.png`;
@@ -255,7 +261,10 @@ async function loadSymStill(lib: FlipbookLibrary, folder: string): Promise<void>
     if (!head.ok || !(head.headers.get("content-type") ?? "").startsWith("image/")) return;
     await lib.load();
     const texture = await stillTexture(url);
-    lib.add(stillMeta(folder + "-crescent-sym", url, texture), texture);
+    const flip = CONVEX_UP.has(folder);
+    if (flip) texture.flipY = false;
+    // The crescent sits off the cell's middle: its light's centre is the card's pivot, so it lies on the flight line.
+    lib.add(stillMeta(folder + "-crescent-sym", url, texture, lightCentre(texture, flip)), texture);
   } catch {
     // No symmetric still yet: the mirrored clip stays.
   }
@@ -272,11 +281,43 @@ async function stillTexture(url: string): Promise<THREE.Texture> {
   return texture;
 }
 
-/** A one-frame slash clip's layout for a still. */
-function stillMeta(id: string, url: string, texture: THREE.Texture): FlipbookMeta {
+/** A one-frame slash clip's layout for a still, its origin at `pivot` (x from the left, y from the top). */
+function stillMeta(id: string, url: string, texture: THREE.Texture, pivot: readonly [number, number] = [0.5, 0.5]): FlipbookMeta {
   const img = texture.image as { width?: number; height?: number } | undefined;
   const aspect = img?.width !== undefined && img.height !== undefined && img.height > 0 ? img.width / img.height : 16 / 9;
-  return { id, url, cols: 1, rows: 1, frames: 1, fps: 24, loop: false, mode: "fire", aspect, pivot: [0.5, 0.5], start: 0, heading: 0, role: "slash" };
+  return { id, url, cols: 1, rows: 1, frames: 1, fps: 24, loop: false, mode: "fire", aspect, pivot, start: 0, heading: 0, role: "slash" };
+}
+
+/**
+ * The light-weighted centre of a still on black (x from the left, y from the top; `flipped`: as drawn upside down), x
+ * kept at the middle (the crescent is symmetric); the middle when it cannot be read (load time, browser only).
+ */
+function lightCentre(texture: THREE.Texture, flipped: boolean): readonly [number, number] {
+  const img = texture.image as CanvasImageSource & { width?: number; height?: number };
+  if (typeof document === "undefined" || img === undefined) return [0.5, 0.5];
+  const w = 160;
+  const h = 90;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (ctx === null) return [0.5, 0.5];
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  let sum = 0;
+  let sy = 0;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const o = (y * w + x) * 4;
+      const l = Math.max(data[o]!, data[o + 1]!, data[o + 2]!) / 255;
+      const wgt = l * l;
+      sum += wgt;
+      sy += wgt * (y + 0.5) / h;
+    }
+  }
+  if (sum <= 1e-6) return [0.5, 0.5];
+  const cy = sy / sum;
+  return [0.5, flipped ? 1 - cy : cy];
 }
 
 /**
