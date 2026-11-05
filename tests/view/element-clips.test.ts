@@ -518,6 +518,29 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect((shader.uniforms.uSweep as { value: THREE.Vector4 }).value.w).toBe(0);
   });
 
+  it("prefers an element's symmetric crescent still (Codex 302) over its lopsided clip, drawn unmirrored", () => {
+    const cam = camera();
+    const tex = sheets();
+    const stage = new ElementStage({ layer: new THREE.Group(), camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+    giveClips(stage, "water", ["slash"]);
+    const lib = stage.flipbooks.library("water");
+    lib.add({ id: "water-crescent-sym", url: "/s.png", cols: 1, rows: 1, frames: 1, fps: 24, loop: false, mode: "fire", aspect: 1.78, pivot: [0.5, 0.3], start: 0, heading: 0, role: "slash" }, new THREE.Texture());
+    const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
+    fx.setElement(elementById("water")!, stage);
+    const sym = stage.flipbooks.pool("water", "water-crescent-sym");
+    const clip = stage.flipbooks.pool("water", "water-slash");
+    expect((sym.mesh.material.uniforms.uMirror as { value: number }).value).toBe(-1);
+    expect((clip.mesh.material.uniforms.uMirror as { value: number }).value).toBe(0);
+    fx.cast("k1", 0, -6);
+    for (let i = 0; i < 40; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+    }
+    expect(sym.live).toBeGreaterThan(0);
+    expect(clip.live).toBe(0);
+  });
+
   it("keeps the lopsided swept swing for the Sabre school behind SLASH_STYLE (no mirror, origin to tip)", () => {
     SLASH_STYLE.style = "sabre";
     try {
