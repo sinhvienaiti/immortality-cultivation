@@ -22,7 +22,8 @@ function setup(): { show: UltShowcase; player: FlipbookPlayer; lights: string[] 
     accent: () => {},
   });
   const entries: Record<string, unknown> = {};
-  for (const [id, role] of [["ult-light", "ultimate"], ["pillar-thunder-single", "pillar"], ["pillar-thunder-field", "pillar"], ["kiem-guard", "weapon"]] as const) {
+  for (const [id, role] of [["ult-light", "ultimate"], ["pillar-thunder-single", "pillar"], ["pillar-thunder-field", "pillar"], ["kiem-guard", "weapon"],
+    ["ult-water-profound-sea", "ultimate"], ["ult-water-profound-sea-v2", "ultimate"]] as const) {
     entries[id] = { file: `${id}.png`, cols: 4, rows: 8, frames: 31, fps: 6, cell: [640, 360], role };
   }
   const lib = player.library("ult");
@@ -31,8 +32,9 @@ function setup(): { show: UltShowcase; player: FlipbookPlayer; lights: string[] 
 }
 
 describe("the lab's showcase key (8): pillars and ultimates as video layers", () => {
-  it("lists the pillars first, then the ultimates; other roles of the folder are left out", () => {
-    expect(setup().show.ids()).toEqual(["pillar-thunder-field", "pillar-thunder-single", "ult-light"]);
+  it("lists the pillars first, then the ultimates; other roles and the ultimates the owner turned down are left out", () => {
+    expect(setup().show.ids()).toEqual(["pillar-thunder-field", "pillar-thunder-single", "ult-light", "ult-water-profound-sea-v2"]);
+    expect(setup().show.play("ult-water-profound-sea")).toBeNull();
   });
 
   it("plays one a press in order, at the clip's element light, and nothing for an id it does not have", () => {

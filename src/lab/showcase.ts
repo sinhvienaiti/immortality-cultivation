@@ -15,6 +15,11 @@ const FOOT: readonly [number, number] = [0.5, 0.8];
 /** Seconds a pillar and a scene play (the 5 s Firefly clips, peak first, sped up). */
 const PILLAR_S = 2.4;
 const SCENE_S = 4.2;
+/**
+ * Ultimates the owner turned down (05/11 18:45: the eyes and the scroll); their redraws "-v2" play instead. Dropped even
+ * when a manifest still lists them.
+ */
+const REJECTED: ReadonlySet<string> = new Set(["ult-water-profound-sea", "ult-thunder-nine-heavens"]);
 /** The impact light by the clip's element (its id's word). */
 const LIGHT: Readonly<Record<string, string>> = {
   thunder: "#c9b8ff", light: "#fff0c8", fire: "#ffb060", dark: "#b88ae0", ice: "#cfe6ff", wind: "#c4f2d6", water: "#7cc2ff",
@@ -45,7 +50,7 @@ export class UltShowcase {
     lib.watch((id) => {
       const e = lib.get(id);
       const role = e?.meta.role;
-      if (e === null || (role !== "pillar" && role !== "ultimate") || this.pools.has(id)) return;
+      if (e === null || (role !== "pillar" && role !== "ultimate") || this.pools.has(id) || REJECTED.has(id)) return;
       const pool = player.pool(FOLDER, id, { mode: "fire", capacity: 2, renderOrder: 15 });
       if (role === "pillar" && !id.includes("field")) pool.attach({ ...e.meta, pivot: FOOT }, e.texture, e.controls);
       pool.vignette = 0.35;
