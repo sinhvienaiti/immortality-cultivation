@@ -94,9 +94,13 @@ void main() {
   float edgeW = halfW * 1.5 + 0.03;
   float env = smoothstep(0.0, 0.12, s) * smoothstep(1.0, 0.88, s);
   float n = fsNoise(vec2(s * 40.0 - uTime * 3.0, v * 3.0));
-  float behind = step(s, uHead + 0.02);
+  float front = uHead + 0.02;
+  float tornFront = front + (n - 0.5) * 0.02;
+  float behind = uHasStrip > 0.5 ? 1.0 - smoothstep(tornFront - 0.07, tornFront, s) : step(s, front);
   // The head's heat stays inside the shape (at the strip's ends it would draw a square).
-  float head = exp(-abs(s - uHead) * 22.0) * step(s, uHead + 0.05) * body;
+  float hotFront = uHead + 0.05;
+  float headPulse = exp(-abs(s - uHead) * 22.0) * step(s, hotFront);
+  float head = headPulse * body;
   float heat;
   vec4 st = vec4(0.0);
   float flame = 0.0;
@@ -122,7 +126,9 @@ void main() {
     float tongue = step(0.0, tt) * (1.0 - smoothstep(0.9, 1.0, tt)) * (1.0 - smoothstep(hw - 0.08, hw, abs(fs)));
     heat = max(body * (0.5 + 0.22 * (1.0 - smoothstep(0.3, 0.95, rel)) + 0.3 * spine) * (0.96 + 0.06 * n), tongue * behind * mix(0.72, 0.3, tt)) + head * 0.3 * (1.0 - smoothstep(0.25, 0.6, rel));
   }
-  heat *= mix(0.82, 1.0, behind);
+  // Preserve the head's peak heat while the strip's leading edge burns away softly.
+  float heatBehind = uHasStrip > 0.5 ? max(behind, headPulse) : behind;
+  heat *= mix(0.82, 1.0, heatBehind);
   // It cools (falls through the bands) and erodes from its thin tongues; it never turns see-through.
   heat = heat * uFade - uErode * 0.55;
   float edge = 0.12 + (n - 0.5) * 0.06 + uErode * 0.12;
@@ -141,12 +147,20 @@ void main() {
 const WIDE = 1.7;
 
 export class FlameSlash {
+  /** Set only by the lab entry point; null keeps the measured source aspect. */
+  static stripK: number | null = null;
   readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private readonly u: Record<string, THREE.IUniform>;
   private readonly vp = new THREE.Vector4();
   /** The band table of the mask it was measured from (measureBand). */
   private band: THREE.DataTexture | null = null;
   private bandOf: THREE.Texture | null = null;
+  private readonly projectedA = new THREE.Vector4();
+  private readonly projectedB = new THREE.Vector4();
+  private stripAspect: number | null = null;
+  private stripMetaUrl: string | null = null;
+  /** Mean half width of the analytic band, replaced by the authored band when readable. */
+  private stripHalfW = 0.34 * 2 / Math.PI;
 
   constructor(renderOrder = 15) {
     const v3 = (): THREE.Vector3 => new THREE.Vector3();
@@ -161,7 +175,7 @@ export class FlameSlash {
       uHasBand: { value: 0 },
       tStrip: { value: null },
       uHasStrip: { value: 0 },
-      uStripK: { value: 1 },
+      uStripK: { value: 5 },
       uStripScroll: { value: 0.5 },
       uHead: { value: 0 },
       uFade: { value: 0 },
@@ -207,15 +221,18 @@ export class FlameSlash {
   }
 
   /** Authored straight-alpha fire; null keeps the legacy A/B path. Scroll is periods per second. */
-  setStrip(texture: THREE.Texture | null, k: number, scroll: number): void {
+  setStrip(texture: THREE.Texture | null, scroll: number): void {
+    if (texture !== this.u.tStrip!.value) {
+      this.stripAspect = null;
+      this.stripMetaUrl = null;
+    }
     this.u.tStrip!.value = texture;
     this.u.uHasStrip!.value = texture !== null ? 1 : 0;
-    this.u.uStripK!.value = k;
     this.u.uStripScroll!.value = scroll;
   }
 
   /** As QiSlash.set, with the crescent mask and the flame's clock (s). Fade 0 hides it. */
-  set(ax: number, ay: number, az: number, bx: number, by: number, bz: number, halfPx: number, head: number, fade: number, erode: number, mask: THREE.Texture | null, time: number): void {
+  set(ax: number, ay: number, az: number, bx: number, by: number, bz: number, halfPx: number, head: number, fade: number, erode: number, mask: THREE.Texture | null, time: number, camera?: THREE.Camera): void {
     (this.u.uA!.value as THREE.Vector3).set(ax, ay, az);
     (this.u.uB!.value as THREE.Vector3).set(bx, by, bz);
     this.u.uHalf!.value = halfPx * WIDE;
@@ -229,9 +246,37 @@ export class FlameSlash {
     this.u.uTime!.value = time;
     // TextureLoader returns before decoding; a pending or failed strip must keep the old flame visible.
     const strip = this.u.tStrip!.value as THREE.Texture | null;
-    const image = strip?.image as { width: number; height: number } | undefined;
+    const image = strip?.image as { width: number; height: number; src?: string } | undefined;
     this.u.uHasStrip!.value = image !== undefined && image !== null && image.width > 0 && image.height > 0 ? 1 : 0;
+    if (strip !== null && image?.src) this.readStripAspect(strip, image.src);
+    let k = 5;
+    if (camera !== undefined && this.stripAspect !== null && halfPx > 0) {
+      const a = this.projectedA.set(ax, ay, az, 1).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+      const b = this.projectedB.set(bx, by, bz, 1).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+      const view = this.u.uView!.value as THREE.Vector2;
+      const lengthPx = Math.hypot((b.x / b.w - a.x / a.w) * view.x / 2, (b.y / b.w - a.y / a.w) * view.y / 2);
+      // Match vs in the shader: full sampled width, not the packed PNG's 4:1 aspect or the mesh's WIDE.
+      const widthPx = 2 * (this.stripHalfW * 1.5 + 0.03) * 2.6 * halfPx * view.y / 1080;
+      const measured = lengthPx / (this.stripAspect * widthPx);
+      if (a.w >= 0.05 && b.w >= 0.05 && Number.isFinite(measured) && measured > 0) k = measured;
+    }
+    this.u.uStripK!.value = FlameSlash.stripK !== null && Number.isFinite(FlameSlash.stripK) && FlameSlash.stripK > 0 ? FlameSlash.stripK : k;
     this.mesh.visible = fade > 0.003;
+  }
+
+  /** Source period dimensions live beside the packed image; request once, including a failed request. */
+  private readStripAspect(strip: THREE.Texture, src: string): void {
+    const url = src.replace(/\.rgba\.png(?=\?|$)/, ".json");
+    if (url === src || this.stripMetaUrl === url) return;
+    this.stripMetaUrl = url;
+    void fetch(url).then(async (response) => {
+      if (!response.ok) return;
+      const meta = await response.json() as { mapping?: { periodPx?: number; halfRows?: number } };
+      const period = meta.mapping?.periodPx;
+      const halfRows = meta.mapping?.halfRows;
+      if (typeof period !== "number" || typeof halfRows !== "number" || !Number.isFinite(period) || !Number.isFinite(halfRows) || period <= 0 || halfRows <= 0) return;
+      if (this.u.tStrip!.value === strip && this.stripMetaUrl === url) this.stripAspect = period / (2 * halfRows);
+    }).catch(() => { /* Keep five periods until both source dimensions and projection can be measured. */ });
   }
 
   hide(): void {
@@ -245,6 +290,7 @@ export class FlameSlash {
    * Without a readable image (tests, before it loads) the shader measures it itself.
    */
   private measureBand(mask: THREE.Texture | null): void {
+    this.stripHalfW = 0.34 * 2 / Math.PI;
     const img = mask?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
     if (mask === null || img === undefined || !(img.width > 0) || typeof document === "undefined") return;
     const N = 128;
@@ -305,6 +351,7 @@ export class FlameSlash {
     this.band = t;
     this.bandOf = mask;
     this.u.tBand!.value = t;
+    this.stripHalfW = data.reduce((sum, value, i) => sum + (i % 4 === 1 ? value / 255 : 0), 0) / N;
   }
 
   dispose(): void {

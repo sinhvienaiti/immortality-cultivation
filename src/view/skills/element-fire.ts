@@ -281,8 +281,7 @@ class FireLayers {
       strip.magFilter = THREE.LinearFilter;
       strip.premultiplyAlpha = false;
       strip.needsUpdate = true;
-      // No projected length is available to FlameSlash.set: use the ticket's three-period fallback.
-      this.flameSlash.setStrip(strip, 3, 0.5);
+      this.flameSlash.setStrip(strip, 0.5);
     }
     stage.layer.add(this.flameSlash.mesh);
     this.groundRings = stage.heatRings(16, "ground", 6);
@@ -1048,7 +1047,7 @@ class FireLayers {
       this.slashAcc = 0;
       return true;
     }
-    this.flameSlash.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, e.half * 1.3, head, fade, erode, e.mask, t);
+    this.flameSlash.set(e.ax, e.ay, e.az, e.bx, e.by, e.bz, e.half * 1.3, head, fade, erode, e.mask, t, this.stage.camera);
     this.slashAcc += 90 * a.dt * fade * (1 - erode) * this.stage.dens;
     const R = this.stage.rand;
     while (this.slashAcc >= 1) {
