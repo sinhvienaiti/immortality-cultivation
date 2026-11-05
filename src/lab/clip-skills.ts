@@ -61,7 +61,7 @@ export interface ClipSkill {
   readonly linger: number;
   /** What in the row is a guess (not measured on the clip). */
   readonly guess?: string;
-  /** A line at this world angle (degrees from +x toward −z, screen up) through where the clip stands (its drawn chasm or slashes). */
+  /** A line or a path at this world angle (degrees from +x toward −z, screen up) through where the clip stands (its drawn chasm or slashes, a beast's flight). */
   readonly angle?: number;
   /** A ring that closes from its edge onto its centre (thorns from the field's rim). */
   readonly inward?: boolean;
@@ -82,6 +82,9 @@ const SWEEP_S = 0.45;
 /** A line's length and a path's half length (m); a cone's half angle (rad). */
 const LINE_M = 30;
 const PATH_HALF_M = 22;
+/** A divine beast's flight across its path (s, edge to edge) and the share of the view its card fills while it flies. */
+const FLY_S = 1;
+export const FLY_SCALE = 0.55;
 const CONE_HALF = (35 * Math.PI) / 180;
 /** Marks a field skill leaves (on its densest cells). */
 const FIELD_MARKS = 5;
@@ -132,7 +135,9 @@ export const KEY8_SKILLS: readonly ClipSkill[] = [
  * seconds after it), damage, status (seconds: a lab default, stun 1, bind 1.8, slow 2), mark (s), linger, sound take.
  * The clips are at full strength from frame 0 (the table measured no impact frame): their first strike lands on the
  * clip's peak frame (the acceptance rule), the table's later strikes keep its rhythm after it. A2's chasm runs 35° on
- * screen (40° on the ground at the 55° camera); A8's thorns close from the field's rim.
+ * screen (40° on the ground at the 55° camera); A8's thorns close from the field's rim. Batch 3, the divine beasts: C1's
+ * dragon and C3's phoenix fly across the field (path: C1 left to right, C3 south to north, as their lines say), each
+ * beast struck when the body reaches it; C2's tiger rakes four parallel claw lines along its clip's diagonal (30°).
  */
 export const KEY9_SKILLS: readonly ClipSkill[] = [
   // A1 Myriad Spirit Lotus Bloom · Vạn Linh Liên Hoa Trận
@@ -183,6 +188,54 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
     strikes: [{ frame: "peak", power: 0.7 }, { after: 0.6, power: 0.3, kind: "tick" }, { after: 1.2, power: 0.3, kind: "tick" }, { after: 1.8, power: 0.3, kind: "tick" }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak",
   },
+  // C1 Azure Tempest Dragon · Thanh Minh Vân Lôi Long
+  {
+    id: "azure-cloud-dragon", element: "thunder", shape: "path", radius: 3, count: 1, damage: "heavy", mark: false, linger: 1.8, angle: 0, sfx: "tt-sfx-x-azure-cloud-dragon/take4.wav",
+    strikes: [{ frame: "peak", power: 0.35 }, { after: 0.12, power: 0.35 }, { after: 0.24, power: 0.35 }, { after: 0.4, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; a path strikes each beast when the body reaches it (the first strike sets the clock)",
+  },
+  // C2 Astral Slaying White Tiger · Canh Kim Sát Phạt Bạch Hổ
+  {
+    id: "white-fiend-tiger", element: "metal", shape: "line", radius: 2.2, count: 4, damage: "heavy", mark: false, linger: 1.5, angle: 30, sfx: "tt-sfx-x-white-fiend-tiger/take2.wav",
+    strikes: [{ frame: "peak", power: 0.5 }, { after: 0.2, power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.25 s to the clip peak",
+  },
+  // C3 Nirvana Sunfire Vermilion Bird · Nam Minh Ly Hỏa Chu Tước
+  {
+    id: "vermilion-solar-phoenix", element: "fire", shape: "path", radius: 6, count: 1, damage: "heavy", mark: false, linger: 1.9, angle: 90, sfx: "tt-sfx-x-vermilion-solar-phoenix/take3.wav",
+    strikes: [{ frame: "peak", power: 0.5 }, { after: 0.15, power: 0.5 }, { after: 0.3, power: 0.7 }, { after: 0.7, power: 0.2, kind: "tick" }, { after: 1.3, power: 0.2, kind: "tick" }, { after: 1.9, power: 0.2, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; a path strikes each beast when the body reaches it (the first strike sets the clock)",
+  },
+  // C4 Black-Abyss Tortoise & Serpent · Huyền Minh Trấn Hải Huyền Vũ
+  {
+    id: "abyssal-xuanwu-tortoise", element: "water", shape: "ring", radius: 14, count: 1, damage: "heavy", status: { kind: "slow", seconds: 2 }, mark: 0.2, linger: 2, sfx: "tt-sfx-x-abyssal-xuanwu-tortoise/take4.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.8, power: 0.2, kind: "tick" }, { after: 1.6, power: 0.2, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak",
+  },
+  // C5 Violet-Gold Auspicious Qilin · Tử Kim Thụy Lôi Kỳ Lân
+  {
+    id: "auspicious-thunder-qilin", element: "thunder", shape: "multi", radius: 4.5, count: 3, damage: "heavy", mark: 0.2, linger: 1.6, sfx: "tt-sfx-x-auspicious-thunder-qilin/take1.wav",
+    strikes: [{ frame: "peak", power: 1 }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak",
+  },
+  // C6 North-Sea Astral Kunpeng · Bắc Minh Hóa Vũ Côn Bằng
+  {
+    id: "astral-kunpeng-leviathan", element: "water", shape: "field", radius: 22, count: 1, damage: "heavy", mark: false, linger: 1.8, sfx: "tt-sfx-x-astral-kunpeng-leviathan/take3.wav",
+    strikes: [{ frame: "peak", power: 1 }, { after: 0.6, power: 0.3, kind: "tick" }, { after: 1.2, power: 0.3, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.4 s to the clip peak",
+  },
+  // C7 Celestial Truth Spirit Baize · Thông Thiên Hạo Quang Bạch Trạch
+  {
+    id: "all-knowing-baize-spirit", element: "light", shape: "ring", radius: 20, count: 1, damage: "heavy", status: { kind: "slow", seconds: 2 }, mark: false, linger: 1.7, sfx: "tt-sfx-x-all-knowing-baize-spirit/take1.wav",
+    strikes: [{ frame: "peak", power: 0.8 }, { after: 0.6, power: 0.3, kind: "tick" }, { after: 1.2, power: 0.3, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.25 s to the clip peak",
+  },
+  // C8 Moonlight Illusion Nine-Tailed Fox · Thanh Khâu Huyễn Nguyệt Cửu Vĩ Hồ
+  {
+    id: "nine-tailed-celestial-fox", element: "ice", shape: "sweep", radius: 14, count: 9, damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: false, linger: 1.8, sfx: "tt-sfx-x-nine-tailed-celestial-fox/take4.wav",
+    strikes: [{ frame: "peak", power: 0.6 }, { after: 0.15, power: 0.7 }, { after: 0.3, power: 1 }, { after: 0.8, power: 0.2, kind: "tick" }, { after: 1.3, power: 0.2, kind: "tick" }, { after: 1.8, power: 0.2, kind: "tick" }],
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.3 s to the clip peak",
+  },
 ];
 
 const SHAPE_VI: Readonly<Record<ClipShape, string>> = {
@@ -216,6 +269,8 @@ export interface ClipAim {
   readonly points: readonly XZ[];
   /** Each struck beast: its delay after a strike (s) and the blow's ground direction (unit). */
   readonly hits: readonly { readonly i: number; readonly delay: number; readonly dx: number; readonly dz: number }[];
+  /** A path: its clip flies from (x, z) at (vx, vz) m/s, each beast struck as the body reaches it. */
+  readonly flight?: { readonly x: number; readonly z: number; readonly vx: number; readonly vz: number };
 }
 
 /** Live beasts grouped in CELL_M cells, densest first: each cell's centroid and count. */
@@ -284,6 +339,7 @@ export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, c
   const r = skill.radius;
   let anchor: XZ = dense;
   const points: XZ[] = [];
+  let flight: ClipAim["flight"];
   switch (skill.shape) {
     case "point": {
       // On the beast nearest the densest group's centre.
@@ -371,13 +427,26 @@ export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, c
       break;
     }
     case "path": {
-      // Across the field (world x: left to right on the play camera) through the densest group.
-      const n = field.inCapsule(dense.x - PATH_HALF_M, dense.z, dense.x + PATH_HALF_M, dense.z, r, scratch);
+      // The beast's body flies edge to edge across the field through where its clip stands, at its angle (none: left
+      // to right on the play camera), in FLY_S; each beast is struck when the body reaches it, pushed off the path.
+      const a = ((skill.angle ?? 0) * Math.PI) / 180;
+      const d = { x: Math.cos(a), z: -Math.sin(a) };
+      const sx = origin.x - d.x * PATH_HALF_M;
+      const sz = origin.z - d.z * PATH_HALF_M;
+      const speed = (2 * PATH_HALF_M) / FLY_S;
+      flight = { x: sx, z: sz, vx: d.x * speed, vz: d.z * speed };
+      anchor = origin;
+      const n = field.inCapsule(sx, sz, origin.x + d.x * PATH_HALF_M, origin.z + d.z * PATH_HALF_M, r, scratch);
       for (let k = 0; k < n; k += 1) {
         const i = scratch[k]!;
-        add(i, (field.x(i) - (dense.x - PATH_HALF_M)) / SPREAD_MPS.path, field.x(i), dense.z + (field.z(i) >= dense.z ? -1 : 1));
+        const along = (field.x(i) - sx) * d.x + (field.z(i) - sz) * d.z;
+        const side = (field.x(i) - sx) * -d.z + (field.z(i) - sz) * d.x >= 0 ? 1 : -1;
+        add(i, along / speed, field.x(i) + d.z * side, field.z(i) - d.x * side);
       }
-      points.push(dense);
+      for (let k = 0; k < LINE_MARKS; k += 1) {
+        const u = (k / (LINE_MARKS - 1) - 0.5) * 2 * PATH_HALF_M * 0.8;
+        points.push({ x: origin.x + d.x * u, z: origin.z + d.z * u });
+      }
       break;
     }
     case "sweep":
@@ -403,11 +472,11 @@ export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, c
       break;
     }
   }
-  // A spread starts at the beast it reaches first.
+  // A spread starts at the beast it reaches first (a flight strikes each beast when its body gets there).
   const first = hits.reduce((m, h) => Math.min(m, h.delay), Infinity);
-  if (Number.isFinite(first) && first > 0) for (const h of hits) h.delay -= first;
+  if (flight === undefined && Number.isFinite(first) && first > 0) for (const h of hits) h.delay -= first;
   hits.sort((a, b) => a.delay - b.delay || a.i - b.i);
-  return { anchor, points, hits };
+  return { anchor, points, hits, flight };
 }
 
 /** The lab's side of a cast: the same hit path as keys 0–7. */
@@ -464,6 +533,8 @@ interface Running {
 const c = new THREE.Vector3();
 const m = new THREE.Vector3();
 const markAt = new THREE.Vector3();
+const flyFrom = new THREE.Vector3();
+const flyV = new THREE.Vector3();
 
 export class ClipSkillRunner {
   private readonly table: ReadonlyMap<string, ClipSkill>;
@@ -553,7 +624,13 @@ export class ClipSkillRunner {
     r.report.clipAt = t0;
     const it = this.showcase.item(r.skill.id);
     // A pillar or a beast stands on its point; a field scene over the screen's centre.
-    this.showcase.play(r.skill.id, { at: it.place === "foe" || it.place === "foes" ? r.anchor : undefined, feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx });
+    const fl = r.aim.flight;
+    this.showcase.play(r.skill.id, {
+      at: fl !== undefined ? flyFrom.set(fl.x, 0, fl.z) : it.place === "foe" || it.place === "foes" ? r.anchor : undefined,
+      velocity: fl !== undefined ? flyV.set(fl.vx, 0, fl.vz) : undefined,
+      scale: fl !== undefined ? FLY_SCALE : undefined,
+      feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx,
+    });
     r.times.forEach((time, k) => {
       const role: ImpactRole = k === 0 ? "primary" : "secondary";
       r.beats.push({ at: t0 + time, role, tick: r.skill.strikes[k]!.kind === "tick", done: false });

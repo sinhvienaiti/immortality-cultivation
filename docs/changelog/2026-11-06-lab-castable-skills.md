@@ -45,3 +45,21 @@ Anh (06/11 00:05): "tạm thời chưa cần chấm, tôi sẽ là người ch�
   - hai phím dùng chung ấn đất, mỗi hệ một atlas.
 - Phím 9 tung mục đang chọn, Shift+9 chọn mục kế. Mục chưa có dòng trong bảng (B, C, D) vẫn chỉ phát video.
 - Kiểm: 1067 test qua. Chrome headless tung A1–A8, 0 lỗi; cú đầu lệch khung đỉnh của clip ≤ 1 khung. Bị trúng mỗi chiêu: A1 81 con, A2 30, A3 47 (7 điểm), A7 58 (7 điểm), các chiêu cả sân 68–87 con.
+
+## Đợt 3: C1–C8 thần thú ở phím 9
+
+- Thêm 8 dòng C1–C8 vào `KEY9_SKILLS`, cùng cách chép và cùng các chỗ sửa như đợt 2.
+- **Hình `path` (C1 rồng, C3 chu tước): thân thần thú bay thật qua sân.**
+  - Thẻ clip, cỡ 0,55 khung nhìn, bay từ mép này sang mép kia qua chỗ clip đứng trong 1 s.
+  - C1 bay trái sang phải, C3 bay nam lên bắc, đúng dòng lối chơi.
+  - Quái bị trúng đúng lúc thân bay tới nó, bị đẩy ra hai bên đường bay.
+  - Ấn lửa hay ấn sét nằm dọc đường bay.
+  - Riêng hình này cú đầu không đặt vào khung đỉnh của clip, mà vào lúc thân tới con quái đầu tiên (C3 khoảng 0,5 s).
+- **C2 bạch hổ:** bốn vệt vuốt song song theo đường chéo 30° của clip, qua cụm quái dày nhất.
+- **C4–C8 dùng hình có sẵn,** trải theo chỗ clip đứng:
+  - C4: vòng quanh cụm quái, có ấn 0,2 s;
+  - C5: 3 dấu móng;
+  - C6: cả sân;
+  - C7: vòng, chậm;
+  - C8: quét cả vòng, choáng.
+- Kiểm: 1068 test qua. Chrome headless tung C1–C8, 0 lỗi: C4 và C5 lệch khung đỉnh 0 khung, C2, C6, C7, C8 và rồng C1 lệch 1 khung. Bị trúng mỗi chiêu: rồng 39 con, hổ 69, chu tước 41, rùa 53, kỳ lân 40, côn bằng 87, bạch trạch 68, hồ 53.

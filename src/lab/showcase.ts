@@ -189,6 +189,9 @@ export interface PlayOptions {
   readonly nav?: string;
   /** Its sound file under the sound folder ("tt-sfx-x-<id>/take2.wav"; none: its item's take 1). */
   readonly sound?: string;
+  /** A divine beast's flight: its card moves at this ground velocity (m/s), drawn at `scale` of its size. */
+  readonly velocity?: THREE.Vector3;
+  readonly scale?: number;
 }
 
 /** A clip's time map: to its peak frame in ATTACK_S, then the rest over its tail (or all of it over its tail). */
@@ -412,13 +415,20 @@ export class Showcase {
         if (opts.at !== undefined) v.copy(opts.at);
         else if (i >= 0) this.host.at(i, v);
         else v.set(cx, 0, cz);
-      } else v.set(cx, 0, cz);
+      } else if (opts.at !== undefined) v.copy(opts.at);
+      else v.set(cx, 0, cz);
       v.y = 0;
       const d = v.distanceTo(cam.position);
       size = 2 * d * tan * (it.place === "field" ? 1 : 0.9);
       // An avatar stands on the caster: its card's lower edge near the feet, its body over them.
       if (it.place === "caster") v.y = size * 0.32;
       o.lift = d * 0.6;
+    }
+    if (opts.velocity !== undefined) Object.assign(o, { vx: opts.velocity.x, vz: opts.velocity.z, drag: 0 });
+    if (opts.scale !== undefined) {
+      size *= opts.scale;
+      // A smaller figure stands on the ground under it (its card's lower edge near its point).
+      if (it.place === "foes" || it.place === "field") v.y = size * 0.3;
     }
     pool.clear();
     pool.spawn(v, size, o);

@@ -176,7 +176,9 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     for (const shape of ["line", "ring", "sweep", "path", "cone"] as const) {
       const a = aimClipSkill({ ...row("pillar-fire-meteor"), shape, radius: shape === "line" || shape === "path" ? 2 : 18 }, field, caster, centre);
       expect(a.hits.length, shape).toBeGreaterThan(0);
-      expect(a.hits[0]!.delay, shape).toBe(0);
+      // A spread starts on its first beast; a flight strikes when its body gets there.
+      if (shape === "path") expect(a.hits[0]!.delay, shape).toBeGreaterThan(0);
+      else expect(a.hits[0]!.delay, shape).toBe(0);
     }
     // No beast: the field's middle.
     expect(aimClipSkill(row("pillar-thunder-single"), new Field([]), caster, centre).anchor).toEqual(centre);
@@ -293,5 +295,32 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     expect(strikes).toEqual(["primary", "secondary", "secondary"]);
     expect(blows.length).toBe(HERD.length * 6);
     expect(blows[0]!.t).toBeLessThanOrEqual(1 / 60 + 1e-9);
+  });
+
+  it("key 9's divine beasts (batch 3) fly their path across the field, striking each beast when the body reaches it", () => {
+    const row = (id: string): ClipSkill => KEY9_SKILLS.find((s) => s.id === id)!;
+    for (const id of ["azure-cloud-dragon", "white-fiend-tiger", "vermilion-solar-phoenix", "abyssal-xuanwu-tortoise", "auspicious-thunder-qilin", "astral-kunpeng-leviathan", "all-knowing-baize-spirit", "nine-tailed-celestial-fox"]) {
+      expect(row(id), id).toBeDefined();
+    }
+    const field = new Field([[-15, -6], [-5, -6.5], [4, -5.5], [14, -6], [0, -15]]);
+    const caster = { x: 0, z: 3 };
+    const centre = { x: 0, z: -6 };
+    // C1's dragon: left to right through the field's middle, from its edge; the beast far off the path is spared.
+    const dragon = aimClipSkill(row("azure-cloud-dragon"), field, caster, centre, "field");
+    expect(dragon.flight).toBeDefined();
+    expect(dragon.flight!.x).toBeLessThan(-15);
+    expect(dragon.flight!.vx).toBeGreaterThan(0);
+    expect(dragon.hits.map((h) => h.i)).toEqual([0, 1, 2, 3]);
+    for (let k = 1; k < dragon.hits.length; k += 1) expect(dragon.hits[k]!.delay).toBeGreaterThan(dragon.hits[k - 1]!.delay);
+    // Struck when the body gets there: the delay is the distance flown over the flight's speed (no shift to zero).
+    expect(dragon.hits[0]!.delay).toBeCloseTo((field.x(0) - dragon.flight!.x) / dragon.flight!.vx, 6);
+    // C3's phoenix: south to north (toward −z).
+    const phoenix = aimClipSkill(row("vermilion-solar-phoenix"), new Field([[0, 2], [0, -8], [0, -16]]), caster, centre, "field");
+    expect(phoenix.flight!.vz).toBeLessThan(0);
+    expect(phoenix.hits.map((h) => h.i)).toEqual([0, 1, 2]);
+    // C2's tiger: four parallel claw lines.
+    const tiger = aimClipSkill(row("white-fiend-tiger"), new Field(HERD), caster, centre, "foes");
+    expect(tiger.points.length).toBe(5);
+    expect(tiger.hits.length).toBeGreaterThan(3);
   });
 });
