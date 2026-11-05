@@ -1,8 +1,11 @@
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { WebGLLights } from "three/src/renderers/webgl/WebGLLights.js";
+import { WebGLPrograms, type WebGLProgramParameters } from "three/src/renderers/webgl/WebGLPrograms.js";
+import { WebGLShadowMap } from "three/src/renderers/webgl/WebGLShadowMap.js";
 import { createSkillNumbers } from "../../src/view/hitfx";
-import { prewarmScene, type Renderer3D } from "../../src/view/renderer";
+import { IC_LIGHTS, prewarmScene, type Renderer3D } from "../../src/view/renderer";
 import { ScreenFx } from "../../src/view/screen-fx";
 import { BRUSH, FIRE, FIRE_LAB, prewarmFire, resetFireAudit } from "../../src/view/skills/element-fire";
 import { METAL } from "../../src/view/skills/element-metal";
@@ -11,6 +14,7 @@ import { Rand, SpritePool } from "../../src/view/skills/fxkit";
 import { QiSlash } from "../../src/view/skills/qi-slash";
 import type { FlipbookMeta } from "../../src/view/skills/flipbook";
 import type { SwordSkillTextures } from "../../src/view/skills/sword-skills";
+import { BladeSet, standInModel } from "../../src/view/skills/blades";
 
 function texture(name: string): THREE.DataTexture {
   const t = new THREE.DataTexture(new Uint8Array([255, 128, 0, 255]), 1, 1);
@@ -306,5 +310,157 @@ describe("late impact and mapped shadow programs (ticket 286)", () => {
       if (sample !== undefined) expect(sample.parent).toBeNull();
       if (failure !== "render") expect(f.render).not.toHaveBeenCalled();
     } finally { screen.dispose(); f.dispose(); }
+  });
+});
+
+describe("post-mask metal shadow cache keys (ticket 291)", () => {
+  it.each(["success", "mask", "shadow"])("warms the real depth keys after the actor mask and restores state after %s", (outcome) => {
+    const f = setup();
+    // Key-equivalent Lam: opaque mapped material, UV0, 31 joints, no custom depth or morphs.
+    // The production BladeSet keeps its actual instancing attributes/count path with a mapped model.
+    const geometry = new THREE.BoxGeometry();
+    geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(new Uint16Array(24 * 4), 4));
+    const weights = new Float32Array(24 * 4);
+    for (let i = 0; i < 24; i += 1) weights[i * 4] = 1;
+    geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(weights, 4));
+    const material = new THREE.MeshStandardMaterial({ map: f.sheet });
+    const caster = new THREE.SkinnedMesh(geometry, material);
+    const bones = Array.from({ length: 31 }, () => new THREE.Bone());
+    caster.add(...bones); caster.bind(new THREE.Skeleton(bones));
+    caster.castShadow = true; caster.frustumCulled = false;
+    const blades = new BladeSet(2);
+    blades.setModel({ ...standInModel(), material });
+    f.layer.add(blades.mesh);
+    f.scene.add(caster);
+    const sun = f.scene.children.find((o) => o instanceof THREE.DirectionalLight) as THREE.DirectionalLight;
+    sun.castShadow = true; sun.position.set(26, 34, -18);
+    sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = true;
+    f.scene.add(new THREE.HemisphereLight(), new THREE.PointLight(),
+      ...Array.from({ length: 1 + IC_LIGHTS.rims.length }, () => new THREE.DirectionalLight()));
+    f.layer.add(...Array.from({ length: 3 }, () => new THREE.PointLight(0xffffff, 0)));
+    const mask = new THREE.MeshBasicMaterial({ fog: false });
+    const background = f.scene.background = new THREE.Color(0x123456);
+    const originalTarget = f.getTarget();
+    const extensions = { has: () => false };
+    const lightStates = new WeakMap<THREE.Scene, WebGLLights>();
+    const stateOf = (scene: THREE.Scene): WebGLLights => {
+      let state = lightStates.get(scene);
+      if (state === undefined) {
+        state = new WebGLLights(extensions as never); lightStates.set(scene, state);
+      }
+      return state;
+    };
+    const lightsOf = (scene: THREE.Scene): THREE.Light[] => {
+      const lights: THREE.Light[] = [];
+      scene.traverseVisible((o) => { if (o instanceof THREE.Light) lights.push(o); });
+      return lights;
+    };
+    const renderer = f.renderer;
+    const clearColor = new THREE.Color(0x345678);
+    let clearAlpha = 0.4;
+    Object.assign(renderer, {
+      outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.NeutralToneMapping,
+      autoClear: false, getClearColor: (out: THREE.Color) => out.copy(clearColor), getClearAlpha: () => clearAlpha,
+      setClearColor: (color: THREE.ColorRepresentation, alpha: number) => { clearColor.set(color); clearAlpha = alpha; },
+      state: { setBlending: vi.fn(), setScissorTest: vi.fn(), viewport: vi.fn(),
+        buffers: { color: { setClear: vi.fn() }, depth: { setTest: vi.fn(), getReversed: () => false } } },
+      getActiveCubeFace: () => 0, getActiveMipmapLevel: () => 0, clear: vi.fn(),
+    });
+    // Exercise Three's material selection and complete cache-key algorithm, not a test-made key.
+    // Reflect handles r170's cubeuvmaps argument, missing from @types/three's constructor signature.
+    const maps = { get: () => null };
+    const programs = Reflect.construct(WebGLPrograms, [renderer, maps, maps, extensions,
+      { precision: "highp", vertexTextures: true, logarithmicDepthBuffer: false }, {},
+      { numPlanes: 0, numIntersection: 0 }]) as WebGLPrograms;
+    const shadows = Reflect.construct(WebGLShadowMap, [renderer,
+      { update: (o: THREE.Mesh) => o.geometry }, { maxTextureSize: 4096 }]) as WebGLShadowMap;
+    shadows.enabled = true; shadows.type = THREE.PCFSoftShadowMap;
+    shadows.autoUpdate = false; shadows.needsUpdate = false;
+    renderer.shadowMap = shadows;
+    const keys = new Map<THREE.Object3D, string>();
+    const params = new Map<THREE.Object3D, WebGLProgramParameters>();
+    const depthMaterials = new Map<THREE.Object3D, THREE.MeshDepthMaterial>();
+    const empty = new THREE.Scene();
+    let activeScene = f.scene;
+    let phase = "warm";
+    const cached = new Set<string>();
+    renderer.renderBufferDirect = (_camera, _scene, _geometry, depth, object) => {
+      if (object !== caster && object !== blades.mesh) return;
+      const p = programs.getParameters(depth, stateOf(activeScene).state, [sun], empty, object);
+      const key = programs.getProgramCacheKey(p);
+      keys.set(object, key); params.set(object, p); depthMaterials.set(object, depth as THREE.MeshDepthMaterial);
+      if (phase === "warm") cached.add(key);
+      if (phase === "warm" && outcome === "shadow") throw new Error("shadow");
+    };
+    f.compile.mockImplementation((scene: THREE.Scene) => { stateOf(scene).setup(lightsOf(scene)); });
+    f.render.mockImplementation((scene: THREE.Scene, camera: THREE.Camera) => {
+      activeScene = scene;
+      scene.updateMatrixWorld(true);
+      const lights = lightsOf(scene);
+      // WebGLRenderer r170: shadowMap.render precedes currentRenderState.setupLights().
+      shadows.render(lights.filter((l) => l.castShadow), scene, camera);
+      stateOf(scene).setup(lights);
+    });
+    const screen = new ScreenFx({ composer: { passes: [], insertPass: vi.fn() } as unknown as EffectComposer,
+      composerOn: () => true, addOverlay: () => () => {}, drawActorMask: (r, target) => {
+        const visible = f.layer.visible, override = f.scene.overrideMaterial, autoUpdate = shadows.autoUpdate;
+        const background = f.scene.background, autoClear = r.autoClear;
+        const color = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha();
+        // Like the lab host, restoration below is not reached if its mask render throws.
+        f.layer.visible = false; f.scene.background = null; f.scene.overrideMaterial = mask; shadows.autoUpdate = false;
+        r.setClearColor(0x000000, 0); r.autoClear = true;
+        r.setRenderTarget(target); r.render(f.scene, f.camera);
+        if (outcome === "mask") throw new Error("mask");
+        r.setClearColor(color, alpha); r.autoClear = autoClear;
+        f.layer.visible = visible; f.scene.background = background; f.scene.overrideMaterial = override; shadows.autoUpdate = autoUpdate;
+      } });
+    const matrix = new THREE.Matrix4(); blades.mesh.getMatrixAt(0, matrix);
+    const children = [...f.scene.children], layerChildren = [...f.layer.children];
+    try {
+      const warm = (): unknown => f.stage.prewarm(METAL, renderer, f.scene, f.template, [], () => { screen.prewarm(renderer); });
+      if (outcome !== "success") expect(warm).toThrow(outcome);
+      else warm();
+      expect(blades.mesh.count).toBe(0);
+      const restored = new THREE.Matrix4(); blades.mesh.getMatrixAt(0, restored);
+      expect(restored).toEqual(matrix);
+      expect(caster.castShadow).toBe(true); expect(caster.frustumCulled).toBe(false);
+      expect(f.scene.background).toBe(background); expect(f.scene.overrideMaterial).toBeNull();
+      expect(renderer.autoClear).toBe(false); expect(clearColor).toEqual(new THREE.Color(0x345678)); expect(clearAlpha).toBe(0.4);
+      expect(f.scene.children).toEqual(children); expect(f.layer.children).toEqual(layerChildren);
+      expect(f.layer.visible).toBe(true); expect(shadows.autoUpdate).toBe(false); expect(shadows.needsUpdate).toBe(false);
+      expect(sun.shadow.autoUpdate).toBe(false); expect(sun.shadow.needsUpdate).toBe(true);
+      expect(f.getTarget()).toBe(originalTarget);
+      expect(f.stage.time).toBe(0); expect(f.stage.flipbooks.live).toBe(0); expect(f.metal.count).toBe(0);
+      if (outcome === "success") {
+        expect(cached.size).toBe(2);
+        const warmed = new Map(keys);
+        expect(params.get(caster)).toMatchObject({ shaderID: "depth", map: true, mapUv: "uv", skinning: true,
+          instancing: false, alphaTest: false, flipSided: true, doubleSided: false, depthPacking: 3201,
+          shadowMapEnabled: true, shadowMapType: THREE.PCFSoftShadowMap, fog: false, toneMapping: THREE.NoToneMapping,
+          numDirLights: 3, numPointLights: 1, numHemiLights: 1, numDirLightShadows: 1,
+          numPointLightShadows: 0, numSpotLights: 0, numClippingPlanes: 0, morphTargetsCount: 0 });
+        expect(params.get(blades.mesh)).toMatchObject({ instancing: true, instancingColor: false, skinning: false });
+        expect(caster.customDepthMaterial).toBeUndefined(); expect(blades.mesh.customDepthMaterial).toBeUndefined();
+        for (const depth of depthMaterials.values()) {
+          expect(depth.map).toBe(f.sheet); expect(depth.alphaTest).toBe(0); expect(depth.side).toBe(THREE.BackSide);
+        }
+        // Hit frame mask, then the next real shadow pass on the same caster and production BladeSet.
+        phase = "hit";
+        blades.set(0, 0, 1, 0, 0, 1, 0); blades.sync();
+        screen.prewarm(renderer);
+        shadows.autoUpdate = true;
+        renderer.setRenderTarget(f.template); renderer.render(f.scene, f.camera);
+        expect(keys).toEqual(warmed);
+        expect([...keys.values()].every((key) => cached.has(key))).toBe(true);
+        // Regression control: 286's compile AFTER the mask seeds all four point lights, producing two other keys.
+        sun.shadow.needsUpdate = true;
+        renderer.compile(f.scene, f.camera); renderer.render(f.scene, f.camera);
+        expect(params.get(caster)!.numPointLights).toBe(4);
+        expect([...keys.values()].every((key) => !cached.has(key))).toBe(true);
+      }
+    } finally {
+      screen.dispose(); caster.skeleton.dispose(); blades.mesh.dispose(); blades.mesh.geometry.dispose();
+      geometry.dispose(); material.dispose(); mask.dispose(); sun.shadow.map?.dispose(); f.dispose();
+    }
   });
 });

@@ -109,9 +109,9 @@ export class ElementStage {
 
   /** Load time only; the host selects the element, loads its media and lends overlays before calling. */
   prewarm(kit: ElementKit, renderer: THREE.WebGLRenderer, scene: THREE.Scene,
-    target: THREE.WebGLRenderTarget, textures: readonly THREE.Texture[] = []): ScenePrewarmReport & { element: ElementId } {
+    target: THREE.WebGLRenderTarget, textures: readonly THREE.Texture[] = [], beforeRender?: () => void): ScenePrewarmReport & { element: ElementId } {
     this.hooksOf(kit);
-    return { element: kit.id, ...prewarmScene(renderer, scene, this.camera, target, textures) };
+    return { element: kit.id, ...prewarmScene(renderer, scene, this.camera, target, textures, beforeRender) };
   }
 
   /** A kit's screen accent on a big blow at (x, y, z), strength 0–1 (the host's, when it gave one). */

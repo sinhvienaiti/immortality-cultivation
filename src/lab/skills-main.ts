@@ -1642,9 +1642,9 @@ void (async () => {
         for (const id of ["fire", "metal"]) {
           await setElement(id);
           await Promise.all(prewarmLoads);
-          const masks = screen.prewarm(r);
+          const masks = screen.prewarmTextures(r);
           prewarmReports.push(numbers.prewarm(view.scene, () =>
-            stage.prewarm(fx.element, r, view.scene, view.stage.composer.readBuffer, masks)));
+            stage.prewarm(fx.element, r, view.scene, view.stage.composer.readBuffer, masks, () => { screen.prewarm(r); })));
         }
       } finally {
         await setElement(active);

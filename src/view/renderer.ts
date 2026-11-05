@@ -87,7 +87,7 @@ export interface ScenePrewarmReport {
 
 /** Load-time only: exercise the real buffers/programs, without entering any pool's emit/update path. */
 export function prewarmScene(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera,
-  template: THREE.WebGLRenderTarget, extraTextures: readonly THREE.Texture[] = []): ScenePrewarmReport {
+  template: THREE.WebGLRenderTarget, extraTextures: readonly THREE.Texture[] = [], beforeRender?: () => void): ScenePrewarmReport {
   const target = template.clone();
   target.setSize(64, 64);
   const was = renderer.getRenderTarget();
@@ -192,6 +192,22 @@ export function prewarmScene(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     renderer.compile(scene, camera);
     renderer.setRenderTarget(target);
     renderer.compile(scene, camera);
+    // Three r170 draws shadows before setupLights(). The actor mask hides FX lights and leaves that
+    // light state for the next frame's depth-program key; replay it after compile, which resets it.
+    if (beforeRender !== undefined) {
+      const { background, overrideMaterial } = scene;
+      const autoClear = renderer.autoClear;
+      const clearColor = renderer.getClearColor(new THREE.Color());
+      const clearAlpha = renderer.getClearAlpha();
+      try { beforeRender(); }
+      finally {
+        scene.background = background;
+        scene.overrideMaterial = overrideMaterial;
+        renderer.autoClear = autoClear;
+        renderer.setClearColor(clearColor, clearAlpha);
+      }
+    }
+    renderer.setRenderTarget(target);
     renderer.render(scene, camera);
     return {
       textures: [...textures].map((t) => ({ id: t.id, name: t.name || t.image?.src || t.uuid })),
