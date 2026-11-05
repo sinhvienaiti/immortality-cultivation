@@ -427,9 +427,14 @@ class ClipLayers {
     this.spawn("ribbon", p, x, 4.5 * size, z, 0.9 * size, o);
   }
 
-  /** Water's law: the blow's water flows on past the beast along (dx, dz), carried and slowing, as a wave. */
-  private flowOn(x: number, y: number, z: number, dx: number, dz: number, size: number): void {
-    const role: ClipRole = this.has("slash") ? "slash" : "ribbon";
+  /**
+   * Water's law: the blow's water flows on past the beast along (dx, dz), carried and slowing: the ribbon clip's band,
+   * else (`crescent`) the slash clip as a wave. A line of hits (key 2) never takes the crescent: one per beast read as
+   * a chain of small crescents along the line (owner ~19:45).
+   */
+  private flowOn(x: number, y: number, z: number, dx: number, dz: number, size: number, crescent: boolean): void {
+    const role: ClipRole = this.has("ribbon") ? "ribbon" : "slash";
+    if (role === "slash" && !crescent) return;
     const p = this.pick(role);
     if (p === null) return;
     const o = this.once(p, role, 1.2);
@@ -471,7 +476,7 @@ class ClipLayers {
   }
 
   /** A hit at `at` (sized `s`) by the element's law; false when it has neither an impact nor a burst clip. */
-  private hit(x: number, y: number, z: number, dx: number, dz: number, s: number, big: boolean): boolean {
+  private hit(x: number, y: number, z: number, dx: number, dz: number, s: number, big: boolean, crescent = true): boolean {
     const role: ClipRole = big ? (this.has("burst") ? "burst" : "impact") : this.has("impact") ? "impact" : "burst";
     const p = this.pick(role);
     if (p === null) return false;
@@ -497,7 +502,7 @@ class ClipLayers {
     // The big burst standing in for a missing impact clip is drawn smaller.
     this.spawn(role, p, x, y, z, (big ? 2.8 : role === "burst" ? 1.5 : 2.0) * s, o);
     // The wave is the slash clip: as big as the cut (CUT, owner 19:12).
-    if (law === "flow") this.flowOn(x, y * 0.7, z, dx, dz, 0.95 * CUT.scale * s);
+    if (law === "flow") this.flowOn(x, y * 0.7, z, dx, dz, 0.95 * CUT.scale * s, crescent);
     this.sparkle(x, y, z, 1.7 * s, 0.85, 0.3, delay);
     this.stage.light(x, y, z, this.spec.look.light, big ? 5 : 3);
     if (big) this.stage.accent(x, y, z, 0.3);
@@ -623,7 +628,8 @@ class ClipLayers {
 
   impact(a: ImpactArgs): boolean {
     const s = a.scale * (a.big ? 1.3 : 1);
-    return this.hit(a.at.x, a.at.y, a.at.z, a.dx, a.dz, s, a.big);
+    // Key 2's hits lie along its line: its flying crescent is the line's crescent (no wave crescent per beast).
+    return this.hit(a.at.x, a.at.y, a.at.z, a.dx, a.dz, s, a.big, a.slot !== "k2");
   }
 
   cut(a: CutArgs): boolean {

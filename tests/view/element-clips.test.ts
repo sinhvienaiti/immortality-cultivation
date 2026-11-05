@@ -39,7 +39,20 @@ function field(n: number): TargetField & { statuses: [number, FoeStatusKind][] }
       return best;
     },
     inCircle: () => 0,
-    inCapsule: () => 0,
+    // The beasts within r of the segment a→b (key 2's line).
+    inCapsule: (ax, az, bx, bz, r, out) => {
+      let k = 0;
+      const lx = bx - ax;
+      const lz = bz - az;
+      const l2 = lx * lx + lz * lz || 1;
+      for (let i = 0; i < n; i += 1) {
+        const px = -4 + i * 1.2 - ax;
+        const pz = -6 - az;
+        const t = Math.max(0, Math.min(1, (px * lx + pz * lz) / l2));
+        if (Math.hypot(px - lx * t, pz - lz * t) <= r) out[k++] = i;
+      }
+      return k;
+    },
     hit: () => false,
     status: (i, kind) => {
       statuses.push([i, kind]);
@@ -359,6 +372,31 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     for (const f of flights) expect(f.size).toBeGreaterThanOrEqual(1.8 * CUT.scale - 1e-6);
     // The beasts on the line are struck, yet only one cut: the big crescent where the line ends.
     expect(cuts).toEqual([2.0 * CUT.scale]);
+  });
+
+  it("with Water's real hooks, key 2's slash clip is the one flying crescent and the end cut: no wave crescent per beast on the line", () => {
+    const cam = camera();
+    const layer = new THREE.Group();
+    const tex = sheets();
+    const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+    giveClips(stage, "water", ["slash", "impact"]);
+    const fx = new SwordSkillFx(swordHost(field(12), layer, cam), tex, "high");
+    fx.setElement(elementById("water")!, stage);
+    stage.reset();
+    fx.cast("k2", 0, -10);
+    let frames = 0;
+    for (let i = 0; i < 60; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+      frames += 1;
+    }
+    const a = clipAudit(stage, "water")!;
+    expect(frames).toBe(60);
+    expect(a.spawned.impact).toBeGreaterThan(1);
+    // ~12 flight frames (0.2 s) and the end cut; the hits along the line add none.
+    expect(a.spawned.slash).toBeGreaterThan(8);
+    expect(a.spawned.slash).toBeLessThanOrEqual(13);
   });
 
   it("draws Metal's key 2 crescent itself when the element has no flying cut (one sprite pair a frame, never a stamp chain)", () => {
