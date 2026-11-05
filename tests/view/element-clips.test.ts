@@ -9,7 +9,8 @@ import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
 import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
 import type { TargetField } from "../../src/view/skills/targets";
 
-const NEW_ELEMENTS = ["water", "thunder"] as const;
+/** Every kit drawn from its folder's clips by role (Water, Thunder and the elements after them). */
+const NEW_ELEMENTS = elementKits().filter((k) => k.roles !== undefined).map((k) => k.id);
 
 function field(n: number): TargetField & { statuses: [number, FoeStatusKind][] } {
   const statuses: [number, FoeStatusKind][] = [];
@@ -166,6 +167,7 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     }
     expect(elementById("water")!.foe!.kind).toBe("wet");
     expect(elementById("thunder")!.foe!.kind).toBe("shocked");
+    expect(NEW_ELEMENTS.length).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps a manifest entry's role", () => {
@@ -278,7 +280,7 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
       expect(a.spawned.groundImpact, id).toBeGreaterThan(0);
       expect(a.spawned.groundMark, id).toBeGreaterThan(0);
       expect(a.spawned.sparkle, id).toBeGreaterThan(0);
-      if (id === "thunder") expect(a.spawned.ribbon, "thunder judges from the sky").toBeGreaterThan(0);
+      if (id === "thunder" || id === "light" || id === "star") expect(a.spawned.ribbon, `${id} judges from the sky`).toBeGreaterThan(0);
       expect(targets.statuses.length).toBeGreaterThan(0);
     }
   });

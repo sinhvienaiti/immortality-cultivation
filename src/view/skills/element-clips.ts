@@ -56,8 +56,13 @@ export interface ClipLook {
   readonly gain: number;
   /** The impact light's colour (CSS hex). */
   readonly light: string;
-  /** How a blow lands: in place, flowing on past the beast along the blow, or judged from the sky onto it. */
-  readonly hit: "burst" | "flow" | "strike";
+  /**
+   * How a blow lands (the element's law, ELEMENT_LAYER §2): in place ("burst"); flowing on past the beast along the
+   * blow ("flow": Water, Wind); judged from the sky onto it ("strike": Thunder, Light, Star); stilled a beat, then
+   * broken ("shatter": Ice, Void); crushed down into the ground at its feet ("crush": Earth); claiming the ground under
+   * it at once ("claim": Wood's roots, Poison's pool); its light drained back toward the caster ("drain": Blood).
+   */
+  readonly hit: "burst" | "flow" | "strike" | "shatter" | "crush" | "claim" | "drain";
   /** Every clip's size × this. */
   readonly scale: number;
   /** Every one-shot's tail (its hold and decay after the peak, TIMES) × this: water lingers, lightning is gone sooner. */
@@ -296,8 +301,8 @@ class ClipLayers {
 
   // ── Layers ────────────────────────────────────────────────────────────────
 
-  /** A burst of the sparkle loop at (x, y, z): `size` m, living `life` s, drifting up `rise` m/s, eroding or fading out. */
-  private sparkle(x: number, y: number, z: number, size: number, life: number, rise = 0.25, delay = 0, alpha = 1): boolean {
+  /** A burst of the sparkle loop at (x, y, z): `size` m, living `life` s, drifting up `rise` m/s (and along vx, vz), fading out. */
+  private sparkle(x: number, y: number, z: number, size: number, life: number, rise = 0.25, delay = 0, alpha = 1, vx = 0, vz = 0): boolean {
     const p = this.pick("sparkle");
     if (p === null) return false;
     const o = flip();
@@ -305,7 +310,9 @@ class ClipLayers {
     o.rate = 1;
     o.frame = this.stage.rand.range(0, p.meta!.frames);
     o.rot = this.stage.rand.range(0, Math.PI * 2);
+    o.vx = vx;
     o.vy = rise;
+    o.vz = vz;
     o.drag = 0.6;
     o.fadeIn = Math.min(0.08, life * 0.2);
     o.fadeOut = life * 0.45;
@@ -409,11 +416,19 @@ class ClipLayers {
     const p = this.pick(role);
     if (p === null) return false;
     const law = this.spec.look.hit;
-    const delay = law === "strike" ? 0.07 : 0;
+    const delay = law === "strike" ? 0.07 : law === "shatter" ? 0.12 : 0;
     if (law === "strike") {
       // Marked first, judged a beat later: the column from the top of the frame onto the beast.
       this.sparkle(x, y, z, 0.9 * s, 0.22, 0, 0, 0.9);
       this.column(x, z, Math.min(1.4, 0.75 + 0.35 * s), 0.05);
+    } else if (law === "shatter") {
+      // Stilled: a glint holds on the beast for a beat before it breaks.
+      this.sparkle(x, y, z, 1.0 * s, 0.2, 0, 0, 1);
+    } else if (law === "crush") this.groundBlow(x, z, 1.8 * s, 0.03);
+    else if (law === "claim") this.mark(x, z, 1.9 * s, this.stage.rand.range(0, Math.PI * 2), 0.02);
+    else if (law === "drain") {
+      // Its light runs back along the blow toward the caster.
+      for (let k = 0; k < 2; k += 1) this.sparkle(x, y, z, 0.9 * s, 0.6, 0.2, 0.08 + 0.1 * k, 1, -dx * 4.5, -dz * 4.5);
     }
     const o = this.once(p, role);
     o.rot = this.stage.rand.range(-0.4, 0.4);
@@ -756,6 +771,47 @@ const LAYERS = new WeakMap<ElementStage, Map<ElementId, ClipLayers>>();
 /** What a clip kit has drawn on `stage` since its last reset (the lab's __lab.clipKit; null before it is attached). */
 export function clipAudit(stage: ElementStage, id: ElementId): ClipAudit | null {
   return LAYERS.get(stage)?.get(id)?.audit ?? null;
+}
+
+/** Key 7's light from the element's colours (linear): white core, halo (≤ 0.9), the finisher's body, lit body and deep end. */
+export function streamOf(c: { core: Rgb; halo: Rgb; body: Rgb; lit: Rgb; deep: Rgb; flash: string; hitRgb: number; number: Rgb }): StreamTone {
+  return {
+    core: c.core,
+    halo: c.halo,
+    trailCore: [(c.core[0] + 0.3 * c.halo[0]) * 1.7, (c.core[1] + 0.3 * c.halo[1]) * 1.7, (c.core[2] + 0.3 * c.halo[2]) * 1.7],
+    flash: c.flash,
+    hitRgb: c.hitRgb,
+    cutRgb: c.hitRgb,
+    number: c.number,
+    slash: { white: c.core, body: c.body, bodyLit: c.lit, deep: c.deep },
+  };
+}
+
+/**
+ * The sword aura's matter (SWORD_AURA §4.8) from the element's ramp: its core and edge, the body (≤ 0.85), the soot as
+ * the ink, and how it moves (curl 0 straight … 1 S-flow, breakup, plate edges, flicker, what it sheds).
+ */
+export function auraOf(r: ElementRamp, m: { curl?: number; breakup?: number; edge?: number; flickerHz?: number; ink?: number; shed?: SwordAuraLook["shed"]; mode?: SwordAuraLook["mode"] }): SwordAuraLook {
+  const cap = (c: Rgb, k: number): Rgb => {
+    const mx = Math.max(c[0], c[1], c[2], 1e-6);
+    const f = mx > k ? k / mx : 1;
+    return [c[0] * f, c[1] * f, c[2] * f];
+  };
+  return {
+    mode: m.mode ?? "qi",
+    ramp: { core: cap(r.core, 1), edge: cap(r.edge, 0.85), body: cap(r.body, 0.85), soot: r.soot },
+    deep: [r.body[0] * 0.3, r.body[1] * 0.3, r.body[2] * 0.3],
+    coreHdr: 2.8,
+    ink: { rgb: r.soot, alpha: m.ink ?? 0.45 },
+    edge: m.edge ?? 0.75,
+    flow: { speed: 0.8, perMps: 0.04, scale: 1, buoyancy: 0, curl: m.curl ?? 0, twoPhase: (m.curl ?? 0) > 0.5 },
+    breakup: m.breakup ?? 0.4,
+    reachW: 0.4,
+    flickerHz: m.flickerHz ?? 0,
+    shed: m.shed ?? "glints",
+    distortion: 0,
+    reduced: { flow: 0.3, flickerHz: Math.min(2, m.flickerHz ?? 0) },
+  };
 }
 
 /** An element kit drawn from its folder's clips by role (load time; allocates). */

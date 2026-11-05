@@ -160,7 +160,9 @@ export interface GroundAftermath {
 }
 
 /** One reaction state a foe can carry (ELEMENT_LAYER §3 "Foe status"). */
-export type FoeStatusKind = "cut" | "burn" | "wet" | "rooted" | "crushed" | "shocked" | "swept" | "frozen";
+export type FoeStatusKind = "cut" | "burn" | "wet" | "rooted" | "crushed" | "shocked" | "swept" | "frozen"
+  // The elements added on 05/11/2026 (PRODUCTION_LIST_2026-11-05 §7): Dark, Light, Poison, Blood, Void, Star.
+  | "devoured" | "judged" | "corroded" | "drained" | "rifted" | "starfall";
 
 /** The status a blow of this element leaves on a foe (TargetField.status). */
 export interface FoeStatus {
