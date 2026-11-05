@@ -427,8 +427,8 @@ export class Showcase {
     if (opts.velocity !== undefined) Object.assign(o, { vx: opts.velocity.x, vz: opts.velocity.z, drag: 0 });
     if (opts.scale !== undefined) {
       size *= opts.scale;
-      // A smaller figure stands on the ground under it (its card's lower edge near its point).
-      if (it.place === "foes" || it.place === "field") v.y = size * 0.3;
+      // A smaller figure (a beast, an avatar) stands on the ground under it; a scene drawn on the ground stays on it.
+      if (figure && it.place !== "caster") v.y = size * 0.3;
     }
     pool.clear();
     pool.spawn(v, size, o);

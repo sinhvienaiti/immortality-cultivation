@@ -251,7 +251,9 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     for (const s of KEY9_SKILLS) {
       expect(s.strikes[0]!.frame).toBe("peak");
       for (const st of s.strikes.slice(1)) expect(st.after).toBeGreaterThan(0);
-      expect(s.sfx).toMatch(/^tt-sfx-x-[a-z-]+\/take[1-4]\.wav$/);
+      // Its Firefly take, or (Firefly's sound ran out: D6, D7, D8) a noted stand-in.
+      if (s.sfx !== undefined) expect(s.sfx).toMatch(/^tt-sfx-x-[a-z-]+\/take[1-4]\.wav$/);
+      else expect(s.guess).toMatch(/stands in/);
       expect(s.guess).toBeDefined();
     }
     const row = (id: string): ClipSkill => KEY9_SKILLS.find((s) => s.id === id)!;
@@ -322,5 +324,22 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     const tiger = aimClipSkill(row("white-fiend-tiger"), new Field(HERD), caster, centre, "foes");
     expect(tiger.points.length).toBe(5);
     expect(tiger.hits.length).toBeGreaterThan(3);
+  });
+
+  it("key 9's treasures (batch 4): every row in, the gourd and the mirror working from the field's far edge", () => {
+    const row = (id: string): ClipSkill => KEY9_SKILLS.find((s) => s.id === id)!;
+    const ids = ["mountain-crushing-imperial-seal", "primordial-chaos-bell", "blade-swallowing-immortal-gourd", "nine-dragon-refining-cauldron",
+      "seven-treasure-suppressing-pagoda", "yin-yang-void-mirror", "five-element-heavenly-silk", "twelve-stem-nether-banners"];
+    for (const id of ids) expect(row(id), id).toBeDefined();
+    // The gourd at the far edge (z −17 from the middle at −6) pours a 120° fan south: the beast behind it is spared.
+    const field = new Field([[0, -8], [6, -4], [-6, -4], [0, -22]]);
+    const gourd = aimClipSkill(row("blade-swallowing-immortal-gourd"), field, { x: 0, z: 3 }, { x: 0, z: -6 }, "field");
+    expect(gourd.anchor).toEqual({ x: 0, z: -17 });
+    expect(gourd.hits.map((h) => h.i).sort()).toEqual([0, 1, 2]);
+    expect(gourd.hits[0]!.i).toBe(0);
+    // The mirror sweeps across from the same edge, one side to the other.
+    const mirror = aimClipSkill(row("yin-yang-void-mirror"), field, { x: 0, z: 3 }, { x: 0, z: -6 }, "field");
+    expect(mirror.hits.length).toBe(3);
+    expect(new Set(mirror.hits.map((h) => h.delay.toFixed(3))).size).toBe(3);
   });
 });

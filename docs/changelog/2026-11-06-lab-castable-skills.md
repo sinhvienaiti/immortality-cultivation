@@ -63,3 +63,20 @@ Anh (06/11 00:05): "tạm thời chưa cần chấm, tôi sẽ là người ch�
   - C7: vòng, chậm;
   - C8: quét cả vòng, choáng.
 - Kiểm: 1068 test qua. Chrome headless tung C1–C8, 0 lỗi: C4 và C5 lệch khung đỉnh 0 khung, C2, C6, C7, C8 và rồng C1 lệch 1 khung. Bị trúng mỗi chiêu: rồng 39 con, hổ 69, chu tước 41, rùa 53, kỳ lân 40, côn bằng 87, bạch trạch 68, hồ 53.
+
+## Đợt 4: D1–D8 pháp bảo ở phím 9
+
+- Thêm 8 dòng D1–D8 vào `KEY9_SKILLS`. Ba hệ `any` (D3, D7, và B6 ở đợt 5) lấy hệ đầu của thiết kế: Kim, Phong, Kim.
+- **Khung chung thêm 4 lựa chọn mỗi dòng:**
+  - `centre`: tâm của hình khi khác chỗ clip đứng; thêm "mép xa" (bắc) cho vật vẽ ở đầu clip;
+  - `arc`: độ mở của quạt hay cung quét;
+  - `angles`: nhiều đường cắt chéo nhau, dành cho chữ X ở đợt 5;
+  - `perPoint`: các cú đánh lần lượt từng điểm, dành cho đợt 5.
+- **Cách đặt từng món theo clip:**
+  - D1: ấn rơi xuống cụm quái dày nhất (bảng ghi giữa sân), clip cảnh thu nhỏ 0,55 và nằm trên đất tại đó;
+  - D3: hồ lô ở mép xa phun quạt 120° về phía sân;
+  - D6: gương ở mép xa quét 140°;
+  - D2 và D4 vòng quanh tâm; D5, D7, D8 cả sân.
+- D6, D7, D8 không có âm Firefly (hết lượt), tạm dùng âm tuyệt kỹ của hệ đầu.
+- Ám không có clip `groundMark` nên D8 không có ấn.
+- Kiểm: 1069 test qua. Chrome headless tung D1–D8, 0 lỗi; cú đầu lệch khung đỉnh của clip ≤ 1 khung.
