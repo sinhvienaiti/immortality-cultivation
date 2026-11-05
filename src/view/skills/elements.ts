@@ -10,6 +10,7 @@ import { METAL } from "./element-metal";
 import { THUNDER } from "./element-thunder";
 import { WIND } from "./element-wind";
 import { ICE } from "./element-ice";
+import { DARK } from "./element-dark";
 import { WATER } from "./element-water";
 
 export const DEFAULT_ELEMENT: ElementId = "metal";
@@ -21,6 +22,7 @@ const KITS = new Map<ElementId, ElementKit>([
   [THUNDER.id, THUNDER],
   [WIND.id, WIND],
   [ICE.id, ICE],
+  [DARK.id, DARK],
 ]);
 
 /** Adds or replaces a kit (load time). */
