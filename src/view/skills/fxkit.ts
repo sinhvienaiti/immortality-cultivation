@@ -242,6 +242,8 @@ function uploadPrefix(attrs: readonly (PrefixAttribute | PrefixInstancedAttribut
 }
 
 export interface SpritePoolOptions {
+  /** Draw timed sprites before advancing their clock, including age zero (default false). */
+  drawBeforeAge?: boolean;
   /** Camera sprites: pulled toward the camera along the view ray by this share of their size (default 0.5). */
   pull?: number;
   /**
@@ -287,6 +289,7 @@ export class SpritePool {
   private readonly attrs: PrefixInstancedAttribute[];
   private readonly geometry: THREE.InstancedBufferGeometry;
   private readonly minFadeIn: number;
+  private readonly drawBeforeAge: boolean;
   private live = 0;
 
   constructor(
@@ -298,6 +301,7 @@ export class SpritePool {
     opts: SpritePoolOptions = {},
   ) {
     this.minFadeIn = Math.max(0, opts.fadeIn ?? 0);
+    this.drawBeforeAge = opts.drawBeforeAge ?? false;
     const pull = opts.pull ?? 0.5;
     const crop = Math.min(1, Math.max(0.05, opts.crop ?? 1));
     const cropFade = Math.min(0.99, Math.max(0, opts.cropFade ?? 0.8));
@@ -449,13 +453,14 @@ export class SpritePool {
         continue;
       }
       const age = st[o + 6]! + dt;
-      if (age >= st[o + 7]!) {
+      if ((this.drawBeforeAge ? st[o + 6]! : age) >= st[o + 7]!) {
         // Swap the last live sprite in.
         const last = (this.live - 1) * F;
         if (last !== o) st.copyWithin(o, last, last + F);
         this.live -= 1;
         continue;
       }
+      if (this.drawBeforeAge) this.write(i);
       st[o + 6] = age;
       const drag = st[o + 17]!;
       if (drag > 0) {
@@ -470,7 +475,7 @@ export class SpritePool {
       st[o + 1] = st[o + 1]! + st[o + 4]! * dt;
       st[o + 2] = st[o + 2]! + st[o + 5]! * dt;
       st[o + 10] = st[o + 10]! + st[o + 11]! * dt;
-      this.write(i);
+      if (!this.drawBeforeAge) this.write(i);
       i += 1;
     }
     this.geometry.instanceCount = this.live;

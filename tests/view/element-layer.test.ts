@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ElementKit, FoeStatusKind, SwordHooks, StreamHooks } from "../../src/view/skills/element-kit";
 import { METAL } from "../../src/view/skills/element-metal";
 import { ElementStage } from "../../src/view/skills/element-stage";
@@ -14,6 +14,8 @@ import { BeamPool, RibbonPool, SpritePool } from "../../src/view/skills/fxkit";
 import { MyriadSwordsFx } from "../../src/view/skills/myriad-swords";
 import { SwordSkillFx, type SwordSkillHost, type SwordSkillTextures } from "../../src/view/skills/sword-skills";
 import type { TargetField } from "../../src/view/skills/targets";
+
+afterEach(() => vi.unstubAllGlobals());
 
 /** A field of `n` beasts in a row in front of the caster; `status` records the element's statuses. */
 function field(n: number, hit = false): TargetField & { statuses: [number, FoeStatusKind][] } {
@@ -567,6 +569,7 @@ describe("Fire (Sword × Fire, canon D59)", () => {
   });
 
   it("keeps every kit's seal and ring body at 0.9 a channel at most, cool and lit (only the thin line may bloom; 03/11 recheck)", () => {
+    vi.stubGlobal("location", { search: "?fxcode=1" });
     for (const kit of elementKits()) {
       const g = kit.sigil;
       if (g === undefined) continue;
@@ -589,6 +592,7 @@ describe("Fire (Sword × Fire, canon D59)", () => {
   });
 
   it("draws the seal and its rings as matter in Fire (soot underlay, a thin hot line) and as light in Metal", () => {
+    vi.stubGlobal("location", { search: "?fxcode=1" });
     const cam = camera();
     const tex = sheets();
     const kitLayer = new THREE.Group();
@@ -881,6 +885,7 @@ describe("Fire (Sword × Fire, canon D59)", () => {
   });
 
   it("lands, kills and plants as points of fire, never smooth white balls (round 3: the dot × 3–4.5 up to 1.3 m)", () => {
+    vi.stubGlobal("location", { search: "?fxcode=1" });
     const points: { reach: number; core: number; tongues: number }[] = [];
     const balls: number[] = [];
     const pe = vi.spyOn(FirePointPool.prototype, "emit");
@@ -930,6 +935,7 @@ describe("Fire (Sword × Fire, canon D59)", () => {
   });
 
   it("gives its rings of fire structure: room for flame tongues outside the band, and embers shed as they open (round 3)", () => {
+    vi.stubGlobal("location", { search: "?fxcode=1" });
     const ring = new HeatRingPool(4, "camera");
     // The band sits inside the quad with room outside it for the tongues; the shader draws tongues and a broken line.
     expect(Number(ring.mesh.material.defines.RR)).toBeLessThan(0.75);
@@ -993,6 +999,7 @@ describe("Fire (Sword × Fire, canon D59)", () => {
   });
 
   it("draws the flame slash round a smooth spine with regular tongues outside the crescent, its molten lines gold (round 3)", () => {
+    vi.stubGlobal("location", { search: "?fxcode=1" });
     const fs = new FlameSlash(15);
     const m = fs.mesh.material;
     // The strip is wider than the crescent (room for the tongues), the spine read from a band table when there is one.

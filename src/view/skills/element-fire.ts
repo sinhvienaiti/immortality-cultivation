@@ -5,8 +5,8 @@
  * - charge: while a word is typed, flames spiral in and tighten into a tiny white-gold point at the hand (the
  *   compression lives in the charge: fire-charge scrubbed by the typing level), embers are sucked in from round the
  *   caster, the stone darkens under the feet; a blade arriving at its place ignites there;
- * - release: on the last key's frame a point of fire (fire-points.ts) and a ring of fire at the hand (flame tongues
- *   licking out of it, shedding embers), an anime flame lotus (fire-burst, real alpha) bursting behind the caster,
+ * - release: on the last key's frame an authored fire twinkle and a camera-facing painted halo at the hand,
+ *   shedding embers, an anime flame lotus (fire-burst, real alpha) bursting behind the caster,
  *   spark rays and embers (key 7's release bigger, with a scorch);
  * - travel: the real Clear Wind silhouette as a fire blade (sword-material.ts furnace; SWORD_AURA Q3: dark hot-edged
  *   steel, a molten white-gold edge line and the heat band only along the cutting edges), wrapped in a flame sheath
@@ -39,10 +39,10 @@ import * as THREE from "three";
 import type { AftermathArgs, BladeLook, ChargeFrameArgs, ChargeKeyArgs, CutArgs, DeathArgs, ElementHooks, ElementKit, GroundAftermath, ImpactArgs, LaunchArgs, ReleaseArgs, StreamGlintArgs, StreamPlantArgs, StreamSeamArgs, StreamSegmentArgs, StreamSlashArgs, StreamSparkArgs, StreamStrikeArgs, StreamTone, StreamTravelArgs, SwordAuraLook, TravelArgs } from "./element-kit";
 import { FlameSlash } from "./flame-slash";
 import type { ElementStage } from "./element-stage";
-import { ONE_FRAME, type FlipbookPool, type FlipOptions } from "./flipbook";
+import { ONE_FRAME, type FlipbookPool, type FlipOptions, type FlipbookPlayer } from "./flipbook";
 import type { EmberPool } from "./embers";
 import type { FirePointPool } from "./fire-points";
-import type { BeamPool, SpritePool } from "./fxkit";
+import { Rand, type BeamPool, type SpritePool } from "./fxkit";
 import { GroundDecalPool } from "./ground-decals";
 import type { HeatRingPool } from "./heat-rings";
 import { SWORD_LOOK } from "./sword-material";
@@ -124,6 +124,12 @@ export interface FireAudit {
   firstAt: number; lastAt: number;
 }
 
+export interface FirePrewarm {
+  prewarmed: boolean;
+  /** Three.js texture ids, unique per renderer (shared sheets appear once). */
+  textureIds: number[];
+}
+
 /**
  * Lab-only comparisons (the skills lab sets them; the game never does): `riverSheath` puts the flame cards back on key
  * 7's river swords (the "burning planks" the Fire round removed), for SWORD_AURA §5.5's comparison sheet only.
@@ -162,6 +168,70 @@ export function brushRotation(dx: number, dz: number, view: THREE.Matrix4, headi
 
 /** Folder of the kit's clips (art-src/lab/vfx/fire/manifest.json). */
 const FOLDER = "fire";
+
+/** Ticket 277: measured peaks of mean linear Rec.709 light, one entry per twinkle row. */
+const TWINKLE_PEAK = [3, 9, 9, 7, 11, 8, 12, 4] as const;
+const HAND_PEAK = 19;
+const GROUND_RING_PEAK = 5;
+const STRIP = "strip-fire-sheath-v2";
+const ART_RAND_SEED = 4409277;
+
+/** Local placement only: the shared flipbook shaders and other elements keep their programs. */
+function groundCard(pool: FlipbookPool, strip = false): void {
+  const material = pool.mesh.material;
+  material.customProgramCacheKey = () => strip ? "fire-lot1-strip" : "fire-lot1-ground";
+  material.onBeforeCompile = (shader) => {
+    const start = shader.vertexShader.indexOf("  vec4 view = modelViewMatrix * vec4(iPos, 1.0);");
+    if (start < 0) throw new Error("[fire-lot1] ground-card vertex anchor missing");
+    shader.vertexShader = shader.vertexShader.slice(0, start) + `
+  vec2 axis = length(iDir.xz) > 1e-5 ? normalize(iDir.xz) : vec2(1.0, 0.0);
+  float c = cos(iData.y), s = sin(iData.y);
+  axis = vec2(axis.x * c - axis.y * s, axis.x * s + axis.y * c);
+  float span = iLift.y > 0.0 ? iLift.y : iData.x * uAspect;
+  vec2 corner = axis * (uv.x - uPivot.x) * span
+              + vec2(-axis.y, axis.x) * (uv.y - uPivot.y) * iData.x;
+  vWorld = (modelMatrix * vec4(iPos + vec3(corner.x, 0.0, corner.y), 1.0)).xyz;
+  vec4 view = viewMatrix * vec4(vWorld, 1.0);
+  gl_Position = projectionMatrix * view;
+  if (iLift.x != 0.0) {
+    vec4 moved = projectionMatrix * vec4(view.xy, view.z + iLift.x, 1.0);
+    gl_Position.z = moved.z / moved.w * gl_Position.w;
+  }
+}`;
+    if (strip) {
+      shader.vertexShader = "varying vec2 vFireStrip;\n" + shader.vertexShader.replace("  vUv = uv;", "  vUv = uv; vFireStrip = vec2(iLift.y, iData.x);");
+      shader.fragmentShader = "varying vec2 vFireStrip;\n" + shader.fragmentShader;
+      const start = shader.fragmentShader.indexOf("vec2 vxCell(float f, vec2 uv) {");
+      const end = shader.fragmentShader.indexOf("\n}", start) + 2;
+      if (start < 0 || end < 2) throw new Error("[fire-lot1] strip sampling anchor missing");
+      shader.fragmentShader = shader.fragmentShader.slice(0, start) + `vec2 vxCell(float f, vec2 uv) {
+  // The painted period is naturally 2:1; only placement and longitudinal flow come from code.
+  float repeats = max(1.0, vFireStrip.x / max(2.0 * vFireStrip.y, 1e-4));
+  return vec2(fract(uv.x * repeats - vFrame * (0.5 / 24.0) + vAge.z), uv.y);
+}` + shader.fragmentShader.slice(end);
+    }
+  };
+}
+
+/** The static strip has no manifest. Register its single cell in the same library, without copying media. */
+function loadFireStrip(player: FlipbookPlayer): Promise<void> {
+  const lib = player.library(FOLDER);
+  if (lib.get(STRIP) !== null || typeof location === "undefined" || !/^https?:$/.test(location.protocol)) return Promise.resolve();
+  return lib.load().then(async () => {
+    const url = player.base + "aura/strips/" + STRIP + ".rgba.png";
+    const texture = await new THREE.TextureLoader().loadAsync(url);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.premultiplyAlpha = false;
+    lib.add({ id: STRIP, url, cols: 1, rows: 1, frames: 1, fps: 24, loop: true,
+      mode: "rgba", aspect: 4, pivot: [0.5, 0.5], start: 0, heading: 0 }, texture);
+  }).catch((error: unknown) => console.warn("[fire-lot1] strip did not load", error));
+}
 
 /** Every slot burns in the same ramp; the ultimate a little more golden. Load time (glowOfRamp allocates). */
 // A struck beast's tint (its rim flash, its brightening, the lab's dissolve edge) is amber: the ramp's flash mixed
@@ -237,6 +307,7 @@ function flip(): FlipOptions {
   o.slowFrom = o.slowRate = undefined;
   o.vx = o.vy = o.vz = o.drag = o.gravity = o.ground = o.fadeIn = o.fadeOut = o.delay = o.cool = o.lift = undefined;
   o.tint = undefined;
+  o.variant = undefined;
   o.dir = undefined;
   o.span = undefined;
   return o;
@@ -255,6 +326,9 @@ interface Emitter {
 }
 
 class FireLayers {
+  private readonly warmed = new WeakMap<THREE.WebGLRenderer, Map<THREE.Texture, number>>();
+  private readonly compiled = new WeakSet<THREE.WebGLRenderer>();
+  private readonly stripReady: Promise<void>;
   private readonly burst: FlipbookPool;
   private readonly charge: FlipbookPool;
   private readonly sparks: FlipbookPool;
@@ -269,10 +343,10 @@ class FireLayers {
   private readonly flash: SpritePool;
   /** Ember dots, pinpoints and shed sparks (additive thin light). */
   private readonly motes: SpritePool;
-  /** Where a blow lands, a beast dies or a sword is planted: a white-gold core in a star of flame tongues. */
-  private readonly points: FirePointPool;
+  /** Legacy points and rings are registered only by the lab's code comparison. */
+  private readonly points: FirePointPool | null;
   /** The release's pressure ring (matter on soot, a thin hot line). */
-  private readonly rings: HeatRingPool;
+  private readonly rings: HeatRingPool | null;
   /** A cut: a molten crescent as matter (amber-vermilion, normal blend) with a thin added white-gold core. */
   private readonly slash: SpritePool;
   private readonly slashBody: SpritePool;
@@ -281,10 +355,16 @@ class FireLayers {
   private readonly ash: SpritePool;
   /** The stone darkening under the caster while the word is typed. */
   private readonly groundInk: SpritePool;
-  private readonly seams: BeamPool;
+  private readonly seams: BeamPool | null;
   /** Key 7's finisher as a flame (in place of the sword-qi slash) and the rings of fire round a pinned victim. */
   private readonly flameSlash: FlameSlash;
-  private readonly groundRings: HeatRingPool;
+  private readonly groundRings: HeatRingPool | null;
+  private readonly twinkles: FlipbookPool | null;
+  private readonly handRing: FlipbookPool | null;
+  private readonly sealRing: FlipbookPool | null;
+  private readonly strip: FlipbookPool | null;
+  /** A separate view stream keeps every unchanged layer's random draws identical in A/B. */
+  private readonly artRand = new Rand(ART_RAND_SEED);
   private slashAcc = 0;
   /** The flame slash as last given by the shape, kept while it lingers after the shape's own slash is gone. */
   private slashOn = false;
@@ -302,6 +382,24 @@ class FireLayers {
 
   constructor(private readonly stage: ElementStage) {
     const P = stage.flipbooks;
+    const code = import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("fxcode") === "1";
+    this.stripReady = Promise.resolve();
+    this.twinkles = this.handRing = this.sealRing = this.strip = null;
+    if (!code) {
+      this.twinkles = P.pool(FOLDER, "fire-twinkle-set", { mode: "fire", capacity: 256, renderOrder: 14 });
+      this.handRing = P.pool(FOLDER, "fire-halo-ring", { mode: "fire", capacity: 24, renderOrder: 14 });
+      this.sealRing = P.pool(FOLDER, "fire-halo-seal-loop", { mode: "fire", capacity: 16, renderOrder: 6 });
+      this.strip = P.pool(FOLDER, STRIP, { mode: "rgba", capacity: 24, renderOrder: 13 });
+      groundCard(this.sealRing);
+      groundCard(this.strip, true);
+      // The old manifest predates variant playback. Adapt its layout in memory, never rewrite the art.
+      P.library(FOLDER).watch((id) => {
+        if (id !== "fire-twinkle-set") return;
+        const e = P.library(FOLDER).get(id)!;
+        this.twinkles!.attach({ ...e.meta, frames: 16, variants: 8, loop: false, loopMode: "none" }, e.texture);
+      });
+      this.stripReady = loadFireStrip(P);
+    }
     // Key 7 and K5 keep up to ~90 lotuses alive at once (deaths collapse into one each; 03/11 recheck).
     // Lingering (round 3) they hold ~90 at once in K5's deaths: room to spare, a full pool would drop new ones.
     this.burst = P.pool(FOLDER, "fire-burst", { mode: "rgba", capacity: 128, renderOrder: 12 });
@@ -332,32 +430,93 @@ class FireLayers {
     this.ground.setGrade(LOTUS_GOLD, 0.9);
     this.line.softM = 0.2;
     const T = stage.textures;
-    this.flash = stage.pool(16, T.glow, "add", "camera", 14, { crop: 0.6 });
+    this.flash = stage.pool(16, T.glow, "add", "camera", 14, { crop: 0.6, drawBeforeAge: true });
     this.flash.mesh.name = "fx-fire-flash";
     this.groundInk = stage.pool(8, T.glow, "ink", "ground", 3, { crop: 0.64 });
     this.scorch = stage.decals(SCORCH.texture, 64, 4);
     this.smoke = stage.pool(96, stage.texture("smoke_07"), "ink", "camera", 9, { fadeIn: 0.15 });
     // Every death in key 7 and K5 sheds ten flakes for ~2 s (160 slots dropped ~600 flakes there: round 3 check).
     this.ash = stage.pool(1024, T.splash, "ink", "camera", 9);
-    this.rings = stage.heatRings(24, "camera", 14);
-    this.rings.setLook(SEAL_SOOT, 0.8, SEAL_BODY, SEAL_LIT, SEAL_CORE);
+    this.rings = code ? stage.heatRings(24, "camera", 14) : null;
+    this.rings?.setLook(SEAL_SOOT, 0.8, SEAL_BODY, SEAL_LIT, SEAL_CORE);
     this.slashBody = stage.pool(32, T.slash, "ink", "camera", 12, { matte: [0.3, 0.42] });
     // Its core: the crescent's thin middle (the sheet's densest line), added.
     this.slash = stage.pool(32, T.slash, "add", "camera", 12, { matte: [0.62, 0.8] });
     this.motes = stage.pool(900, T.glow, "add", "camera", 13, { crop: 0.6 });
-    this.seams = stage.beams(24, 13);
+    this.seams = code ? stage.beams(24, 13) : null;
     this.flameSlash = new FlameSlash(15);
     this.flameSlash.setRamp(CHAR, SLASH_DEEP, AMBER, WHITE_GOLD);
     stage.layer.add(this.flameSlash.mesh);
-    this.groundRings = stage.heatRings(16, "ground", 6);
-    this.groundRings.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
+    this.groundRings = code ? stage.heatRings(16, "ground", 6) : null;
+    this.groundRings?.setLook(SEAL_SOOT, 0.7, SEAL_BODY, SEAL_LIT, SEAL_CORE);
     // Sized for key 7's busiest moment (~1,850 live at once on High, 03/11 recheck): a full pool drops new embers.
     this.embers = stage.embers(2560, 13);
     // Key 7's river strikes land by the dozen (a point lives ~0.2 s there).
-    this.points = stage.firePoints(256, 14);
+    this.points = code ? stage.firePoints(256, 14) : null;
     // Its core white-gold toward gold: a white HDR core bloomed into a white ball on pale stone.
-    this.points.setRamp(lin("#120A05"), SLASH_DEEP, k3(AMBER, 0.9), lin("#FFE2A0"), k3(CHAR, 1.3));
+    this.points?.setRamp(lin("#120A05"), SLASH_DEEP, k3(AMBER, 0.9), lin("#FFE2A0"), k3(CHAR, 1.3));
     this.embers.setRamp(EMBER_HOT, AMBER, EMBER_ORANGE, EMBER_DIM);
+  }
+
+  /** Upload final atlases and compile in the host scene, without spawning, aging or drawing anything. */
+  async prewarm(renderer: THREE.WebGLRenderer, camera: THREE.Camera, scene: THREE.Object3D): Promise<void> {
+    const target = renderer.getRenderTarget();
+    this.compiled.delete(renderer);
+    let warmed = this.warmed.get(renderer);
+    if (warmed === undefined) this.warmed.set(renderer, warmed = new Map());
+    const upload = (texture: THREE.Texture): void => {
+      // A sheet shared by several pools uploads once; a later image version must still be uploaded.
+      if (warmed.get(texture) === texture.version) return;
+      renderer.initTexture(texture);
+      warmed.set(texture, texture.version);
+    };
+    const uploadFolder = (folder: string): void => {
+      const lib = this.stage.flipbooks.library(folder);
+      const pools = folder === BRUSH.folder ? [this.brush] : [this.twinkles, this.handRing, this.sealRing, this.strip,
+        this.burst, this.charge, this.sparks, this.ground, this.sheath, this.line];
+      for (const pool of pools) {
+        if (pool === null) continue;
+        const entry = lib.get(pool.id);
+        if (entry === null) continue;
+        upload(entry.texture);
+        if (entry.controls?.a !== undefined) upload(entry.controls.a);
+        if (entry.controls?.b !== undefined) upload(entry.controls.b);
+      }
+    };
+    // Each library uploads as its own load completes; the strip can arrive after the fire manifest.
+    await Promise.all([
+      this.stage.flipbooks.ready(FOLDER).then(() => uploadFolder(FOLDER)),
+      this.stage.flipbooks.ready(BRUSH.folder).then(() => uploadFolder(BRUSH.folder)),
+      this.stripReady.then(() => uploadFolder(FOLDER)),
+    ]);
+    const meshes = [this.brush, this.flash, this.twinkles, this.handRing, this.sealRing, this.strip,
+      this.burst, this.charge, this.sparks, this.ground, this.sheath, this.line, this.motes, this.smoke, this.ash,
+      this.groundInk, this.slash, this.slashBody, this.flameSlash, this.embers, this.scorch,
+      this.points, this.rings, this.groundRings, this.seams].flatMap((pool) => pool === null ? [] : [pool.mesh]);
+    // Include sprite/ground maps, shared blank samplers and any other texture bound by a Fire material.
+    for (const mesh of meshes) {
+      const material = mesh.material as THREE.ShaderMaterial;
+      for (const uniform of Object.values(material.uniforms)) {
+        const value: unknown = uniform.value;
+        if (value instanceof THREE.Texture) upload(value);
+      }
+    }
+    const visible = meshes.map((mesh) => mesh.visible);
+    // The lab can render while media loads; compile for the target requested before that wait.
+    const was = renderer.getRenderTarget();
+    try {
+      renderer.setRenderTarget(target);
+      for (const mesh of meshes) mesh.visible = true;
+      renderer.compile(scene, camera);
+      this.compiled.add(renderer);
+    } finally {
+      meshes.forEach((mesh, i) => { mesh.visible = visible[i]!; });
+      renderer.setRenderTarget(was);
+    }
+  }
+
+  prewarmStatus(renderer: THREE.WebGLRenderer): FirePrewarm {
+    return { prewarmed: this.compiled.has(renderer), textureIds: [...(this.warmed.get(renderer)?.keys() ?? [])].map((texture) => texture.id) };
   }
 
   // ── Small emitters ─────────────────────────────────────────────────────────
@@ -380,11 +539,21 @@ class FireLayers {
     this.motes.emit();
   }
 
-  /**
-   * A point of fire at (x, y, z) (round 3: the white dot × 3–4.5 read as a smooth white ball): a white-gold core
-   * `core` m across in a star of `tongues` flame tongues reaching `reach` m, cooling and eroding over `life` s.
-   */
+  /** One authored twinkle, diameter 2 × reach; the lab flag retains the original flame point. */
   private point(x: number, y: number, z: number, reach: number, core: number, life: number, heat = 1, tongues = 9): void {
+    if (this.points === null) {
+      const row = Math.floor(this.artRand.next() * TWINKLE_PEAK.length);
+      const o = flip();
+      o.variant = row;
+      o.frame = TWINKLE_PEAK[row]!;
+      o.life = life;
+      o.rate = (16 - o.frame) / (24 * life);
+      o.intensity = heat;
+      o.occlude = 0;
+      o.fadeOut = 0;
+      this.twinkles!.spawn(v.set(x, y, z), 2 * reach, o);
+      return;
+    }
     const s = this.points.reset();
     s.x = x;
     s.y = y;
@@ -637,6 +806,22 @@ class FireLayers {
     this.sheath.spawn(v.set(x, y, z), size, o);
   }
 
+  /** An authored strip lying on the ground, centred over the old seam's span. */
+  private stripAt(x: number, y: number, z: number, dx: number, dz: number, span: number, size: number, life: number): void {
+    const length = Math.hypot(dx, dz) || 1;
+    dx /= length;
+    dz /= length;
+    const o = flip();
+    o.life = life;
+    // The single-cell clip's frame clock drives UV flow, including in a stream-only host.
+    o.rate = 1;
+    o.dir = dir.set(dx, 0, dz);
+    o.span = span;
+    o.cool = 0.7;
+    o.fadeOut = 0;
+    this.strip!.spawn(v.set(x + dx * span * 0.5, y, z + dz * span * 0.5), size, o);
+  }
+
   // ── Sword hooks (sword-skills.ts) ───────────────────────────────────────────
 
   chargeKey(a: ChargeKeyArgs): boolean {
@@ -760,17 +945,28 @@ class FireLayers {
     const p = a.at;
     // Burst at once: a white-gold pinpoint and the pressure ring at the hand on the key's frame.
     this.point(p.x, p.y, p.z, 0.62 * s, 0.18 * s, 0.24, 1, 9);
-    const r = this.rings.reset();
-    r.x = p.x;
-    r.y = p.y;
-    r.z = p.z;
-    r.life = 0.3;
-    r.r0 = 0.25 * s;
-    r.r1 = 1.3 * s;
-    r.width = 0.14;
-    r.heat = 1;
-    this.rings.emit();
-    this.ringEmbers(p.x, p.y, p.z, r.r1, r.life, this.stage.n(big ? 14 : 9), false);
+    if (this.rings !== null) {
+      const r = this.rings.reset();
+      r.x = p.x;
+      r.y = p.y;
+      r.z = p.z;
+      r.life = 0.3;
+      r.r0 = 0.25 * s;
+      r.r1 = 1.3 * s;
+      r.width = 0.14;
+      r.heat = 1;
+      this.rings.emit();
+    } else {
+      const o = flip();
+      o.life = 0.3;
+      o.frame = HAND_PEAK;
+      o.rate = (24 - HAND_PEAK) / (24 * 0.3);
+      o.grow = 1.3 / 0.25 - 1;
+      o.occlude = 0;
+      o.fadeOut = 0;
+      this.handRing!.spawn(p, 2 * 0.25 * s, o);
+    }
+    this.ringEmbers(p.x, p.y, p.z, 1.3 * s, 0.3, this.stage.n(big ? 14 : 9), false);
     // The flame lotus erupts behind the caster (the body stays in front of its own burst).
     this.stage.camera.getWorldDirection(camF);
     const fl = Math.hypot(camF.x, camF.z) || 1;
@@ -1006,6 +1202,7 @@ class FireLayers {
 
   reset(): void {
     resetFireAudit();
+    this.artRand.reseed(ART_RAND_SEED);
     for (const e of this.emitters) e.on = false;
     this.chargeAcc = this.shedAcc = this.waitAcc = this.midShedAcc = 0;
     SWORD_LOOK.time.value = 0;
@@ -1106,29 +1303,33 @@ class FireLayers {
       this.groundFire(a.ax + dx * u, a.az + dz * u, 0.95, u * 0.26);
       this.risingEmbers(a.ax + dx * u, a.az + dz * u, 0.5, this.stage.n(7), 0.8, u * 0.26 + 1.9);
     }
-    const b = this.seams.spec.reset();
-    b.x = a.ax - ux * 1.5;
-    b.y = 0.08;
-    b.z = a.az - uz * 1.5;
-    b.dx = ux;
-    b.dy = 0;
-    b.dz = uz;
-    b.len0 = b.len1 = l + 3;
-    b.grow = 0.26;
-    // A thin molten line, gold under a small bloom (white-gold x 4.5 over 0.42 m bloomed into a cream band on light
-    // stone: round 3).
-    b.w0 = 0.3;
-    b.w1 = 0.16;
-    b.life = 3.0;
-    b.cr = 1.0 * 2.0;
-    b.cg = 0.72 * 2.0;
-    b.cb = 0.32 * 2.0;
-    b.hr = ORANGE[0] * 0.85;
-    b.hg = ORANGE[1] * 0.85;
-    b.hb = ORANGE[2] * 0.85;
-    b.fadeBase = 0.05;
-    b.fadeTip = 0.05;
-    this.seams.emit();
+    if (this.seams !== null) {
+      const b = this.seams.spec.reset();
+      b.x = a.ax - ux * 1.5;
+      b.y = 0.08;
+      b.z = a.az - uz * 1.5;
+      b.dx = ux;
+      b.dy = 0;
+      b.dz = uz;
+      b.len0 = b.len1 = l + 3;
+      b.grow = 0.26;
+      // A thin molten line, gold under a small bloom (white-gold x 4.5 over 0.42 m bloomed into a cream band on light
+      // stone: round 3).
+      b.w0 = 0.3;
+      b.w1 = 0.16;
+      b.life = 3.0;
+      b.cr = 1.0 * 2.0;
+      b.cg = 0.72 * 2.0;
+      b.cb = 0.32 * 2.0;
+      b.hr = ORANGE[0] * 0.85;
+      b.hg = ORANGE[1] * 0.85;
+      b.hb = ORANGE[2] * 0.85;
+      b.fadeBase = 0.05;
+      b.fadeTip = 0.05;
+      this.seams.emit();
+    } else {
+      this.stripAt(a.ax - ux * 1.5, 0.08, a.az - uz * 1.5, ux, uz, l + 3, 0.3, 3.0);
+    }
     camW.set((a.ax + a.bx) * 0.5, 0.5, (a.az + a.bz) * 0.5);
     this.stage.accent(camW.x, camW.y, camW.z, 0.45);
     return true;
@@ -1194,38 +1395,44 @@ class FireLayers {
 
   /** A big beast's slice seam as a burning cut: a thin molten line, flame tongues licking along it, embers. */
   cutSeam(a: StreamSeamArgs): boolean {
-    const b = this.seams.spec.reset();
-    b.x = a.x;
-    b.y = a.y;
-    b.z = a.z;
-    b.dx = a.dx;
-    b.dy = a.dy;
-    b.dz = a.dz;
-    b.len0 = 0.2;
-    b.len1 = a.len;
-    b.grow = 0.05;
-    b.w0 = 0.12;
-    b.w1 = 0.08;
-    b.life = 0.85;
-    b.cr = 1.0 * 2.0;
-    b.cg = 0.72 * 2.0;
-    b.cb = 0.32 * 2.0;
-    b.hr = ORANGE[0] * 0.8;
-    b.hg = ORANGE[1] * 0.8;
-    b.hb = ORANGE[2] * 0.8;
-    b.fadeBase = 0.2;
-    b.fadeTip = 0.2;
-    this.seams.emit();
-    // Flame tongues along the cut (the heat-field band, cooling to its tail), burning out over ~0.8 s.
-    const o = flip();
-    o.life = 0.8;
-    o.rate = 1;
-    o.frame = this.stage.rand.range(0, 16);
-    o.dir = dir.set(a.dx, a.dy, a.dz);
-    o.span = a.len * 1.05;
-    o.intensity = 0.95;
-    o.lift = -0.2;
-    this.sheath.spawn(v.set(a.x + a.dx * a.len * 0.5, a.y + 0.1, a.z + a.dz * a.len * 0.5), 0.42, o);
+    if (this.seams !== null) {
+      const b = this.seams.spec.reset();
+      b.x = a.x;
+      b.y = a.y;
+      b.z = a.z;
+      b.dx = a.dx;
+      b.dy = a.dy;
+      b.dz = a.dz;
+      b.len0 = 0.2;
+      b.len1 = a.len;
+      b.grow = 0.05;
+      b.w0 = 0.12;
+      b.w1 = 0.08;
+      b.life = 0.85;
+      b.cr = 1.0 * 2.0;
+      b.cg = 0.72 * 2.0;
+      b.cb = 0.32 * 2.0;
+      b.hr = ORANGE[0] * 0.8;
+      b.hg = ORANGE[1] * 0.8;
+      b.hb = ORANGE[2] * 0.8;
+      b.fadeBase = 0.2;
+      b.fadeTip = 0.2;
+      this.seams.emit();
+      // Flame tongues along the cut (the heat-field band, cooling to its tail), burning out over ~0.8 s.
+      const o = flip();
+      o.life = 0.8;
+      o.rate = 1;
+      o.frame = this.stage.rand.range(0, 16);
+      o.dir = dir.set(a.dx, a.dy, a.dz);
+      o.span = a.len * 1.05;
+      o.intensity = 0.95;
+      o.lift = -0.2;
+      this.sheath.spawn(v.set(a.x + a.dx * a.len * 0.5, a.y + 0.1, a.z + a.dz * a.len * 0.5), 0.42, o);
+    } else {
+      // Keep the old sheath's random draw, so the untouched embers are identical in A/B.
+      this.stage.rand.range(0, 16);
+      this.stripAt(a.x, 0.08, a.z, a.dx, a.dz, a.len * 1.05, 0.42, 0.85);
+    }
     this.emberBurst(a.x + a.dx * a.len * 0.5, a.y, a.z + a.dz * a.len * 0.5, 0.7, 0.95);
     return true;
   }
@@ -1233,17 +1440,28 @@ class FireLayers {
   /** A hero victim pinned by a lead sword: a white-gold point, a ring of fire on the ground, flame, burnt ground, embers. */
   plant(a: StreamPlantArgs): boolean {
     this.point(a.x, 0.35, a.z, 0.85, 0.22, 0.34, 1, 11);
-    const r = this.groundRings.reset();
-    r.x = a.x;
-    r.y = 0.05;
-    r.z = a.z;
-    r.r0 = 0.2;
-    r.r1 = 1.4;
-    r.life = 0.62;
-    r.width = 0.11;
-    r.heat = 1;
-    this.groundRings.emit();
-    this.ringEmbers(a.x, 0.05, a.z, r.r1, r.life, this.stage.n(10), true);
+    if (this.groundRings !== null) {
+      const r = this.groundRings.reset();
+      r.x = a.x;
+      r.y = 0.05;
+      r.z = a.z;
+      r.r0 = 0.2;
+      r.r1 = 1.4;
+      r.life = 0.62;
+      r.width = 0.11;
+      r.heat = 1;
+      this.groundRings.emit();
+    } else {
+      const o = flip();
+      o.life = 0.62;
+      o.frame = GROUND_RING_PEAK;
+      o.grow = 1.4 / 0.2 - 1;
+      o.occlude = 0;
+      o.cool = 0.7;
+      o.fadeOut = 0;
+      this.sealRing!.spawn(v.set(a.x, 0.05, a.z), 0.4, o);
+    }
+    this.ringEmbers(a.x, 0.05, a.z, 1.4, 0.62, this.stage.n(10), true);
     this.lotus(a.x - a.dx * 0.1, a.z - a.dz * 0.1, 1.5, 1.4, 1, 0.3, 0.6);
     this.scorch.spawn(a.x, a.z, 1.7, SCORCH, this.stage.rand.range(0, 6.28));
     this.emberBurst(a.x, 0.3, a.z, 0.8, 1.0);
@@ -1251,6 +1469,7 @@ class FireLayers {
   }
 
   streamReset(): void {
+    this.artRand.reseed(ART_RAND_SEED);
     this.flameSlash.hide();
     this.slashAcc = 0;
     this.slashOn = false;
@@ -1344,6 +1563,19 @@ export const FIRE_BLADE: BladeLook = { mode: "furnace", edge: [3.4, 2.3, 0.95], 
 /** The furnace blade before Q3 (the whole face hot iron): the lab's ?bladeHeat=furnace, for comparison only. */
 export const FIRE_FURNACE_BLADE: BladeLook = { mode: "furnace", edge: [3.4, 2.3, 0.95], heat: [0.9, 0.3, 0.03], char: 0.12, heatFrom: 0.05 };
 
+const FIRE_LAYERS = new WeakMap<ElementStage, FireLayers>();
+
+/** Lab load time: upload textures, then compile once for the host scene and its requested render target. */
+export async function prewarmFire(stage: ElementStage, renderer: THREE.WebGLRenderer, camera = stage.camera, scene: THREE.Object3D = stage.layer): Promise<void> {
+  stage.hooksOf(FIRE);
+  await FIRE_LAYERS.get(stage)!.prewarm(renderer, camera, scene);
+}
+
+/** Lab diagnostics only; inspecting the state never attaches or changes an effect. */
+export function firePrewarmStatus(stage: ElementStage, renderer: THREE.WebGLRenderer): FirePrewarm {
+  return FIRE_LAYERS.get(stage)?.prewarmStatus(renderer) ?? { prewarmed: false, textureIds: [] };
+}
+
 export const FIRE: ElementKit = {
   id: "fire",
   name: "Fire",
@@ -1382,5 +1614,9 @@ export const FIRE: ElementKit = {
     },
   },
   sound: "fire",
-  attach: (stage) => new FireLayers(stage).hooks(),
+  attach: (stage) => {
+    const layers = new FireLayers(stage);
+    FIRE_LAYERS.set(stage, layers);
+    return layers.hooks();
+  },
 };

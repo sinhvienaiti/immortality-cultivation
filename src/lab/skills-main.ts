@@ -71,7 +71,7 @@ import type { FlipbookMode } from "../view/skills/flipbook";
 import { runFlipbookProbe, type FlipbookProbeReport } from "./flipbook-probe";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
-import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, type FireAudit } from "../view/skills/element-fire";
+import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -1469,7 +1469,7 @@ declare global {
       /** Lab debugging: every named mesh in the fx layer, at any depth, that draws now (name, render order, instances). */
       fxNamed(): { name: string; order: number; count: number }[];
       /** Key 1's Fire hit mode, clip readiness, hit counters, drawn age (ticks) and impact-light levels (ticket 264). */
-      fireImpact(mode?: "brush" | "lotus"): { mode: "brush" | "lotus"; ready: boolean; audit: FireAudit; ageTicks: number; lights: number[] };
+      fireImpact(mode?: "brush" | "lotus"): FirePrewarm & { mode: "brush" | "lotus"; ready: boolean; audit: FireAudit; ageTicks: number; lights: number[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
       fxSolo(prefix: string | null): number;
       /** Lab debugging: shows or hides every fx mesh whose name starts with `prefix` and redraws the frame (no time passes). */
@@ -1606,14 +1606,20 @@ void (async () => {
   {
     const r = view.stage.renderer;
     const was = r.getRenderTarget();
-    for (const target of [view.stage.composer.readBuffer, null]) {
-      r.setRenderTarget(target);
-      swordAura.prewarm(r, view.camera);
-      fx.prewarmAura(r, view.camera);
-      myriad.prewarmAura(r, view.camera);
-      greybox?.prewarm(r, view.camera);
+    try {
+      for (const target of [view.stage.composer.readBuffer, null]) {
+        r.setRenderTarget(target);
+        swordAura.prewarm(r, view.camera);
+        fx.prewarmAura(r, view.camera);
+        myriad.prewarmAura(r, view.camera);
+        greybox?.prewarm(r, view.camera);
+      }
+      // Fire uploads once and compiles with the real scene/lights in the active pipeline's target.
+      r.setRenderTarget(view.stage.bloom.enabled ? view.stage.composer.readBuffer : null);
+      await prewarmFire(stage, r, view.camera, view.scene);
+    } finally {
+      r.setRenderTarget(was);
     }
-    r.setRenderTarget(was);
   }
   caster.onState = (kind, detail) => {
     if (kind === "clip") probe.clip(detail);
@@ -1783,8 +1789,9 @@ void (async () => {
       return {
         mode: FIRE_LAB.impact,
         ready: stage.flipbooks.loaded(BRUSH.folder).includes(BRUSH.id),
+        ...firePrewarmStatus(stage, view.stage.renderer),
         audit,
-        ageTicks: audit.firstAt < 0 ? -1 : Math.round((stage.time - audit.firstAt - lastWorldDt) * 60),
+        ageTicks: audit.firstAt < 0 ? -1 : Math.round((stage.time - audit.firstAt - lastWorldDt) * 60) + 0,
         lights: lights.levels(),
       };
     },

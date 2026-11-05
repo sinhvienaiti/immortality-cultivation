@@ -184,6 +184,7 @@ function hitRun(mode: "brush" | "lotus", loaded: boolean): HitRun {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   FIRE_LAB.impact = "brush";
   resetFireAudit();
 });
@@ -259,6 +260,7 @@ describe("key 1's brushfire hit (ticket 264)", () => {
   });
 
   it("keeps the spark-ray and loose-ember counts, removing only six hit fire points", () => {
+    vi.stubGlobal("location", { search: "?fxcode=1" });
     const brush = hitRun("brush", true);
     const lotus = hitRun("lotus", true);
     expect(brush.flips.filter((f) => f.id === "fire-sparks").length).toBe(lotus.flips.filter((f) => f.id === "fire-sparks").length);
