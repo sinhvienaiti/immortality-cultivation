@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { CLIP_ROLES, clipAudit } from "../../src/view/skills/element-clips";
 import { CUT } from "../../src/view/skills/sword-grammar";
+import { DARK, DARK_B } from "../../src/view/skills/element-dark";
 import type { ClipRole, ElementKit, FoeStatusKind } from "../../src/view/skills/element-kit";
 import { ElementStage } from "../../src/view/skills/element-stage";
 import { elementById, elementKits } from "../../src/view/skills/elements";
@@ -317,6 +318,18 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     const redraw = parseFlipbookManifest({ flipbooks: { "dark-slash-arc": { file: "dark-slash-arc.atlas.png", cols: 4, rows: 4, md5: "0123456789abcdef0123456789abcdef", role: "slash", layer: "rim" } } }, "/v/dark/");
     lib.add(redraw.get("dark-slash-arc")!, new THREE.Texture());
     expect(clipAudit(stage, "dark")!.pools.slash).toBe(1);
+  });
+
+  it("keeps palette B for the lab's comparison (?dark=b): black with cold silver-grey rims, no red or violet", () => {
+    expect(DARK_B.id).toBe("dark");
+    expect(elementById("dark")).toBe(DARK);
+    const srgb = { r: 0, g: 0, b: 0 };
+    for (const c of [DARK_B.ramp.core, DARK_B.ramp.edge, DARK_B.ramp.body, DARK_B.ramp.soot, DARK_B.stream.halo]) {
+      new THREE.Color().setRGB(c[0], c[1], c[2]).getRGB(srgb, THREE.SRGBColorSpace);
+      // Greys: a small chroma (max − min channel, display values), its tint never red (red never the largest channel).
+      expect(Math.max(srgb.r, srgb.g, srgb.b) - Math.min(srgb.r, srgb.g, srgb.b)).toBeLessThan(0.15);
+      expect(srgb.r).toBeLessThanOrEqual(Math.max(srgb.g, srgb.b));
+    }
   });
 
   it("takes the ribbon clip as the flight trail once it arrives", () => {

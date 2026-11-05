@@ -9,6 +9,7 @@
  */
 import * as THREE from "three";
 import { auraOf, clipKit, lin, streamOf } from "./element-clips";
+import type { ElementKit } from "./element-kit";
 import type { Rgb } from "./weapons";
 
 /**
@@ -39,46 +40,70 @@ export const DARK_RAMP = {
  */
 const PURPLE_V1 = ["4b87786fec45844738b4a6b32ca6e76b", "886dbf524e3d53a4a4da1423e0cd67fe"];
 
-const R = DARK_RAMP;
+/** One Dark palette: six sRGB hexes, hot to dark (DARK_RAMP's fields). */
+export type DarkRamp = { readonly [K in keyof typeof DARK_RAMP]: string };
+
+/**
+ * Palette B, for the owner to compare with A in the lab (05/11 ~19:35: "đen, viền xám bạc như mực dưới ánh trăng"):
+ * black ink under moonlight, cold silver-grey rims. The coordinator's ramp (core #F6F9FF, edge #9CAAC0, body #343C48,
+ * soot #0E1116); mid and ink between. The lab's ?dark=b registers it in place of A (DARK_B).
+ */
+export const DARK_RAMP_B: DarkRamp = {
+  core: "#F6F9FF",
+  rim: "#9CAAC0",
+  mid: "#5E6A7C",
+  deep: "#343C48",
+  ink: "#0B0D11",
+  soot: "#0E1116",
+};
+
 const k3 = (c: Rgb, k: number): Rgb => [c[0] * k, c[1] * k, c[2] * k];
 /** 0xRRGGBB of an sRGB hex. */
 const hex = (s: string): number => new THREE.Color(s).getHex(THREE.SRGBColorSpace);
-const CORE = lin(R.core);
-const RIM = lin(R.rim);
-const MID = lin(R.mid);
-const DEEP = lin(R.deep);
-const SOOT = lin(R.soot);
-const RAMP = { core: CORE, edge: RIM, body: DEEP, soot: SOOT };
 
-export const DARK = clipKit({
-  id: "dark",
-  name: "Dark",
-  verb: "devour → erase",
-  ramp: RAMP,
-  accent: R.rim,
-  rim: [R.deep, 1.2],
-  // Ember white cores over crimson (the accent mixed toward white read salmon pink, Blood's side of the wheel).
-  glowRamp: [R.core, R.rim, R.deep],
-  flashHex: hex(R.rim),
-  stream: streamOf({ core: CORE, halo: k3(RIM, 0.6), body: k3(DEEP, 0.5), lit: MID, deep: SOOT, flash: R.rim, hitRgb: hex(R.rim), number: RIM }),
-  blade: { mode: "steel", edge: k3(CORE, 3.4) },
-  swordAura: auraOf(RAMP, { curl: 0.5, breakup: 0.6, ink: 0.8, shed: "none" }),
-  foe: { kind: "devoured", seconds: 1.4, rgb: hex(R.mid) },
-  screen: { flash: { tint: k3(DEEP, 0.6), strength: 0.8 }, distortion: 0 },
-  trailW: 0.16,
-  trailCore: k3(CORE, 2),
-  sound: "dark",
-  rejected: PURPLE_V1,
-  look: {
-    modes: { charge: "heat", release: "heat", impact: "heat", burst: "heat", groundImpact: "heat", slash: "heat", groundMark: "heat", sheath: "heat" },
-    heat: { soot: SOOT, deep: DEEP, mid: MID, core: CORE },
-    occlude: 0.9,
-    gain: 1,
-    light: R.rim,
-    hit: "burst",
-    scale: 1,
-    linger: 1.2,
-    // Its smoke filmed on white (the "body" layers, lab-flipbooks 18:52): a near-black ink under the rim's light.
-    body: lin(R.ink),
-  },
-});
+/** The Dark kit in palette `R` (every Dark colour derived from it; load time). */
+function darkKit(R: DarkRamp, name: string): ElementKit {
+  const CORE = lin(R.core);
+  const RIM = lin(R.rim);
+  const MID = lin(R.mid);
+  const DEEP = lin(R.deep);
+  const SOOT = lin(R.soot);
+  const RAMP = { core: CORE, edge: RIM, body: DEEP, soot: SOOT };
+  return clipKit({
+    id: "dark",
+    name,
+    verb: "devour → erase",
+    ramp: RAMP,
+    accent: R.rim,
+    rim: [R.deep, 1.2],
+    // Cores in the ramp's own pale over the rim (palette A: the rim mixed toward white read salmon pink, Blood's side).
+    glowRamp: [R.core, R.rim, R.deep],
+    flashHex: hex(R.rim),
+    stream: streamOf({ core: CORE, halo: k3(RIM, 0.6), body: k3(DEEP, 0.5), lit: MID, deep: SOOT, flash: R.rim, hitRgb: hex(R.rim), number: RIM }),
+    blade: { mode: "steel", edge: k3(CORE, 3.4) },
+    swordAura: auraOf(RAMP, { curl: 0.5, breakup: 0.6, ink: 0.8, shed: "none" }),
+    foe: { kind: "devoured", seconds: 1.4, rgb: hex(R.mid) },
+    screen: { flash: { tint: k3(DEEP, 0.6), strength: 0.8 }, distortion: 0 },
+    trailW: 0.16,
+    trailCore: k3(CORE, 2),
+    sound: "dark",
+    rejected: PURPLE_V1,
+    look: {
+      modes: { charge: "heat", release: "heat", impact: "heat", burst: "heat", groundImpact: "heat", slash: "heat", groundMark: "heat", sheath: "heat" },
+      heat: { soot: SOOT, deep: DEEP, mid: MID, core: CORE },
+      occlude: 0.9,
+      gain: 1,
+      light: R.rim,
+      hit: "burst",
+      scale: 1,
+      linger: 1.2,
+      // Its smoke filmed on white (the "body" layers, lab-flipbooks 18:52): a near-black ink under the rim's light.
+      body: lin(R.ink),
+    },
+  });
+}
+
+/** Dark in palette A, the owner's pick (the registered default). */
+export const DARK = darkKit(DARK_RAMP, "Dark");
+/** Dark in palette B, for the lab's comparison only (?dark=b). */
+export const DARK_B = darkKit(DARK_RAMP_B, "Dark (palette B, silver ink)");

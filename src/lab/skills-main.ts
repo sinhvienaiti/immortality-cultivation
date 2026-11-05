@@ -30,6 +30,7 @@
  * their shapes and take the element's material (element-kit.ts); the sound bus plays "<event>-<element>" files when
  * they exist. ?bladeHeat=furnace draws Fire's blade as before SWORD_AURA's Q3 (the whole face hot iron), for comparison.
  * ?slash=tongues keeps Fire key 7's old finisher tongues for A/B (default: the owner's Firefly strip).
+ * ?dark=b draws Dark in palette B (black, cold silver-grey rims) instead of the owner's pick A (black, ember crimson).
  * ?stripK=<positive number> overrides Fire's measured finisher strip repeat count in this lab only.
  * Sword aura (docs/games/tu-tien/skills/SWORD_AURA.md §5.1): ?aura=off|a (default off: today's look; a =
  * wind-silk-mantle), the panel's Aura list, A toggles it, __lab.aura(id) sets it, __lab.auraLayer(name, on, intensity)
@@ -68,7 +69,8 @@ import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
 import { MYRIAD_SWORDS_PER_TIER, MyriadSwordsFx, type SwordPose, type MyriadSwordsPhase } from "../view/skills/myriad-swords";
-import { DEFAULT_ELEMENT, elementById, elementKits } from "../view/skills/elements";
+import { DEFAULT_ELEMENT, elementById, elementKits, registerElement } from "../view/skills/elements";
+import { DARK_B } from "../view/skills/element-dark";
 import { ElementStage } from "../view/skills/element-stage";
 import type { DeathArgs } from "../view/skills/element-kit";
 import type { FlipbookMode } from "../view/skills/flipbook";
@@ -91,6 +93,9 @@ import { BodyProxy } from "./body-proxy";
 import { TwinPearlGreybox, type TwinCastReport } from "./twin-pearl-greybox";
 
 const params = new URLSearchParams(location.search);
+// ?dark=b: Dark in palette B (black, silver-grey rims) in place of the owner's pick A, to compare them (read once).
+if (params.get("dark") === "b") registerElement(DARK_B);
+else if (params.get("dark") !== null && params.get("dark") !== "a") console.warn(`[lab] ?dark=${params.get("dark")}: a or b; a is used`);
 const quality = (["low", "medium", "high", "ultra"].includes(params.get("q") ?? "") ? params.get("q") : "high") as Quality;
 let wpm = Number(params.get("wpm") ?? "45");
 const fixed = params.get("fixed") === "1";
