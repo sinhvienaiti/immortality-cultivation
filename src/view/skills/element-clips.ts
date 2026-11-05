@@ -67,6 +67,11 @@ export interface ClipLook {
   readonly scale: number;
   /** Every one-shot's tail (its hold and decay after the peak, TIMES) × this: water lingers, lightning is gone sooner. */
   readonly linger: number;
+  /**
+   * The colour of a "body" layer (matter filmed on white, smoke mode, drawn under the rim's light; linear, lit ×1.4 at
+   * its top); absent: the heat ramp's deep end.
+   */
+  readonly body?: Rgb;
 }
 
 /** What an element kit made of clips is (the ElementKit fields; the trail is built from `trailW` and the heat ramp). */
@@ -152,10 +157,12 @@ const dirV = new THREE.Vector3();
 const camF = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const opts: FlipOptions = {};
+/** A body layer's options, filled from the rim's (`opts`) while it is still being spawned. */
+const bodyOpts: FlipOptions = {};
+const bodyTint = new THREE.Color();
 
 /** The shared spawn options back to plain values (reused for every spawn, no allocation). */
-function flip(): FlipOptions {
-  const o = opts;
+function flip(o: FlipOptions = opts): FlipOptions {
   o.life = o.rate = o.frame = o.until = o.rot = o.spin = o.grow = o.alpha = o.intensity = o.occlude = o.erode = undefined;
   o.slowFrom = o.slowRate = undefined;
   o.vx = o.vy = o.vz = o.drag = o.gravity = o.ground = o.fadeIn = o.fadeOut = o.delay = o.cool = o.lift = undefined;
@@ -177,6 +184,9 @@ function span(p: FlipbookPool): [number, number] {
 export interface ClipAudit {
   spawned: Record<ClipRole, number>;
   pools: Record<ClipRole, number>;
+  /** Body layers spawned under a rim, and the body pools a role has. */
+  bodies: Record<ClipRole, number>;
+  bodyPools: Record<ClipRole, number>;
 }
 
 const zeroRoles = (): Record<ClipRole, number> => Object.fromEntries(CLIP_ROLES.map((r) => [r, 0])) as Record<ClipRole, number>;
@@ -184,9 +194,11 @@ const zeroRoles = (): Record<ClipRole, number> => Object.fromEntries(CLIP_ROLES.
 class ClipLayers {
   private readonly lib: FlipbookLibrary;
   private readonly pools = new Map<ClipRole, FlipbookPool[]>();
+  /** "body" layers by role (matter on white, drawn under the role's clip). */
+  private readonly bodies = new Map<ClipRole, FlipbookPool[]>();
   private readonly modes = new Map<FlipbookPool, FlipbookMode>();
   private readonly turn = new Map<ClipRole, number>();
-  readonly audit: ClipAudit = { spawned: zeroRoles(), pools: zeroRoles() };
+  readonly audit: ClipAudit = { spawned: zeroRoles(), pools: zeroRoles(), bodies: zeroRoles(), bodyPools: zeroRoles() };
   private shedAcc = 0;
   private waitAcc = 0;
   private lastDt = 1 / 60;
@@ -201,11 +213,15 @@ class ClipLayers {
     const e = this.lib.get(id);
     const role = e?.meta.role;
     if (e === null || !isRole(role)) return;
-    const list = this.pools.get(role) ?? [];
+    const body = e.meta.layer === "body";
+    const lists = body ? this.bodies : this.pools;
+    const list = lists.get(role) ?? [];
     if (list.some((p) => p.id === id)) return;
     const look = this.spec.look;
-    const mode = look.modes[role] ?? e.meta.mode;
-    const pool = this.stage.flipbooks.pool(this.spec.id, id, { mode, capacity: CAPACITY[role], renderOrder: ORDER[role] });
+    // A rim over a body is the light it was filmed as (added); a clip alone takes the element's mode for its role.
+    const paired = !body && this.lib.declares().some((m) => m.role === role && m.layer === "body");
+    const mode = body || paired ? e.meta.mode : look.modes[role] ?? e.meta.mode;
+    const pool = this.stage.flipbooks.pool(this.spec.id, id, { mode, capacity: CAPACITY[role], renderOrder: ORDER[role] - (body ? 1 : 0) });
     const h = look.heat;
     pool.setSoot(h.soot[0], h.soot[1], h.soot[2]);
     if (mode === "heat") {
@@ -221,8 +237,12 @@ class ClipLayers {
     if (role === "sheath" && e.meta.aspect < 1 && e.meta.heading === 0) pool.attach({ ...e.meta, heading: Math.PI / 2 }, e.texture, e.controls);
     if (role === "groundMark") layFlat(pool);
     list.push(pool);
-    this.pools.set(role, list);
+    lists.set(role, list);
     this.modes.set(pool, mode);
+    if (body) {
+      this.audit.bodyPools[role] = list.length;
+      return;
+    }
     this.audit.pools[role] = list.length;
     // The ribbon is the flight's trail, coloured through the heat ramp (RibbonPool.setFlame).
     if (role === "ribbon" && this.trail.flame === undefined) this.trail.flame = { clip: id, soot: h.soot, deep: h.deep, amber: h.mid, core: h.core };
@@ -253,8 +273,7 @@ class ClipLayers {
    * the way) in the role's attack seconds, then plays the rest over the role's tail × `tailK` × the element's linger:
    * an instant attack, a held peak and a slow decay whatever the clip's own length. Matter erodes.
    */
-  private once(p: FlipbookPool, role: ClipRole, tailK = 1): FlipOptions {
-    const o = flip();
+  private once(p: FlipbookPool, role: ClipRole, tailK = 1, o: FlipOptions = flip()): FlipOptions {
     const m = p.meta!;
     const [first, last] = span(p);
     const [attackS, tailS] = TIMES[role];
@@ -273,7 +292,7 @@ class ClipLayers {
   /** Mode-dependent finish: matter burns out by erosion (no see-through fade), light adds over a darkened ground. */
   private matter(p: FlipbookPool, o: FlipOptions): void {
     const mode = this.modes.get(p);
-    if (mode === "heat" || mode === "rgba") {
+    if (mode === "heat" || mode === "rgba" || mode === "smoke") {
       o.cool = COOL;
       o.fadeOut = 0;
     } else if (mode === "fire") {
@@ -285,6 +304,35 @@ class ClipLayers {
   private spawn(role: ClipRole, p: FlipbookPool, x: number, y: number, z: number, size: number, o: FlipOptions): void {
     p.spawn(v.set(x, y, z), size * this.spec.look.scale, o);
     this.audit.spawned[role] += 1;
+    if (o.life !== ONE_FRAME) this.under(role, x, y, z, size, o);
+  }
+
+  /**
+   * The role's body layer under a one-shot just spawned with `o` (lab-flipbooks 18:52: Dark's smoke filmed on white
+   * under its rim filmed on black): the same place, turn, motion and delay, its own clip timed by the role, in the
+   * element's body colour, eroding away.
+   */
+  private under(role: ClipRole, x: number, y: number, z: number, size: number, o: FlipOptions): void {
+    const list = this.bodies.get(role);
+    if (list === undefined) return;
+    const b = list.find((p) => p.ready);
+    if (b === undefined) return;
+    const q = this.once(b, role, 1, flip(bodyOpts));
+    q.rot = o.rot;
+    q.dir = o.dir;
+    q.span = o.span;
+    q.vx = o.vx;
+    q.vy = o.vy;
+    q.vz = o.vz;
+    q.drag = o.drag;
+    q.ground = o.ground;
+    q.delay = o.delay;
+    q.lift = (o.lift ?? 0) - 0.05;
+    q.alpha = o.alpha;
+    const c = this.spec.look.body ?? this.spec.look.heat.deep;
+    q.tint = bodyTint.setRGB(c[0], c[1], c[2]);
+    b.spawn(v.set(x, y, z), size * this.spec.look.scale, q);
+    this.audit.bodies[role] += 1;
   }
 
   /** A looping clip (sparkle, sheath) shown this frame only, at its own clock (`phase` s apart per user). */
@@ -635,6 +683,7 @@ class ClipLayers {
     this.shedAcc = this.waitAcc = 0;
     this.turn.clear();
     this.audit.spawned = zeroRoles();
+    this.audit.bodies = zeroRoles();
   }
 
   // ── Stream hooks (myriad-swords.ts, key 7) ────────────────────────────────

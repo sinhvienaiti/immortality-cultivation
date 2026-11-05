@@ -127,6 +127,11 @@ export interface FlipbookMeta {
   /** The frame of its peak energy and the last frame still near it (the manifest's timing; the kits time a hit by them). */
   readonly peak?: number;
   readonly holdEnd?: number;
+  /**
+   * Which layer of a two-layer effect it is (lab-flipbooks, 05/11): "body", matter filmed on white (smoke mode, drawn
+   * under), and "rim", the light filmed on black (added on top). Absent: a clip that stands alone.
+   */
+  readonly layer?: "body" | "rim";
 }
 
 export function isFlipbookV2(meta: FlipbookMeta): boolean {
@@ -240,6 +245,7 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       ...(typeof entry.role === "string" && ID.test(entry.role.toLowerCase()) ? { role: entry.role } : {}),
       ...frameOf(entry.timing, "peak", frames),
       ...frameOf(entry.timing, "holdEnd", frames),
+      ...(entry.layer === "body" || entry.layer === "rim" ? { layer: entry.layer } : {}),
     });
   }
   return out;
@@ -259,6 +265,8 @@ interface Entry {
 /** One element folder's atlases (loaded once; pools attach as they arrive). */
 export class FlipbookLibrary {
   private readonly entries = new Map<string, Entry>();
+  /** Every clip the manifest declares, known before its atlas arrives (a kit pairs its layers by them). */
+  private readonly declared = new Map<string, FlipbookMeta>();
   private readonly listeners = new Set<(id: string) => void>();
   private loading: Promise<void> | null = null;
 
@@ -289,6 +297,7 @@ export class FlipbookLibrary {
         const response = await fetch(this.base + "manifest.json", { cache: "no-cache" });
         if (!response.ok || !(response.headers.get("content-type") ?? "").includes("json")) return;
         metas = parseFlipbookManifest(await response.json(), this.base);
+        for (const m of metas.values()) this.declared.set(m.id, m);
       } catch (error) {
         console.warn("[flipbook] no manifest at " + this.base, error);
         return;
@@ -334,7 +343,13 @@ export class FlipbookLibrary {
   }
 
   /** Tests and captures: an atlas from memory. */
+  /** The clips its manifest declares (loaded or not). */
+  declares(): FlipbookMeta[] {
+    return [...this.declared.values()];
+  }
+
   add(meta: FlipbookMeta, texture: THREE.Texture, controls: FlipbookControls | null = null): void {
+    this.declared.set(meta.id, meta);
     this.entries.set(meta.id, { meta, texture, controls });
     for (const listener of this.listeners) listener(meta.id);
   }
@@ -346,6 +361,7 @@ export class FlipbookLibrary {
       entry.controls?.b?.dispose();
     }
     this.entries.clear();
+    this.declared.clear();
     this.loading = null;
   }
 }

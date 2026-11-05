@@ -1,9 +1,10 @@
 /**
  * Dark (PRODUCTION_LIST_2026-11-05 §7): devour → erase. The Sword's shapes drawn with the Dark clips of
  * art-src/lab/vfx/dark/ (element-clips.ts, by role): black-violet shadow with a violet and crimson rim, ink smoke.
- * Added light would keep only the rim (lab-flipbooks note, 18:50), so its bodies are drawn in the heat field: the
- * clip's dim edge becomes a near-black violet matter (alpha 0.85, it covers the stone), the rim violet, only the
- * brightest line pale lilac; the sparkle stays light.
+ * Added light would keep only the rim (lab-flipbooks note, 18:50). A role whose smoke filmed on white is in (its
+ * "body" layer) draws that smoke as near-black violet ink under the clip on black, added as the rim it was filmed as;
+ * a role without one draws its clip in the heat field, its dim edge a near-black violet matter (alpha 0.85, it covers
+ * the stone), the rim violet, only the brightest line pale lilac. The sparkle stays light.
  */
 import { auraOf, clipKit, lin, streamOf } from "./element-clips";
 
@@ -34,5 +35,7 @@ export const DARK = clipKit({
     hit: "burst",
     scale: 1,
     linger: 1.2,
+    // Its smoke filmed on white (the "body" layers, lab-flipbooks 18:52): a near-black violet ink under the rim's light.
+    body: lin("#1A0C2A"),
   },
 });

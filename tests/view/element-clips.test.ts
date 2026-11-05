@@ -228,6 +228,46 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(r.hooks.aftermath!.every((a) => a)).toBe(true);
   });
 
+  it("draws a role's body layer (smoke filmed on white) under its rim, the rim then as the light it was filmed as", () => {
+    const layered = (withBody: boolean): { stage: ElementStage } => {
+      const base = new THREE.Group();
+      const layer = new THREE.Group();
+      const cam = camera();
+      const targets = field(3);
+      const tex = sheets();
+      const fx = new SwordSkillFx(swordHost(targets, base, cam), tex, "high");
+      const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+      const entries: Record<string, unknown> = {
+        "dark-impact": { file: "a.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "fire", role: "impact", layer: "rim" },
+      };
+      if (withBody) entries["dark-impact-white"] = { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "impact", layer: "body" };
+      const lib = stage.flipbooks.library("dark");
+      // The manifest declares both before either atlas arrives (the rim first).
+      const metas = [...parseFlipbookManifest({ flipbooks: entries }, "/v/dark/").values()];
+      for (const m of metas) (lib as unknown as { declared: Map<string, unknown> }).declared.set(m.id, m);
+      for (const m of metas) lib.add(m, new THREE.Texture());
+      fx.setElement(elementById("dark")!, stage);
+      fx.cast("k1", 0, -6);
+      for (let i = 0; i < 60; i += 1) {
+        stage.begin();
+        fx.update(1 / 60);
+        stage.update(1 / 60);
+      }
+      expect(targets.statuses.length).toBeGreaterThan(0);
+      return { stage };
+    };
+    const alone = layered(false);
+    expect(alone.stage.flipbooks.pool("dark", "dark-impact").mode).toBe("heat");
+    expect(clipAudit(alone.stage, "dark")!.bodies.impact).toBe(0);
+    const paired = layered(true);
+    expect(paired.stage.flipbooks.pool("dark", "dark-impact").mode).toBe("fire");
+    expect(paired.stage.flipbooks.pool("dark", "dark-impact-white").mode).toBe("smoke");
+    const a = clipAudit(paired.stage, "dark")!;
+    expect(a.spawned.impact).toBeGreaterThan(0);
+    expect(a.bodies.impact).toBe(a.spawned.impact);
+    expect(a.pools.impact).toBe(1);
+  });
+
   it("takes the ribbon clip as the flight trail once it arrives", () => {
     const kit = elementById("thunder")!;
     const stage = new ElementStage({ layer: new THREE.Group(), camera: camera(), quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" });

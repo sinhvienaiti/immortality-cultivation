@@ -1851,7 +1851,7 @@ void (async () => {
     },
     clipKit() {
       const a = clipAudit(stage, fx.element.id);
-      return a === null ? null : { spawned: { ...a.spawned }, pools: { ...a.pools } };
+      return a === null ? null : { spawned: { ...a.spawned }, pools: { ...a.pools }, bodies: { ...a.bodies }, bodyPools: { ...a.bodyPools } };
     },
     fxSolo(prefix) {
       let n = 0;
