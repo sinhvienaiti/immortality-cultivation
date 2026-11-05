@@ -450,6 +450,30 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(maxSlash).toBeLessThanOrEqual(4);
   });
 
+  it("draws a role's body layer alone while it has no rim yet (Dark's smoke on white before its clips on black)", () => {
+    const layer = new THREE.Group();
+    const cam = camera();
+    const tex = sheets();
+    const stage = new ElementStage({ layer, camera: cam, quality: "high", textures: tex, texture: () => tex.glow, vfxBase: "/v/" });
+    const lib = stage.flipbooks.library("dark");
+    const metas = parseFlipbookManifest({ flipbooks: { "dark-impact-white": { file: "b.png", cols: 4, rows: 4, frames: 16, fps: 24, mode: "smoke", role: "impact", layer: "body" } } }, "/v/dark/");
+    for (const m of metas.values()) lib.add(m, new THREE.Texture());
+    const fx = new SwordSkillFx(swordHost(field(3), new THREE.Group(), cam), tex, "high");
+    fx.setElement(elementById("dark")!, stage);
+    fx.cast("k1", 0, -6);
+    for (let i = 0; i < 60; i += 1) {
+      stage.begin();
+      fx.update(1 / 60);
+      stage.update(1 / 60);
+    }
+    const a = clipAudit(stage, "dark")!;
+    expect(a.pools.impact).toBe(0);
+    expect(a.bodyPools.impact).toBe(1);
+    expect(a.spawned.impact).toBeGreaterThan(0);
+    // Nothing under a body drawn alone.
+    expect(a.bodies.impact).toBe(0);
+  });
+
   it("takes the ribbon clip as the flight trail once it arrives", () => {
     const kit = elementById("thunder")!;
     const stage = new ElementStage({ layer: new THREE.Group(), camera: camera(), quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" });

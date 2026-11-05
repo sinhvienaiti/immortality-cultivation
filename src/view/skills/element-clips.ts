@@ -260,24 +260,27 @@ class ClipLayers {
     if (role === "ribbon" && this.trail.flame === undefined) this.trail.flame = { clip: id, soot: h.soot, deep: h.deep, amber: h.mid, core: h.core };
   }
 
-  /** A ready pool of `role` (several clips of one role take turns), else null: the hook declines. */
+  /**
+   * A ready pool of `role` (several clips of one role take turns); a role whose only clip so far is its body layer
+   * draws that alone (Dark's smoke on white before its rims land); else null: the hook declines.
+   */
   private pick(role: ClipRole): FlipbookPool | null {
     const list = this.pools.get(role);
-    if (list === undefined) return null;
     const t = this.turn.get(role) ?? 0;
-    for (let k = 0; k < list.length; k += 1) {
-      const p = list[(t + k) % list.length]!;
-      if (p.ready) {
-        this.turn.set(role, t + k + 1);
-        return p;
+    if (list !== undefined) {
+      for (let k = 0; k < list.length; k += 1) {
+        const p = list[(t + k) % list.length]!;
+        if (p.ready) {
+          this.turn.set(role, t + k + 1);
+          return p;
+        }
       }
     }
-    return null;
+    return this.bodies.get(role)?.find((p) => p.ready) ?? null;
   }
 
   private has(role: ClipRole): boolean {
-    const list = this.pools.get(role);
-    return list !== undefined && list.some((p) => p.ready);
+    return this.pools.get(role)?.some((p) => p.ready) === true || this.bodies.get(role)?.some((p) => p.ready) === true;
   }
 
   /**
@@ -307,6 +310,11 @@ class ClipLayers {
     if (mode === "heat" || mode === "rgba" || mode === "smoke") {
       o.cool = COOL;
       o.fadeOut = 0;
+      // A body layer's density in the element's body colour.
+      if (mode === "smoke") {
+        const c = this.spec.look.body ?? this.spec.look.heat.deep;
+        o.tint = bodyTint.setRGB(c[0], c[1], c[2]);
+      }
     } else if (mode === "fire") {
       o.occlude = this.spec.look.occlude;
       o.intensity = this.spec.look.gain;
@@ -316,7 +324,8 @@ class ClipLayers {
   private spawn(role: ClipRole, p: FlipbookPool, x: number, y: number, z: number, size: number, o: FlipOptions): void {
     p.spawn(v.set(x, y, z), size * this.spec.look.scale, o);
     this.audit.spawned[role] += 1;
-    if (o.life !== ONE_FRAME) this.under(role, x, y, z, size, o);
+    // A body drawn alone (its role has no rim yet) has no body under it.
+    if (o.life !== ONE_FRAME && this.bodies.get(role)?.includes(p) !== true) this.under(role, x, y, z, size, o);
   }
 
   /**
