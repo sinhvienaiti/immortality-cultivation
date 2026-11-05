@@ -12,3 +12,15 @@ export const GRAMMAR = {
   navy: [0.004, 0.014, 0.05] as const,
   platinum: [0.66, 0.72, 0.82] as const,
 } as const;
+
+/**
+ * The crescent cut across a blow (sword-skills.ts slashAt; every element's `cut`, Metal's own crescent): bigger for
+ * every element (owner 05/11/2026 19:12: "dạng vệt chém nên làm to vệt đó ra nhìn cho thích của các hệ"), its size × SCALE
+ * in length and width. It grows sideways and down rather than up, so the word tag over the beast stays clear: its centre
+ * slides down the camera's up axis by DROP of the growth, never under FLOOR m above the ground.
+ */
+export const CUT = {
+  scale: 1.8,
+  drop: 0.5,
+  floor: 0.25,
+} as const;

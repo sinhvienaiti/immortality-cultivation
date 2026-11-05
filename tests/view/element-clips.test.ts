@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { CLIP_ROLES, clipAudit } from "../../src/view/skills/element-clips";
+import { CUT } from "../../src/view/skills/sword-grammar";
 import type { ClipRole, ElementKit, FoeStatusKind } from "../../src/view/skills/element-kit";
 import { ElementStage } from "../../src/view/skills/element-stage";
 import { elementById, elementKits } from "../../src/view/skills/elements";
@@ -266,6 +267,35 @@ describe("element kits drawn from clips (lab-element-kits, 05/11/2026)", () => {
     expect(a.spawned.impact).toBeGreaterThan(0);
     expect(a.bodies.impact).toBe(a.spawned.impact);
     expect(a.pools.impact).toBe(1);
+  });
+
+  it("cuts 1.8 times bigger for every element (owner 19:12), grown sideways and down so the word tag stays clear", () => {
+    const cuts: { size: number; x: number; y: number; z: number }[] = [];
+    const kit: ElementKit = {
+      ...elementById("water")!,
+      id: "water",
+      attach: () => ({ sword: { cut: (a) => (cuts.push({ size: a.size, x: a.at.x, y: a.at.y, z: a.at.z }), true) } }),
+    };
+    const cam = camera();
+    const layer = new THREE.Group();
+    const targets = field(3);
+    const fx = new SwordSkillFx(swordHost(targets, layer, cam), sheets(), "high");
+    fx.setElement(kit, new ElementStage({ layer, camera: cam, quality: "high", textures: sheets(), texture: () => new THREE.Texture(), vfxBase: "/v/" }));
+    fx.cast("k1", 0, -6);
+    for (let i = 0; i < 90; i += 1) fx.update(1 / 60);
+    expect(cuts.length).toBeGreaterThan(0);
+    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    for (const c of cuts) {
+      // k1's cut is 1.5 before the scale; its centre sits on the camera's up axis through the hit (beast mid 0.5 m).
+      expect(c.size).toBeCloseTo(1.5 * CUT.scale, 5);
+      expect(c.y).toBeLessThan(0.5);
+      expect(c.y).toBeGreaterThanOrEqual(CUT.floor - 1e-6);
+      const drop = (0.5 - c.y) / up.y;
+      // The top edge rises less than half of what the crescent grew.
+      const rise = (c.size - 1.5) / 2 - drop;
+      expect(rise).toBeLessThan((c.size - 1.5) / 2);
+      expect(drop).toBeGreaterThan(0);
+    }
   });
 
   it("takes the ribbon clip as the flight trail once it arrives", () => {

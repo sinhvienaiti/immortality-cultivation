@@ -31,6 +31,7 @@ import type {
 } from "./element-kit";
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookLibrary, type FlipbookMode, type FlipbookPool, type FlipOptions } from "./flipbook";
+import { CUT } from "./sword-grammar";
 import { glowOf, rimOf, type Rgb, type WeaponGlow } from "./weapons";
 
 /** Linear RGB of an sRGB hex (load time). */
@@ -484,7 +485,8 @@ class ClipLayers {
     if (delay > 0) o.delay = delay;
     // The big burst standing in for a missing impact clip is drawn smaller.
     this.spawn(role, p, x, y, z, (big ? 2.8 : role === "burst" ? 1.5 : 2.0) * s, o);
-    if (law === "flow") this.flowOn(x, y * 0.7, z, dx, dz, 0.95 * s);
+    // The wave is the slash clip: as big as the cut (CUT, owner 19:12).
+    if (law === "flow") this.flowOn(x, y * 0.7, z, dx, dz, 0.95 * CUT.scale * s);
     this.sparkle(x, y, z, 1.7 * s, 0.85, 0.3, delay);
     this.stage.light(x, y, z, this.spec.look.light, big ? 5 : 3);
     if (big) this.stage.accent(x, y, z, 0.3);
@@ -619,6 +621,8 @@ class ClipLayers {
     const o = this.once(p, "slash");
     o.rot = a.rot;
     o.lift = 0.7;
+    // Grown big (CUT), it meets the ground: fade softly there, never a straight cut along the floor.
+    o.ground = 0;
     this.spawn("slash", p, a.at.x, a.at.y, a.at.z, a.size * 1.2, o);
     return true;
   }
@@ -765,7 +769,7 @@ class ClipLayers {
     o.dir = dirV.set(a.dx, a.dy, a.dz);
     o.span = a.len * 1.1;
     o.lift = 0.5;
-    this.spawn("slash", p, a.x + a.dx * a.len * 0.5, a.y, a.z + a.dz * a.len * 0.5, 0.6, o);
+    this.spawn("slash", p, a.x + a.dx * a.len * 0.5, a.y, a.z + a.dz * a.len * 0.5, 0.6 * CUT.scale, o);
     return true;
   }
 

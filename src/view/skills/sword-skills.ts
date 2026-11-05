@@ -51,6 +51,7 @@ import { METAL } from "./element-metal";
 import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
+import { CUT } from "./sword-grammar";
 import { applyBladeLook, FaceRoll } from "./sword-material";
 import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
 import { GroundMarks, LightStrips, MARK_RIFT, MARK_STAR, SkyGate, GATE_SWORDS } from "./sword-rain";
@@ -639,6 +640,8 @@ export class SwordSkillFx {
   private readonly aTravel: TravelArgs = { slot: "auto", blade: 0, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 1, tipM: 0, u: 0, dt: 0, pal: START_GLOW, aura: false };
   private readonly aImpact: ImpactArgs = { slot: "auto", at: new THREE.Vector3(), scale: 1, dx: 0, dz: -1, power: 0, big: false, pal: START_GLOW };
   private readonly aCut: CutArgs = { slot: "auto", at: new THREE.Vector3(), rot: 0, size: 1, pal: START_GLOW };
+  /** Where the current cut is drawn (slashAt: below the hit as it grows). */
+  private readonly cutAt = new THREE.Vector3();
   private readonly aArea: AreaHitArgs = { slot: "auto", at: new THREE.Vector3(), dx: 0, dz: -1, power: 0, marked: false, pal: START_GLOW };
   private readonly aBurst: AreaBurstArgs = { slot: "auto", x: 0, y: 0, z: 0, beasts: 0, scale: 1, pal: START_GLOW };
   private readonly aAfter: AftermathArgs = { slot: "auto", x: 0, z: 0, r: 0, life: 0, rate: 0, pal: START_GLOW };
@@ -2364,7 +2367,14 @@ export class SwordSkillFx {
   }
 
   /** A crescent cut across the blow (camera-facing; `rot` in screen radians). */
-  private slashAt(at: THREE.Vector3, rot: number, size: number): void {
+  private slashAt(hit: THREE.Vector3, rot: number, base: number): void {
+    // Bigger for every element (CUT): grown sideways and down the camera's up axis, the tag over the beast kept clear.
+    const size = base * CUT.scale;
+    const m = this.host.camera.matrixWorld.elements;
+    const uy = m[5]!;
+    let drop = (size - base) * CUT.drop;
+    if (uy > 1e-3) drop = Math.min(drop, Math.max(0, (hit.y - CUT.floor) / uy));
+    const at = this.cutAt.set(hit.x - m[4]! * drop, hit.y - uy * drop, hit.z - m[6]! * drop);
     const hook = this.hooks.cut;
     if (hook !== undefined) {
       const a = this.aCut;
@@ -2375,12 +2385,13 @@ export class SwordSkillFx {
       a.pal = this.pal;
       if (hook(a)) return;
     }
+    // Metal's crescent: as instant, held a little longer (attack fast, decay slowly).
     const s = this.slash.spec.reset();
     s.x = at.x;
     s.y = at.y;
     s.z = at.z;
     s.rot = rot;
-    s.life = 0.16;
+    s.life = 0.22;
     s.size0 = size * 1.5;
     s.size1 = size * 2.0;
     this.col(s, this.pal.core, 0.85);
@@ -2391,7 +2402,7 @@ export class SwordSkillFx {
     h.y = at.y;
     h.z = at.z;
     h.rot = rot;
-    h.life = 0.2;
+    h.life = 0.28;
     h.size0 = size * 2.1;
     h.size1 = size * 2.7;
     this.col(h, this.pal.rim, 1);
