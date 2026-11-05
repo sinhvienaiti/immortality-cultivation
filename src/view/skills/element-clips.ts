@@ -395,7 +395,7 @@ export function alongSlash(camera: THREE.Camera, cx: number, cy: number, cz: num
   }
 }
 
-function layFlat(pool: FlipbookPool): void {
+export function layFlat(pool: FlipbookPool): void {
   const material = pool.mesh.material;
   material.customProgramCacheKey = () => "element-ground-card";
   material.onBeforeCompile = (shader) => {

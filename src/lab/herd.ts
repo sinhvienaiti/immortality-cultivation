@@ -212,6 +212,9 @@ export class LabHerd implements TargetField {
   private readonly rimT = new Float32Array(MAX);
   private readonly rimLen = new Float32Array(MAX);
   private readonly hold = new Float32Array(MAX);
+  /** A clip skill's slow: seconds left and the pace kept (clip-skills.ts). */
+  private readonly slowT = new Float32Array(MAX);
+  private readonly slowK = new Float32Array(MAX);
   private readonly stag = new Float32Array(MAX);
   private readonly immune = new Float32Array(MAX);
   /** The element's status: time left (s), its length, its kind's flicker and its colour (0xRRGGBB). */
@@ -464,7 +467,7 @@ export class LabHerd implements TargetField {
       this.spawn[i] = -1;
       this.leave[i] = -1;
       this.flash[i] = 0;
-      this.rimT[i] = this.hold[i] = this.stag[i] = this.immune[i] = 0;
+      this.rimT[i] = this.hold[i] = this.stag[i] = this.immune[i] = this.slowT[i] = 0;
       this.statusT[i] = 0;
       this.rx[i] = this.rz[i] = this.rvx[i] = this.rvz[i] = 0;
       this.svx[i] = this.svz[i] = this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
@@ -684,6 +687,13 @@ export class LabHerd implements TargetField {
     if (i >= 0 && i < this.count) this.hold[i] = Math.max(this.hold[i]!, seconds);
   }
 
+  /** Beast `i` moves at `k` of its pace for `seconds` (a clip skill's slow; a hold still stops it). */
+  slow(i: number, seconds: number, k: number): void {
+    if (i < 0 || i >= this.count) return;
+    this.slowT[i] = Math.max(this.slowT[i]!, seconds);
+    this.slowK[i] = k;
+  }
+
   hit(i: number, dx: number, dz: number, power: number, rgb: number): boolean {
     if (!this.alive(i)) return false;
     const tier = this.tier(i);
@@ -812,7 +822,9 @@ export class LabHerd implements TargetField {
       this.immune[i] = Math.max(0, this.immune[i]! - dt);
       const held = this.hold[i]! > 0;
       if (held) this.hold[i] = Math.max(0, this.hold[i]! - dt);
-      const bdt = held ? 0 : dt;
+      const slowed = this.slowT[i]! > 0;
+      if (slowed) this.slowT[i] = Math.max(0, this.slowT[i]! - dt);
+      const bdt = held ? 0 : slowed ? dt * this.slowK[i]! : dt;
       const staggered = this.stag[i]! > 0;
       if (staggered) this.stag[i] = Math.max(0, this.stag[i]! - bdt);
       if (this.rimT[i]! > 0) {

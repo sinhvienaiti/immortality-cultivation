@@ -12,7 +12,8 @@
  * centre; an avatar (pháp tướng) rising over the caster and a divine beast over the foe group, both see-through (the
  * expansion's 25–40 %, so the word tags stay readable). Fast attack to the clip's peak frame, slow decay; the screen
  * shakes and flashes at the ultimate tier for ultimates, avatars and beasts, the skill tier for the rest. Not wired to
- * the sim: nothing is struck.
+ * the sim. Key 8's items are cast on the lab's herd by clip-skills.ts (play with `at` and `feel: false`, `timeOf`): the
+ * strikes, not the spawn, bring the light and the shake.
  */
 import * as THREE from "three";
 import type { FlipbookMeta, FlipbookPlayer, FlipbookPool } from "../view/skills/flipbook";
@@ -177,6 +178,26 @@ const v = new THREE.Vector3();
 const f = new THREE.Vector3();
 const p = new THREE.Vector3();
 
+/** How a castable skill plays its clip (clip-skills.ts). */
+export interface PlayOptions {
+  /** Where a pillar or a beast stands (a ground point) instead of on the foe nearest the screen's centre. */
+  readonly at?: THREE.Vector3;
+  /** The light, shake and flash on its spawn (default true; false: the skill's strikes bring them). */
+  readonly feel?: boolean;
+  /** The caption's stats line and its keys line (a castable skill's). */
+  readonly detail?: string;
+  readonly nav?: string;
+}
+
+/** A clip's time map: to its peak frame in ATTACK_S, then the rest over its tail (or all of it over its tail). */
+interface TimeMap {
+  readonly start: number;
+  readonly peak: number;
+  readonly last: number;
+  readonly rate: number;
+  readonly slowRate: number | null;
+}
+
 export interface ShowcaseHost {
   readonly camera: THREE.PerspectiveCamera;
   /** The beast nearest (x, z) within r m, else −1, and its ground position. */
@@ -260,6 +281,73 @@ export class Showcase {
     return this.items.get(id)!;
   }
 
+  /** Whether it has clip `id` loaded. */
+  has(id: string): boolean {
+    return this.pools.get(id)?.ready === true;
+  }
+
+  /** The item selected (the last played or chosen), or null. */
+  current(): string | null {
+    const ids = this.ids();
+    return this.turn >= 0 && this.turn < ids.length ? ids[this.turn]! : null;
+  }
+
+  /** Selects `id` without playing it. */
+  select(id: string): void {
+    const i = this.ids().indexOf(id);
+    if (i >= 0) this.turn = i;
+  }
+
+  /** Selects the next item (wrapping) without playing it; null when it has none. */
+  next(): string | null {
+    const ids = this.ids();
+    if (ids.length === 0) return null;
+    this.turn = (this.turn + 1) % ids.length;
+    return ids[this.turn]!;
+  }
+
+  /** The ground under the screen's centre. */
+  centre(out: THREE.Vector3): THREE.Vector3 {
+    const cam = this.host.camera;
+    cam.getWorldDirection(f);
+    const t = f.y < -1e-3 ? -cam.position.y / f.y : 30;
+    return out.set(cam.position.x + f.x * t, 0, cam.position.z + f.z * t);
+  }
+
+  /** Its clip's peak frame (the manifest's timing.peak, inside the clip). */
+  peakOf(id: string): number {
+    return this.map(id)?.peak ?? 0;
+  }
+
+  /** Seconds after its spawn that clip `id` shows `frame` (its time map); 0 before it is loaded. */
+  timeOf(id: string, frame: number): number {
+    const m = this.map(id);
+    const meta = this.pools.get(id)?.meta;
+    if (m === null || meta === null || meta === undefined) return 0;
+    const fr = Math.min(m.last, Math.max(m.start, frame));
+    if (m.slowRate === null || fr <= m.peak) return (fr - m.start) / (meta.fps * m.rate);
+    return (m.peak - m.start) / (meta.fps * m.rate) + (fr - m.peak) / (meta.fps * m.slowRate);
+  }
+
+  private map(id: string): TimeMap | null {
+    const pool = this.pools.get(id);
+    const it = this.items.get(id);
+    if (pool?.meta === null || pool?.meta === undefined || it === undefined) return null;
+    const meta = pool.meta;
+    const last = meta.frames - 1;
+    const peak = Math.min(last - 1, Math.max(meta.start, meta.peak ?? meta.start));
+    const tail = it.place === "foe" ? PILLAR_S : SCENE_S;
+    return peak > meta.start
+      ? { start: meta.start, peak, last, rate: (peak - meta.start) / (meta.fps * ATTACK_S), slowRate: (last + 1 - peak) / (meta.fps * tail) }
+      : { start: meta.start, peak, last, rate: (last + 1 - meta.start) / (meta.fps * tail), slowRate: null };
+  }
+
+  /** The caption of `id` (a castable skill's: its stats and keys lines), without playing it. */
+  caption(id: string, detail?: string, nav?: string): void {
+    const it = this.items.get(id);
+    if (it !== undefined) this.show(it, this.ids(), detail, nav);
+  }
+
   /** The one before the last played (Shift+key). */
   prev(): string | null {
     const ids = this.ids();
@@ -267,8 +355,11 @@ export class Showcase {
     return this.play(ids[(Math.max(0, this.turn) - 1 + ids.length) % ids.length]);
   }
 
-  /** Plays `id` (none: the next in order); returns what it played, or null when it has no such clip loaded. */
-  play(id?: string): string | null {
+  /**
+   * Plays `id` (none: the next in order); returns what it played, or null when it has no such clip loaded. `opts`: where
+   * it stands, whether its spawn brings the light and the shake, its caption's stats (clip-skills.ts).
+   */
+  play(id?: string, opts: PlayOptions = {}): string | null {
     const ids = this.ids();
     if (ids.length === 0 || (id !== undefined && !this.pools.has(id))) return null;
     this.turn = id === undefined ? (this.turn + 1) % ids.length : ids.indexOf(id);
@@ -280,19 +371,16 @@ export class Showcase {
     const cam = this.host.camera;
     const tan = Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
     // The ground under the screen's centre.
-    cam.getWorldDirection(f);
-    const t = f.y < -1e-3 ? -cam.position.y / f.y : 30;
-    const cx = cam.position.x + f.x * t;
-    const cz = cam.position.z + f.z * t;
+    this.centre(p);
+    const cx = p.x;
+    const cz = p.z;
     // Fast attack: to the clip's peak frame in ATTACK_S, then the rest over the hold and decay.
-    const last = meta.frames - 1;
-    const peak = Math.min(last - 1, Math.max(meta.start, meta.peak ?? meta.start));
-    const tail = it.place === "foe" ? PILLAR_S : SCENE_S;
+    const m = this.map(pick)!;
     const figure = it.kind === "avatar" || it.kind === "beast";
     const o = {
       frame: meta.start,
-      rate: peak > meta.start ? (peak - meta.start) / (meta.fps * ATTACK_S) : (last + 1 - meta.start) / (meta.fps * tail),
-      ...(peak > meta.start ? { slowFrom: peak, slowRate: (last + 1 - peak) / (meta.fps * tail) } : {}),
+      rate: m.rate,
+      ...(m.slowRate !== null ? { slowFrom: m.peak, slowRate: m.slowRate } : {}),
       fadeOut: 0.6,
       // A see-through figure darkens the ground under it less.
       occlude: figure ? 0.12 : 0.25,
@@ -301,9 +389,10 @@ export class Showcase {
     };
     let size: number;
     if (it.place === "foe") {
-      // On the foe nearest the screen's centre; tall enough that the column leaves the top of the frame.
-      const i = this.host.nearest(cx, cz, 30);
-      if (i >= 0) this.host.at(i, v);
+      // On its point (else the foe nearest the screen's centre); tall enough that the column leaves the top of the frame.
+      const i = opts.at !== undefined ? -1 : this.host.nearest(cx, cz, 30);
+      if (opts.at !== undefined) v.copy(opts.at);
+      else if (i >= 0) this.host.at(i, v);
       else v.set(cx, 0, cz);
       v.y = 0;
       const d = v.distanceTo(cam.position);
@@ -317,8 +406,9 @@ export class Showcase {
       // lower half stands behind it in depth).
       if (it.place === "caster") this.host.caster(v);
       else if (it.place === "foes") {
-        const i = this.host.nearest(cx, cz, 30);
-        if (i >= 0) this.host.at(i, v);
+        const i = opts.at !== undefined ? -1 : this.host.nearest(cx, cz, 30);
+        if (opts.at !== undefined) v.copy(opts.at);
+        else if (i >= 0) this.host.at(i, v);
         else v.set(cx, 0, cz);
       } else v.set(cx, 0, cz);
       v.y = 0;
@@ -330,14 +420,16 @@ export class Showcase {
     }
     pool.clear();
     pool.spawn(v, size, o);
-    this.host.light(p.set(v.x, 1.5, v.z), it.light, it.place === "foe" ? 6 : 8);
-    // The ultimate tier's shake and flash for ultimates, avatars and beasts; the skill tier's for the rest.
-    const big = it.kind === "ultimate" || figure;
-    const tier = big ? SCREEN_TIERS.ultimate : SCREEN_TIERS.skill;
-    this.host.shake(tier.shakePx, tier.shakeS, tier.rollDeg);
-    this.host.accent(big ? 0.6 : 0.35);
+    if (opts.feel !== false) {
+      this.host.light(p.set(v.x, 1.5, v.z), it.light, it.place === "foe" ? 6 : 8);
+      // The ultimate tier's shake and flash for ultimates, avatars and beasts; the skill tier's for the rest.
+      const big = it.kind === "ultimate" || figure;
+      const tier = big ? SCREEN_TIERS.ultimate : SCREEN_TIERS.skill;
+      this.host.shake(tier.shakePx, tier.shakeS, tier.rollDeg);
+      this.host.accent(big ? 0.6 : 0.35);
+    }
     this.sound(it);
-    this.show(it, ids);
+    this.show(it, ids, opts.detail, opts.nav);
     return pick;
   }
 
@@ -351,8 +443,8 @@ export class Showcase {
     playing = a;
   }
 
-  /** The caption: its English name, its Vietnamese name, group and element(s), where it is in the list. */
-  private show(it: ShowcaseItem, ids: readonly string[]): void {
+  /** The caption: its English name, its Vietnamese name, group and element(s), its stats, where it is in the list. */
+  private show(it: ShowcaseItem, ids: readonly string[], detail?: string, keys?: string): void {
     if (this.host.captionHost === null) return;
     const cap = captionOf(this.host.captionHost);
     const c = cap.el;
@@ -365,9 +457,16 @@ export class Showcase {
     vi.style.cssText = "margin-top:2px;font:600 17px system-ui";
     const nav = document.createElement("div");
     const k = this.cfg.key;
-    nav.textContent = `${ids.indexOf(it.id) + 1} / ${ids.length} · phím ${k}: tiếp · Shift+${k}: lùi lại · lớp video, chưa nối vào trận`;
+    nav.textContent = `${ids.indexOf(it.id) + 1} / ${ids.length} · ` + (keys ?? `phím ${k}: tiếp · Shift+${k}: lùi lại · lớp video, chưa nối vào trận`);
     nav.style.cssText = "margin-top:4px;font:12px system-ui;opacity:.7";
-    c.replaceChildren(en, vi, nav);
+    const lines: HTMLElement[] = [en, vi];
+    if (detail !== undefined) {
+      const d = document.createElement("div");
+      d.textContent = detail;
+      d.style.cssText = "margin-top:3px;font:600 13px system-ui;opacity:.9";
+      lines.push(d);
+    }
+    c.replaceChildren(...lines, nav);
     c.style.transition = "none";
     c.style.opacity = "1";
     clearTimeout(cap.timer);

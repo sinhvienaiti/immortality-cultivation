@@ -83,6 +83,7 @@ import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, ty
 import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
+import { ClipSkillRunner, describeClipSkill, type ClipCastReport, type ClipSkill } from "./clip-skills";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
 import { AuraSolo } from "./aura-solo";
@@ -311,8 +312,14 @@ let slashCrescent: THREE.Texture | null = null;
 const bus = new LabBus();
 /** Each lab skill's screen tier: Phi Kiếm a basic blow, Thiên Hà the ultimate, the rest (key 7 too) skills. */
 function tierOf(slot: string): ScreenTier {
+  if (slot === "k8") return clipSkillNow?.damage === "ult" ? "ultimate" : "skill";
   return slot === "auto" ? "basic" : slot === "k5" ? "ultimate" : "skill";
 }
+/** The key-8 skill landing now (clip-skills.ts): its tier, its damage weight and its colour for the shared hit path. */
+let clipSkillNow: ClipSkill | null = null;
+let clipRgb = 0xffffff;
+/** Set while a key-8 skill lands a blow: its deaths take the lab's light burst (the Kiếm skills draw theirs in their strike). */
+let clipDeath = false;
 /** Lab frames drawn (the screen-impact dedupe: hitStop and shake of one blow arrive on one frame). */
 let frameNo = 0;
 const lastImpact = { frame: -1, slot: "" };
@@ -395,7 +402,7 @@ function emitRelease(slot: string, tx: number, tz: number): void {
   bus.emit(r);
   // Every skill shouts on its release (big ones a donghua line, small ones a cry); Phi Kiếm stays quiet. Thiên
   // Hà's callout comes with its cut-in instead.
-  if (slot !== "auto" && slot !== "k5") {
+  if (slot !== "auto" && slot !== "k5" && slot !== "k8") {
     const c = bus.callout;
     c.slot = slot;
     c.tier = r.tier;
@@ -527,6 +534,8 @@ const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 
 const W_HP = 90 * realmG;
 /** Canon §12.1 per blow, in W (key 7 is not in the canon yet: a stand-in). */
 const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 2.0, k7: 0.35 };
+/** Key 8's blows by damage tier (lab stand-ins: a light blow as slot 1's, a heavy one, an ultimate's as K5's). */
+const CLIP_W: Record<ClipSkill["damage"], number> = { light: 0.4, heavy: 1.2, ult: 2.0 };
 const critRand = new Rand(1503);
 const dmgRand = new Rand(907);
 /** Releases so far (an attack id each) and the latest attack of each skill; K2's hits so far in its attack (−15 % each). */
@@ -548,6 +557,7 @@ function skillRgb(slot: string): number {
     for (const k of Object.keys(numberRgb)) delete numberRgb[k];
     numberRgbWeapon = fx.weapon + "/" + fx.element.id;
   }
+  if (slot === "k8") return clipRgb;
   let v = numberRgb[slot];
   if (v === undefined) {
     // Key 7 takes its element's number tint (Metal: Clear Wind's jade-cyan).
@@ -566,11 +576,11 @@ bus.on((e) => {
     castHits[e.slot] = 0;
     // Field-wide, ultimate and multi-target skills show one running headline total at the top of the view (round
     // 3a: their small blows count only there).
-    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4") compiler.headline(attacks);
+    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4" || e.slot === "k8") compiler.headline(attacks);
   } else if (e.kind === "impact") {
     const n = hitsOf[e.slot] ?? 0;
     hitsOf[e.slot] = n + 1;
-    let w = SKILL_W[e.slot] ?? 0.3;
+    let w = e.slot === "k8" ? CLIP_W[clipSkillNow?.damage ?? "heavy"] : SKILL_W[e.slot] ?? 0.3;
     if (e.slot === "k2") w *= Math.max(0.4, 1 - 0.15 * n);
     if (e.role === "finisher" && e.slot === "k7") w = 1.5;
     if (e.role === "secondary" && e.slot !== "k4" && e.slot !== "k7") w *= 0.6;
@@ -622,6 +632,11 @@ bus.on((e) => {
   if (e.kind === "release") victims.cast(e.slot);
   else if (e.kind === "impact") victims.impact(e, frameNo);
   else if (e.kind === "death" && !herd.isHero(e.target)) {
+    // A key-8 skill's kill: the lab's light burst in its colour (its clip is the element's material).
+    if (clipDeath) {
+      deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+      return;
+    }
     // An element with its own death draws it (key 7's here; the Kiếm skills' in their strike).
     if (elementDeath(e.x, e.y, e.z, e.dx, e.dz, herd.radius(e.target), inkDeath)) return;
     // Key 7's deaths dissolve into ink and qi motes (round 3b, item 4); the other skills keep their light burst.
@@ -858,6 +873,47 @@ const showcaseHost: ShowcaseHost = {
 };
 const showcase = new Showcase(stage.flipbooks, showcaseHost, ULT_SHOWCASE);
 const expansion = new Showcase(stage.flipbooks, showcaseHost, EXPANSION_SHOWCASE);
+// Key 8 casts its pillars and ultimates on the herd (clip-skills.ts, lab-castable-skills.md batch 1): the strikes land on
+// the clip's peak frames through the same hit path as keys 0–7 (emitImpact, the screen's tier, the kick, the lights).
+const clipTmp = new THREE.Vector3();
+const clipSkills = new ClipSkillRunner(showcase, {
+  targets: herd,
+  layer: view.layers.fx,
+  player: stage.flipbooks,
+  caster: (out) => out.set(caster.x, 0, caster.z),
+  release(skill, at) {
+    clipSkillNow = skill;
+    emitRelease("k8", at.x, at.z);
+  },
+  blow(skill, i, dx, dz, power, role) {
+    clipSkillNow = skill;
+    clipRgb = tmpColour.set(showcase.item(skill.id).light).getHex(THREE.SRGBColorSpace);
+    const killed = herd.hit(i, dx, dz, power, clipRgb);
+    clipDeath = true;
+    emitImpact("k8", i, dx, dz, power, role, killed, clipRgb);
+    clipDeath = false;
+    return killed;
+  },
+  strike(skill, at, role, colour) {
+    clipSkillNow = skill;
+    const ult = skill.damage === "ult";
+    // The tier's shake and hit-stop (a later strike: the secondary blow's shake only), the kick along the blow, the light.
+    screen.impact(ult ? "ultimate" : "skill", role);
+    if (role === "primary") {
+      const dx = at.x - caster.x;
+      const dz = at.z - caster.z;
+      const l = Math.hypot(dx, dz) || 1;
+      kick.impulse((ult ? 5 : 3) * KICK_M_PER_PX, dx / l, dz / l);
+      if (ult) screen.warm(0.6);
+    }
+    lights.flash(clipTmp.set(at.x, 1.5, at.z), view.camera.position, colour, ult ? 9 : 6, true);
+  },
+  status(i, kind, seconds, rim, colour) {
+    herd.status(i, rim, seconds, tmpColour.set(colour).getHex(THREE.SRGBColorSpace));
+    if (kind === "stun" || kind === "bind") herd.holdBeast(i, seconds);
+    else if (kind === "slow") herd.slow(i, seconds, 0.35);
+  },
+});
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
@@ -1135,6 +1191,7 @@ function reset(): void {
   compiler.reset();
   numbers.clear();
   myriad.reset();
+  clipSkills.clear();
   auraSolo.stop();
   swordAura.hide();
   stage.reset();
@@ -1158,8 +1215,8 @@ window.addEventListener("keydown", (e) => {
   lastKeyStamp = e.timeStamp;
   const slot = KEYS[e.key];
   if (slot) type(slot);
-  // 8 the next pillar or ultimate, Shift+8 the one before (Shift+8 types "*" on most layouts).
-  else if (e.code === "Digit8" || e.key === "8" || e.key === "*") void (e.shiftKey || e.key === "*" ? showcase.prev() : showcase.play());
+  // 8 casts the selected pillar or ultimate on the herd, Shift+8 selects the next (Shift+8 types "*" on most layouts).
+  else if (e.code === "Digit8" || e.key === "8" || e.key === "*") void (e.shiftKey || e.key === "*" ? clipSkills.selectNext() : clipSkills.cast());
   // 9 the next new skill (SKILLS_EXPANSION), Shift+9 the one before ("(" on most layouts).
   else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? expansion.prev() : expansion.play());
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
@@ -1199,7 +1256,7 @@ if (params.get("ui") !== "0") {
     ["5", "Lạc Kiếm Trận · Falling Sword Array"],
     ["6", "Thiên Hà Kiếm Vũ · Milky-Way Sword Rain"],
     ["7", "Vạn Kiếm Triều Tông · Ten-Thousand Sword Convergence"],
-    ["8", "Trình diễn cột trụ và tuyệt kỹ (Shift+8 lùi lại; lớp video, chưa vào sim) · Pillars and ultimates"],
+    ["8", "Tung cột trụ hoặc tuyệt kỹ đang chọn lên bầy quái (Shift+8 chọn mục kế; không hồi chiêu) · Pillars and ultimates"],
     ["9", "Kỹ năng mới: diện rộng, pháp tướng, thần thú, pháp bảo (Shift+9 lùi lại) · Skills expansion"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
@@ -1287,11 +1344,12 @@ if (params.get("ui") !== "0") {
   el.append(elSelect);
   panel.append(el);
   // Keys 8 and 9's lists (showcase.ts): any item directly; they fill as their clips arrive.
-  const showcaseList = (label: string, sc: Showcase, empty: string, kinds: Record<string, string>): void => {
+  // Key 8's list casts the chosen skill and names its stats (shape, radius, strikes, damage).
+  const showcaseList = (label: string, sc: Showcase, empty: string, kinds: Record<string, string>, castable?: { cast(id: string): void; detail(id: string): string | undefined }): void => {
     const sl = document.createElement("label");
     sl.textContent = label + " ";
     const scSelect = document.createElement("select");
-    scSelect.style.cssText = select.style.cssText + ";max-width:300px";
+    scSelect.style.cssText = select.style.cssText + (castable !== undefined ? ";max-width:440px" : ";max-width:300px");
     const fill = (): void => {
       const keep = scSelect.value;
       scSelect.replaceChildren();
@@ -1303,7 +1361,8 @@ if (params.get("ui") !== "0") {
         const it = sc.item(id);
         const o = document.createElement("option");
         o.value = id;
-        o.textContent = `${it.code !== undefined ? it.code + " · " : ""}${kinds[it.kind] ?? it.kind} · ${it.element[1] || "?"} · ${it.en}`;
+        const detail = castable?.detail(id);
+        o.textContent = `${it.code !== undefined ? it.code + " · " : ""}${kinds[it.kind] ?? it.kind} · ${it.element[1] || "?"} · ${it.en}` + (detail !== undefined ? ` · ${detail}` : "");
         scSelect.append(o);
       }
       scSelect.value = keep;
@@ -1311,13 +1370,22 @@ if (params.get("ui") !== "0") {
     fill();
     sc.onList(fill);
     scSelect.onchange = () => {
-      if (scSelect.value !== "") sc.play(scSelect.value);
+      if (scSelect.value !== "") {
+        if (castable !== undefined) castable.cast(scSelect.value);
+        else sc.play(scSelect.value);
+      }
       scSelect.blur();
     };
     sl.append(scSelect);
     panel.append(sl);
   };
-  showcaseList("Trình diễn (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" });
+  showcaseList("Kỹ năng (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ để tung —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" }, {
+    cast: (id) => void clipSkills.cast(id),
+    detail: (id) => {
+      const sk = clipSkills.skill(id);
+      return sk !== undefined ? describeClipSkill(sk) : undefined;
+    },
+  });
   showcaseList("Kỹ năng mới (9)", expansion, "— chọn kỹ năng mới (chờ clip) —", { area: "Diện rộng", avatar: "Pháp tướng", beast: "Thần thú", treasure: "Pháp bảo" });
   // Sword aura selector (SWORD_AURA §5.1): off (today's look) or the owner's pick.
   const al = document.createElement("label");
@@ -1368,6 +1436,7 @@ function frame(dt: number): void {
   swordAura.begin();
   fx.update(world, dt);
   myriad.update(world);
+  clipSkills.update(world);
   auraSolo.update(world, view.camera, swordAura, fx.element.trail.flame !== undefined);
   // The aura wears the swords as both modules drew them this frame (CSS viewport for its crowding count).
   swordAura.viewW = innerWidth;
@@ -1559,8 +1628,10 @@ declare global {
       clipKit(): ClipAudit | null;
       /** Crescents drawn from Metal's and Fire's slash clips since load (crescentOf; Metal's also stands in, tinted). */
       crescents(): { metal: number; fire: number };
-      /** Key 8 (showcase.ts): plays pillar or ultimate `id` (none: the next); what it played and every id it has. */
+      /** Key 8 (clip-skills.ts): casts pillar or ultimate `id` on the herd (none: the selected); what it cast and every id it has. */
       showcase(id?: string): { played: string | null; ids: string[] };
+      /** The last key-8 cast: its aim, its strikes' times (the clip's frames), its first blow, blows and kills. */
+      clipSkill(): (ClipCastReport & { active: number }) | null;
       /** Key 9 (showcase.ts, SKILLS_EXPANSION): plays new skill `id` (none: the next); what it played and every id it has. */
       expansion(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
@@ -1906,7 +1977,11 @@ void (async () => {
       return { metal: crescentOf(stage, "metal").spawned, fire: crescentOf(stage, "fire").spawned };
     },
     showcase(id) {
-      return { played: showcase.play(id), ids: showcase.ids() };
+      return { played: clipSkills.cast(id), ids: showcase.ids() };
+    },
+    clipSkill() {
+      const r = clipSkills.last;
+      return r === null ? null : { ...r, strikeAt: [...r.strikeAt], active: clipSkills.active };
     },
     expansion(id) {
       return { played: expansion.play(id), ids: expansion.ids() };
