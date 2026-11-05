@@ -32,7 +32,7 @@ import type {
 import type { ElementStage } from "./element-stage";
 import { ONE_FRAME, type FlipbookLibrary, type FlipbookMode, type FlipbookPool, type FlipOptions } from "./flipbook";
 import { CUT } from "./sword-grammar";
-import { glowOf, rimOf, type Rgb, type WeaponGlow } from "./weapons";
+import { glowOf, glowOfRamp, rimOf, type Rgb, type WeaponGlow } from "./weapons";
 
 /** Linear RGB of an sRGB hex (load time). */
 export function lin(hex: string): Rgb {
@@ -84,6 +84,11 @@ export interface ClipKitSpec {
   /** Every slot's VFX colours (glowOf): the accent (sRGB) and the rim's hex and depth (rimOf's gamma). */
   readonly accent: string;
   readonly rim: readonly [hex: string, gamma: number];
+  /**
+   * Instead, the slots' colours from a ramp (glowOfRamp: core, body, deep; sRGB): the core keeps the ramp's own pale
+   * instead of the accent mixed toward white (a red accent mixed toward white reads pink).
+   */
+  readonly glowRamp?: readonly [core: string, body: string, deep: string];
   /** The struck beast's flash (0xRRGGBB). */
   readonly flashHex: number;
   readonly stream: StreamTone;
@@ -878,7 +883,7 @@ export function clipKit(spec: ClipKitSpec): ElementKit {
   // The trail takes the ribbon clip as its flame band once the folder has one (RibbonPool.setFlame); until then the
   // sword-light trail in the kit's tone.
   const trail: { -readonly [K in keyof TrailLook]: TrailLook[K] } = { widthM: spec.trailW, core: spec.trailCore, rimK: 0.8, silk: false };
-  const glow: WeaponGlow = { ...glowOf(spec.accent, 1, rimOf(spec.rim[0], spec.rim[1])), flashHex: spec.flashHex };
+  const glow: WeaponGlow = { ...(spec.glowRamp !== undefined ? glowOfRamp(spec.glowRamp) : glowOf(spec.accent, 1, rimOf(spec.rim[0], spec.rim[1]))), flashHex: spec.flashHex };
   return {
     id: spec.id,
     name: spec.name,

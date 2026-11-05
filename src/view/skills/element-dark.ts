@@ -57,6 +57,8 @@ export const DARK = clipKit({
   ramp: RAMP,
   accent: R.rim,
   rim: [R.deep, 1.2],
+  // Ember white cores over crimson (the accent mixed toward white read salmon pink, Blood's side of the wheel).
+  glowRamp: [R.core, R.rim, R.deep],
   flashHex: hex(R.rim),
   stream: streamOf({ core: CORE, halo: k3(RIM, 0.6), body: k3(DEEP, 0.5), lit: MID, deep: SOOT, flash: R.rim, hitRgb: hex(R.rim), number: RIM }),
   blade: { mode: "steel", edge: k3(CORE, 3.4) },
