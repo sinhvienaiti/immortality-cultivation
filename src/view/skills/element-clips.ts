@@ -1006,6 +1006,27 @@ export function auraOf(r: ElementRamp, m: { curl?: number; breakup?: number; edg
   };
 }
 
+/** Display (sRGB) values of a linear colour, × `k` (load time). */
+function display(c: Rgb, k = 1): Rgb {
+  const o = new THREE.Color().setRGB(c[0], c[1], c[2]).getRGB({ r: 0, g: 0, b: 0 }, THREE.SRGBColorSpace);
+  return [Math.min(1, o.r * k), Math.min(1, o.g * k), Math.min(1, o.b * k)];
+}
+
+/**
+ * The graphic impact frames in the element's own colours (screen-fx.ts; display values), as Fire's: a dark frame in its
+ * soot with rays in its edge colour and a strike in its core, an inverted frame on its body colour (saturated, never a
+ * pale paper over the screen) with soot lines and strokes and a core contour. Without them every element took Metal's
+ * navy and cyan (Dark's crimson read cyan at its big hits).
+ */
+function framesOf(r: ElementRamp): NonNullable<ScreenAccent["frames"]> {
+  return {
+    navy: display(r.soot),
+    paper: display(r.body, 1.1),
+    accent: display(r.edge),
+    roles: { rays: display(r.edge, 0.8), strike: display(r.core), lines: display(r.soot, 0.9), strokes: display(r.soot, 0.6), contour: display(r.core) },
+  };
+}
+
 /** An element kit drawn from its folder's clips by role (load time; allocates). */
 export function clipKit(spec: ClipKitSpec): ElementKit {
   // The trail takes the ribbon clip as its flame band once the folder has one (RibbonPool.setFlame); until then the
@@ -1027,7 +1048,7 @@ export function clipKit(spec: ClipKitSpec): ElementKit {
     roles: CLIP_ROLES,
     ground: null,
     foe: spec.foe,
-    screen: spec.screen,
+    screen: spec.screen.frames !== undefined ? spec.screen : { ...spec.screen, frames: framesOf(spec.ramp) },
     ...(spec.sigil !== undefined ? { sigil: spec.sigil } : {}),
     sound: spec.sound,
     attach: (stage) => {
