@@ -59,6 +59,7 @@ function setup() {
   const initTexture = vi.fn(), compile = vi.fn(), render = vi.fn();
   const programs = [{ id: 17, name: "shared", cacheKey: "shared-key" }];
   const renderer = { initTexture, compile, render, info: { programs }, getRenderTarget: () => target,
+    shadowMap: { enabled: true, autoUpdate: true, needsUpdate: false },
     setRenderTarget: (t: THREE.WebGLRenderTarget | null) => { target = t; } } as unknown as THREE.WebGLRenderer;
   return { scene, layer, camera, stage, metal, qi, shadow, numbers, screen, burst, slash, sheet, template, renderer,
     initTexture, compile, render, getTarget: () => target,
@@ -180,5 +181,130 @@ describe("shared skill GPU prewarm (ticket 283)", () => {
       expect(f.initTexture.mock.calls.some(([t]) => t === f.template.texture)).toBe(false);
       expect(f.render).toHaveBeenCalledTimes(2);
     } finally { f.dispose(); }
+  });
+});
+
+describe("late impact and mapped shadow programs (ticket 286)", () => {
+  it.each(["success", "compile", "render"])("draws mapped skinned/instanced shadows and restores their state after %s", (outcome) => {
+    const f = setup();
+    const geometry = new THREE.BoxGeometry();
+    geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(new Uint16Array(24 * 4), 4));
+    const weights = new Float32Array(24 * 4);
+    for (let i = 0; i < 24; i += 1) weights[i * 4] = 1;
+    geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(weights, 4));
+    const material = new THREE.MeshStandardMaterial({ map: f.sheet });
+    const skinned = new THREE.SkinnedMesh(geometry, material);
+    const bone = new THREE.Bone();
+    skinned.add(bone);
+    skinned.bind(new THREE.Skeleton([bone]));
+    const instanced = new THREE.InstancedMesh(geometry, material, 1);
+    const matrix = new THREE.Matrix4().makeTranslation(9, 8, 7);
+    instanced.setMatrixAt(0, matrix);
+    instanced.count = 0;
+    skinned.visible = instanced.visible = false;
+    // Check both an existing shadow caster and one enabled only for warmup.
+    skinned.castShadow = outcome === "success";
+    const castShadow = skinned.castShadow;
+    f.scene.add(skinned, instanced);
+    const light = f.scene.children.find((o) => o instanceof THREE.DirectionalLight) as THREE.DirectionalLight;
+    light.castShadow = true;
+    light.shadow.autoUpdate = false;
+    light.shadow.needsUpdate = true;
+    f.renderer.shadowMap.autoUpdate = false;
+    f.renderer.shadowMap.needsUpdate = true;
+    const children = [...f.scene.children];
+    const check = (): void => {
+      expect(skinned.castShadow).toBe(true); expect(instanced.castShadow).toBe(true);
+      expect(skinned.material.map).toBe(f.sheet); expect(instanced.material.map).toBe(f.sheet);
+      expect(skinned.customDepthMaterial).toBeUndefined(); expect(instanced.customDepthMaterial).toBeUndefined();
+      expect(skinned.visible).toBe(true); expect(instanced.visible).toBe(true); expect(instanced.count).toBe(1);
+      expect(f.renderer.shadowMap.enabled).toBe(true); expect(f.renderer.shadowMap.autoUpdate).toBe(true);
+      expect(light.shadow.autoUpdate).toBe(true);
+    };
+    f.compile.mockImplementation(() => { check(); if (outcome === "compile") throw new Error(outcome); });
+    f.render.mockImplementation(() => {
+      check(); expect(f.getTarget()).not.toBeNull();
+      // Three consumes these flags while drawing the shadow maps.
+      f.renderer.shadowMap.needsUpdate = light.shadow.needsUpdate = false;
+      if (outcome === "render") throw new Error(outcome);
+    });
+    try {
+      const warm = (): unknown => f.numbers.prewarm(f.scene, () => f.stage.prewarm(METAL, f.renderer, f.scene, f.template));
+      if (outcome === "success") {
+        warm(); expect(f.render).toHaveBeenCalledExactlyOnceWith(f.scene, f.camera);
+      } else expect(warm).toThrow(outcome);
+      expect(skinned.castShadow).toBe(castShadow); expect(instanced.castShadow).toBe(false);
+      expect(skinned.visible).toBe(false); expect(instanced.visible).toBe(false);
+      expect(skinned.frustumCulled).toBe(true); expect(instanced.frustumCulled).toBe(true);
+      expect(instanced.count).toBe(0);
+      const restored = new THREE.Matrix4(); instanced.getMatrixAt(0, restored);
+      expect(restored).toEqual(matrix);
+      expect(f.renderer.shadowMap.autoUpdate).toBe(false); expect(f.renderer.shadowMap.needsUpdate).toBe(true);
+      expect(light.shadow.autoUpdate).toBe(false); expect(light.shadow.needsUpdate).toBe(true);
+      expect(f.scene.children).toEqual(children); expect(f.getTarget()).toBe(f.template);
+      expect(f.numbers.live).toBe(0); expect(f.stage.flipbooks.live).toBe(0); expect(f.metal.count).toBe(0);
+    } finally { skinned.skeleton.dispose(); instanced.dispose(); geometry.dispose(); material.dispose(); f.dispose(); }
+  });
+
+  it.each([FIRE, METAL])("warms the $id impact display variant without drawing to the display or changing live uniforms", (kit) => {
+    const f = setup();
+    f.screen.setAccent(kit.screen.flash?.tint ?? null, kit.screen.frames ?? null);
+    const shown = { ...f.screen.shown };
+    let sample!: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+    const disposed = vi.spyOn(THREE.PlaneGeometry.prototype, "dispose");
+    const materialDispose = vi.spyOn(THREE.Material.prototype, "dispose");
+    let samplers!: unknown[];
+    const names = ["tDiffuse", "tMask", "tShapeA", "tShapeB"];
+    f.compile.mockImplementation((scene: THREE.Scene, camera: THREE.Camera) => {
+      expect(f.getTarget()).toBeNull(); expect(camera).toBeInstanceOf(THREE.OrthographicCamera);
+      expect(scene.fog).toBeNull(); expect(scene.children).toHaveLength(1);
+      sample = scene.children[0] as typeof sample;
+      expect(sample.material.vertexShader).toContain("varying vec2 vUv");
+      expect(sample.material.fragmentShader).toContain("vec3 fireBurst");
+      expect(sample.material.defines).toEqual(kit === FIRE ? { ROLES: "" } : {});
+      samplers = names.map((name) => sample.material.uniforms[name]!.value);
+    });
+    f.render.mockImplementation((mesh: THREE.Mesh) => {
+      expect(f.getTarget()).not.toBeNull();
+      expect(mesh.material).toBe(sample.material);
+    });
+    try {
+      expect(f.screen.prewarm(f.renderer)).toEqual([f.burst, f.slash]);
+      expect(f.compile).toHaveBeenCalledTimes(1); expect(f.render).toHaveBeenCalledTimes(1);
+      expect(f.compile.mock.invocationCallOrder[0]!).toBeLessThan(f.render.mock.invocationCallOrder[0]!);
+      expect(names.map((name) => sample.material.uniforms[name]!.value)).toEqual([null, null, null, null]);
+      expect(samplers.every((value) => value instanceof THREE.Texture)).toBe(true);
+      expect(sample.parent).toBeNull(); expect(disposed.mock.contexts).toContain(sample.geometry);
+      expect(materialDispose.mock.contexts).not.toContain(sample.material);
+      expect(f.screen.shown).toEqual(shown); expect(f.getTarget()).toBe(f.template);
+    } finally { f.dispose(); }
+  });
+
+  it.each(["mask", "compile", "render"])("restores the impact target, samplers and temporary quad after a %s failure", (failure) => {
+    const f = setup();
+    const insertPass = vi.fn();
+    const screen = new ScreenFx({ composer: { passes: [], insertPass } as unknown as EffectComposer,
+      composerOn: () => true, addOverlay: () => () => {}, drawActorMask: () => {
+        if (failure === "mask") { f.renderer.setRenderTarget(null); throw new Error(failure); }
+      } });
+    const pass = insertPass.mock.calls[1]![0] as { uniforms: Record<string, THREE.IUniform> };
+    const names = ["tDiffuse", "tMask", "tShapeA", "tShapeB"];
+    const saved = [f.sheet, null, f.burst, f.slash];
+    names.forEach((name, i) => { pass.uniforms[name]!.value = saved[i]; });
+    const disposed = vi.spyOn(THREE.PlaneGeometry.prototype, "dispose");
+    let sample: THREE.Mesh | undefined;
+    f.compile.mockImplementation((scene: THREE.Scene) => {
+      sample = scene.children[0] as THREE.Mesh;
+      if (failure === "compile") throw new Error(failure);
+    });
+    f.render.mockImplementation(() => { throw new Error(failure); });
+    try {
+      expect(() => screen.prewarm(f.renderer)).toThrow(failure);
+      expect(f.getTarget()).toBe(f.template);
+      expect(names.map((name) => pass.uniforms[name]!.value)).toEqual(saved);
+      expect(disposed).toHaveBeenCalledTimes(1);
+      if (sample !== undefined) expect(sample.parent).toBeNull();
+      if (failure !== "render") expect(f.render).not.toHaveBeenCalled();
+    } finally { screen.dispose(); f.dispose(); }
   });
 });

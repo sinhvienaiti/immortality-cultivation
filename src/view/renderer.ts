@@ -100,18 +100,36 @@ export function prewarmScene(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     textures.add(value);
   };
   try {
+    if (renderer.shadowMap.enabled) {
+      const { autoUpdate, needsUpdate } = renderer.shadowMap;
+      renderer.shadowMap.autoUpdate = true;
+      restore.push(() => { renderer.shadowMap.autoUpdate = autoUpdate; renderer.shadowMap.needsUpdate = needsUpdate; });
+    }
     for (const texture of extraTextures) upload(texture);
     scene.traverse((object) => {
       const visible = object.visible;
       // Keep the scene's light count, including zero-intensity flash lights, unchanged.
       if (!(object instanceof THREE.Light)) object.visible = true;
       restore.push(() => { object.visible = visible; });
+      if (object instanceof THREE.Light && object.castShadow && object.shadow !== undefined) {
+        const { shadow } = object;
+        const { autoUpdate, needsUpdate } = shadow;
+        shadow.autoUpdate = true;
+        restore.push(() => { shadow.autoUpdate = autoUpdate; shadow.needsUpdate = needsUpdate; });
+      }
       const mesh = object as THREE.Mesh;
       if (mesh.geometry === undefined || mesh.material === undefined) return;
       const culled = mesh.frustumCulled;
       mesh.frustumCulled = false;
       restore.push(() => { mesh.frustumCulled = culled; });
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      // Exercise USE_MAP with both USE_SKINNING and USE_INSTANCING in the real shadow pass.
+      if ((mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh) &&
+        materials.some((m) => (m as THREE.MeshBasicMaterial).map instanceof THREE.Texture)) {
+        const castShadow = mesh.castShadow;
+        mesh.castShadow = true;
+        restore.push(() => { mesh.castShadow = castShadow; });
+      }
       objects.push({ name: mesh.name || `${mesh.type}:${mesh.id}`, materials: materials.map((m) => m.id), shadow: mesh.castShadow });
       for (const material of [...materials, mesh.customDepthMaterial, mesh.customDistanceMaterial]) {
         if (material === undefined) continue;

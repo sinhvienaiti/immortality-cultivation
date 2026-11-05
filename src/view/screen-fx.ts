@@ -525,14 +525,31 @@ class ImpactPass extends Pass {
   /** Compiles the mask's and the frame's programs before the first hit (a first-use compile is a frame hitch). */
   prewarm(renderer: THREE.WebGLRenderer): void {
     const target = renderer.getRenderTarget();
-    if (this.drawMask !== null) this.drawMask(renderer, this.mask);
-    this.uniforms.tDiffuse.value = this.mask.texture;
-    this.uniforms.tMask.value = this.mask.texture;
-    this.uniforms.tShapeA.value ??= this.mask.texture;
-    this.uniforms.tShapeB.value ??= this.mask.texture;
-    renderer.setRenderTarget(this.mask);
-    this.quad.render(renderer);
-    renderer.setRenderTarget(target);
+    const samplers = [this.uniforms.tDiffuse, this.uniforms.tMask, this.uniforms.tShapeA, this.uniforms.tShapeB];
+    const saved = samplers.map((u) => u.value);
+    const geometry = new THREE.PlaneGeometry(2, 2);
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const mesh = new THREE.Mesh(geometry, this.material);
+    scene.add(mesh);
+    try {
+      if (this.drawMask !== null) this.drawMask(renderer, this.mask);
+      this.uniforms.tDiffuse.value = this.mask.texture;
+      this.uniforms.tMask.value = this.mask.texture;
+      this.uniforms.tShapeA.value ??= this.mask.texture;
+      this.uniforms.tShapeB.value ??= this.mask.texture;
+      // The last enabled composer pass draws to the display: the mask target only warms the linear variant.
+      // Use the quad's light/fog-free scene, and never draw the warmup onto the display.
+      renderer.setRenderTarget(null);
+      renderer.compile(scene, camera);
+      renderer.setRenderTarget(this.mask);
+      this.quad.render(renderer);
+    } finally {
+      samplers.forEach((u, i) => { u.value = saved[i]!; });
+      renderer.setRenderTarget(target);
+      scene.remove(mesh);
+      geometry.dispose();
+    }
   }
 
   override render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget): void {
