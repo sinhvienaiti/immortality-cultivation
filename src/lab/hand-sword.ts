@@ -419,6 +419,16 @@ export class HandSword {
     ];
   }
 
+  /** The blade's start and tip in the world now (false: no sword shown in the hand). No allocation. */
+  blade(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const mesh = this.mesh;
+    if (mesh === null || !mesh.visible) return false;
+    mesh.updateWorldMatrix(true, false);
+    a.copy(this.probe.blade).applyMatrix4(mesh.matrixWorld);
+    b.copy(this.probe.tip).applyMatrix4(mesh.matrixWorld);
+    return true;
+  }
+
   private clear(): void {
     if (this.mesh !== null) {
       this.pivot.remove(this.mesh);

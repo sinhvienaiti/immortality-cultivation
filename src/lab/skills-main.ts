@@ -44,6 +44,10 @@
  * (DRAGON_SKILL.md §9; twin-pearl-greybox.ts): a real sim world with the header flag swordKey2,
  * selectable field-wide tides and the cast's hit volumes drawn as translucent shapes with phase labels;
  * L cycles layouts, N restores the tide, V brings the boss in; __lab.twinPearl reads each cast's numbers (key-to-first-hit too).
+ * Five-phase samples (docs/work/tasks/skill-five-phase-samples.md, five-phase.ts): in Fire, key M and key 2 play all
+ * five phases from the element's own clips (with ?typed=1, or the panel's checkbox, the charge while the word is typed);
+ * ?five=0 keeps the plain meteor rain and Nhất Tuyến for comparison. Every meteor's body is its element's comet clip
+ * (its 1080p video; ?video=0 its atlas). __lab.five() reads what they drew.
  * ?readable=1 dims the key 8 and 9 skills whose light buries the word tags' spots (showcase.ts READABLE_LIGHT), to
  * compare; ?atlases=all keeps every key 8 and 9 atlas on the GPU from the start (before 06/11: 1.9 GB); __lab.memory() and __lab.tagSpots() serve the perf and readability checks (lab-perf-memory.mjs).
  */
@@ -86,6 +90,7 @@ import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
+import { CrescentSample, FIVE, FIVE_RECIPES, FivePhase, type FiveHost } from "./five-phase";
 import { ChannelSkill, COLLAPSE_S, WORD_S, type ChannelReport } from "./channel-skill";
 import { StreakCounter } from "./streak-counter";
 import type { Grade } from "../content/types";
@@ -328,6 +333,8 @@ let clipRgb = 0xffffff;
 let clipDeath = false;
 /** Set while the meteor rain (M) or the channel (C) lands a blow: its deaths are the element's own (else the light burst). */
 let elementKill = false;
+/** Set while a five-phase sample lands a blow: its deaths burn away into the sample's embers (five-phase.ts). */
+let fiveKill: FivePhase | null = null;
 /** Lab frames drawn (the screen-impact dedupe: hitStop and shake of one blow arrive on one frame). */
 let frameNo = 0;
 const lastImpact = { frame: -1, slot: "" };
@@ -658,6 +665,11 @@ bus.on((e) => {
   if (e.kind === "release") victims.cast(e.slot);
   else if (e.kind === "impact") victims.impact(e, frameNo);
   else if (e.kind === "death" && !herd.isHero(e.target)) {
+    // A five-phase sample's kill: it burns away (the herd's dissolve) into the element's ember burst and rising embers.
+    if (fiveKill !== null) {
+      fiveKill.death(e.x, e.y, e.z);
+      return;
+    }
     // A key-8 skill's kill: the lab's light burst in its colour (its clip is the element's material).
     if (clipDeath) {
       deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
@@ -1106,6 +1118,8 @@ const meteor = new MeteorRain({
     elementKill = false;
     return killed;
   },
+  five: () => fiveOf(),
+  hand: (out) => caster.hand(out),
   strike(at, role) {
     // Each landing a skill-tier blow (the first its stop and shake, the rest a lighter shake), the kick, the light.
     screen.impact("skill", role);
@@ -1117,6 +1131,76 @@ const meteor = new MeteorRain({
     if (f !== null) herd.status(i, f.kind, f.seconds, f.rgb);
   },
 });
+// The five-phase samples (five-phase.ts): the element's recipe (Fire), on the lab's herd, caster and hit path.
+const fiveOn = params.get("five") !== "0";
+const fiveAt = new THREE.Vector3();
+const fiveHost: FiveHost = {
+  stage,
+  layer: view.layers.fx,
+  camera: view.camera,
+  alive: (i) => herd.alive(i),
+  x: (i) => herd.x(i),
+  z: (i) => herd.z(i),
+  midY: (i) => herd.midY(i),
+  radius: (i) => herd.radius(i),
+  inCapsule: (ax, az, bx, bz, halfW, out) => herd.inCapsule(ax, az, bx, bz, halfW, out),
+  status: (i, kind, seconds, rgb) => herd.status(i, kind, seconds, rgb),
+  blow(slot, i, dx, dz, power, role) {
+    // The struck beast's flash in the element's colour for about 0.1 s, its knockback, numbers and sound.
+    const five = fiveOf();
+    const rgb = five?.recipe.rim ?? fx.paletteOf("k1").flashHex;
+    const killed = herd.hit(i, dx, dz, power, rgb, FIVE.rimS);
+    fiveKill = five;
+    emitImpact(slot, i, dx, dz, power, role, killed, rgb);
+    fiveKill = null;
+    return killed;
+  },
+  strike(slot, at, role, dx, dz) {
+    screen.impact(tierOf(slot), role);
+    if (role !== "secondary") kick.impulse((role === "finisher" ? 3.5 : 3) * KICK_M_PER_PX, dx * 0.4, dz * 0.4 - 0.9);
+    lights.flash(fiveAt.set(at.x, 1.2, at.z), view.camera.position, fiveOf()?.recipe.light ?? fx.paletteOf("k1").flashHex, 5, true);
+  },
+  kick: (px, dx, dz) => {
+    probe.flash();
+    kick.impulse(px * KICK_M_PER_PX, dx, dz);
+  },
+  light: (at, colour, intensity) => lights.flash(at, view.camera.position, colour, intensity),
+  glow: (rgb, k) => caster.glow(rgb, k),
+  hand: (out) => caster.hand(out),
+  blade: (a, b) => handSword?.blade(a, b) ?? false,
+};
+const fives = new Map<string, { five: FivePhase; crescent: CrescentSample }>();
+/** The element's five-phase sample (null: none for it, or ?five=0). */
+function fiveOf(): FivePhase | null {
+  return fiveSet()?.five ?? null;
+}
+function fiveSet(): { five: FivePhase; crescent: CrescentSample } | null {
+  if (!fiveOn) return null;
+  const recipe = FIVE_RECIPES[fx.element.id];
+  if (recipe === undefined) return null;
+  let f = fives.get(recipe.folder);
+  if (f === undefined) {
+    const five = new FivePhase(fiveHost, recipe);
+    f = { five, crescent: new CrescentSample(fiveHost, five) };
+    fives.set(recipe.folder, f);
+  }
+  return f;
+}
+/** Key 2's sample: the crescent off the sword at the key 2 target (the release on this frame). */
+function castCrescentSample(): void {
+  const f = fiveSet();
+  if (f === null) return;
+  const [tx, tz] = TARGET.k2;
+  probe.lastKey("k2");
+  screen.cut();
+  caster.release("k2", tx, tz);
+  emitRelease("k2", tx, tz);
+  pendingCrescent = true;
+}
+/** The crescent leaves on the frame after the caster's update (the tip where the body put it). */
+let pendingCrescent = false;
+meteor.comet.driven = fixed;
+meteor.comet.videoOn = params.get("video") !== "0";
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
@@ -1240,6 +1324,8 @@ function emitBolt(k: number): void {
 // Typing simulation: letters at the chosen WPM (5 letters a word), the charge follows them.
 interface Typing {
   slot: SwordSlot;
+  /** A five-phase sample's word (key 2 or key M in Fire): its charge and release are the sample's. */
+  five?: "k2" | "km";
   letters: number;
   typed: number;
   next: number;
@@ -1257,12 +1343,33 @@ const TARGET: Record<SwordSlot, [number, number]> = { auto: [0, -8], k1: [0, -8]
  */
 let typedMode = params.get("typed") === "1";
 
-/** A lab key's skill: the seven Kiếm slots, and key 7's field-wide prototype (always cast at once). */
-type LabSlot = SwordSlot | "k7";
+/** A lab key's skill: the seven Kiếm slots, and key 7's field-wide prototype (always cast at once); "km" the meteor's word. */
+type LabSlot = SwordSlot | "k7" | "km";
+/** The five-phase samples' words (letters): the meteor's charge lasts about 0.27 s at 45 WPM (the task: 0.15–0.3 s). */
+const FIVE_LEN = { k2: 6, km: 2 } as const;
 
 function type(slot: LabSlot): void {
   // Keys wait while the cut-in holds the world (the typing timer is stopped too).
   if (cutin.active) return;
+  // The five-phase samples (Fire): key 2's crescent and key M's meteors, typed (the charge) or at once.
+  if ((slot === "k2" || slot === "km") && fiveOf() !== null && greybox === null) {
+    if (!typedMode) {
+      typing = null;
+      if (slot === "k2") castCrescentSample();
+      else castMeteor();
+      return;
+    }
+    probe.event("type", slot);
+    const tx = slot === "k2" ? TARGET.k2[0] : 0;
+    const tz = slot === "k2" ? TARGET.k2[1] : -8;
+    caster.face(tx - caster.x, tz - caster.z);
+    typing = { slot: slot === "k2" ? "k2" : "k1", five: slot, letters: FIVE_LEN[slot], typed: 0, next: 0, tx, tz };
+    return;
+  }
+  if (slot === "km") {
+    castMeteor();
+    return;
+  }
   if (slot === "k2" && greybox !== null) {
     // The grey box casts on this key (D58 instant cast): the sim's F0 runs now, no VFX, the body still answers.
     typing = null;
@@ -1355,6 +1462,19 @@ function updateTyping(dt: number): void {
       startUltimate(typing.tx, typing.tz);
       break;
     }
+    if (typing.typed >= typing.letters && typing.five !== undefined) {
+      // A sample's last letter: its release on this frame.
+      const kind = typing.five;
+      typing = null;
+      if (kind === "k2") castCrescentSample();
+      else castMeteor();
+      break;
+    }
+    if (typing.five !== undefined) {
+      // A sample's letter: the body gathers (its charge layers follow every frame, updateFive).
+      caster.charge(typing.slot, p, typing.tx, typing.tz, typing.letters - typing.typed);
+      continue;
+    }
     if (typing.typed >= typing.letters) {
       // The word's grade (src/typing/grading.ts): the lab types without errors at the WPM, so it reads perfect (flash
       // when faster than 0.85 of the expected time); a perfect or flash word pulses its swords' rings (SWORD_AURA §4.9).
@@ -1398,6 +1518,11 @@ function reset(): void {
   clipSkills.clear();
   clipSkills9.clear();
   meteor.reset();
+  for (const f of fives.values()) {
+    f.five.reset();
+    f.crescent.reset();
+  }
+  pendingCrescent = false;
   channel.reset();
   channelSound.loop?.stop(0.05);
   channelSound.loop = null;
@@ -1432,7 +1557,7 @@ window.addEventListener("keydown", (e) => {
   // 9 casts the selected new skill (SKILLS_EXPANSION; a design without its row yet plays as its video), Shift+9 selects the next ("(" on most layouts).
   else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? clipSkills9.selectNext() : clipSkills9.cast());
   // M the slanted meteor rain in the element on (E).
-  else if (e.key === "m" || e.key === "M") castMeteor();
+  else if (e.key === "m" || e.key === "M") type("km");
   // C the channel: opens it (or feeds it a word); Shift+C feeds it a SLOPPY word, which breaks it (and the streak).
   else if (e.key === "c" || e.key === "C") {
     if (e.shiftKey) wordTyped("sloppy");
@@ -1643,6 +1768,24 @@ if (params.get("ui") !== "0") {
   document.body.append(panel);
 }
 
+/** The five-phase samples each frame (after the hand sword: the blade where it is drawn): charge, crescent, layers. */
+function updateFive(world: number): void {
+  const f = fiveSet();
+  if (f !== null) {
+    if (typing !== null && typing.five !== undefined) f.five.chargeFrame(typing.typed / typing.letters, caster.x, caster.z, world, typing.five === "k2");
+    if (pendingCrescent) {
+      pendingCrescent = false;
+      const [tx, tz] = TARGET.k2;
+      f.crescent.cast(caster.x, caster.z, tx, tz);
+      probe.flash();
+    }
+  }
+  for (const g of fives.values()) {
+    g.crescent.update(world);
+    g.five.update(world);
+  }
+}
+
 // Loop.
 let lastWorldDt = 0;
 function frame(dt: number): void {
@@ -1689,6 +1832,7 @@ function frame(dt: number): void {
   stage.update(world);
   // The weapon in the hand reads this frame's handAway (thrown by Phi Kiếm or Nhất Tuyến) and the typing glow.
   handSword?.update(world, dt, fx, view.camera);
+  updateFive(world);
   presence.update(world, dt, caster.x, caster.z, fx);
   deathFx.update(world);
   victims.update(world);
@@ -1786,7 +1930,7 @@ declare global {
       flipbookProbe(): Promise<FlipbookProbeReport>;
       /** Load-time GPU uploads/programs for Fire and Metal; reading this does not render or emit. */
       prewarmReport(): ReturnType<ElementStage["prewarm"]>[];
-      type(slot: SwordSlot | "k7"): void;
+      type(slot: SwordSlot | "k7" | "km"): void;
       cast(slot: SwordSlot, tx: number, tz: number): void;
       enemyShot(): void;
       /** Steps `frames` frames of `dt` seconds (default 1/60). */
@@ -1881,6 +2025,13 @@ declare global {
       channel(action?: "start" | "feed" | "sloppy"): ChannelReport;
       /** A world point on screen (CSS px from the top left; captures). */
       project(x: number, y: number, z: number): { x: number; y: number };
+      /**
+       * The five-phase samples (five-phase.ts) of the element on: its recipe's folder, whether its clips are in, what
+       * they drew since the reset, key 2's last crescent and the meteor's comet; null: none for this element (or ?five=0).
+       */
+      five(): { folder: string; ready: boolean; live: number; audit: Record<string, number>; crescent: CrescentSample["last"]; comet: string; typed: boolean; comets: unknown[] } | null;
+      /** Turns the lab's typed mode on or off (the panel's checkbox; the samples' charge shows while their word is typed). */
+      setTyped(on: boolean): void;
       /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true; dry: its light alone, no blows) or reads the last one. */
       meteor(cast?: boolean, dry?: boolean): (MeteorReport & { active: boolean }) | null;
       /** Key 9 (clip-skills.ts, SKILLS_EXPANSION): casts new skill `id` (none: the selected; one without its row plays as its video); what it cast and every id it has. */
@@ -2244,6 +2395,16 @@ void (async () => {
       else if (action === "feed") channel.feed("perfect");
       else if (action === "sloppy") channel.feed("sloppy");
       return { ...channel.report, active: channel.active };
+    },
+    five() {
+      const f = fiveSet();
+      if (f === null) return null;
+      return { folder: f.five.recipe.folder, ready: f.five.ready, live: f.five.live, audit: { ...f.five.audit }, crescent: f.crescent.last === null ? null : { ...f.crescent.last, struck: [...f.crescent.last.struck] },
+        comet: meteor.hasComet() ? meteor.comet.id : "", typed: typedMode,
+        comets: stage.flipbooks.library(f.five.recipe.folder).declares().filter((m) => m.role === "comet").map((m) => ({ id: m.id, loaded: stage.flipbooks.library(f.five.recipe.folder).get(m.id) !== null, axis: m.comet ?? null, video: m.video?.url ?? null })) };
+    },
+    setTyped(on) {
+      typedMode = on;
     },
     meteor(cast = false, dry = false) {
       if (cast) castMeteor(dry);

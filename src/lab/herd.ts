@@ -694,13 +694,14 @@ export class LabHerd implements TargetField {
     this.slowK[i] = k;
   }
 
-  hit(i: number, dx: number, dz: number, power: number, rgb: number): boolean {
+  /** `rimS`: the rim flash's length (s; default 2–4 frames; the five-phase samples ask for about 0.1 s). */
+  hit(i: number, dx: number, dz: number, power: number, rgb: number, rimS?: number): boolean {
     if (!this.alive(i)) return false;
     const tier = this.tier(i);
     const king = tier >= 4;
     const elite = tier >= 2 && !king;
     // Rim flash, 2–4 frames, in the attacker's colour; the body brightens on the first frames only.
-    this.rimT[i] = this.rimLen[i] = elite || king ? RIM_ELITE_S : RIM_S;
+    this.rimT[i] = this.rimLen[i] = rimS ?? (elite || king ? RIM_ELITE_S : RIM_S);
     this.flash[i] = 1;
     this.tint[i] = rgb;
     // A big hit slides the beast back 0.3–0.8 m along the blow (it stays where it lands; elites half); the

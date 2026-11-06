@@ -152,6 +152,9 @@ export class LabCaster {
   private readonly rimK = { value: 0 };
   private readonly rimCol = { value: new THREE.Color() };
   private rimT = -1;
+  /** A held rim (a skill gathering: five-phase.ts), under the hit flash: its level and colour. */
+  private glowK = 0;
+  private readonly glowCol = new THREE.Color();
   private lastSegSpeed = 0;
   private wasMoving = false;
   private after: AfterImages | null = null;
@@ -379,6 +382,7 @@ export class LabCaster {
     this.anim?.place(x, z, fx, fz);
     this.rimT = -1;
     this.rimK.value = 0;
+    this.glowK = 0;
     this.after?.reset();
     this.ring?.reset();
     this.primed = null;
@@ -451,9 +455,26 @@ export class LabCaster {
     m.needsUpdate = true;
   }
 
+  /**
+   * A held rim in `rgb` (0xRRGGBB) at `k` (0 off; ~1 the hit flash's peak): Lam glows while a skill gathers. A hit's
+   * flash still wins while it runs.
+   */
+  glow(rgb: number, k: number): void {
+    this.glowK = Math.max(0, k);
+    this.glowCol.setHex(rgb, THREE.SRGBColorSpace);
+    if (this.rimT < 0) {
+      this.rimK.value = this.glowK;
+      this.rimCol.value.copy(this.glowCol);
+    }
+  }
+
   /** The rim flash: up in 2 frames (hot, near white), then down over 0.2 s as it cools to red. */
   private updateRim(dt: number): void {
-    if (this.rimT < 0) return;
+    if (this.rimT < 0) {
+      this.rimK.value = this.glowK;
+      if (this.glowK > 0) this.rimCol.value.copy(this.glowCol);
+      return;
+    }
     this.rimT += dt;
     const t = this.rimT;
     let e: number;

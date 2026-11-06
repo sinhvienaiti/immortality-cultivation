@@ -11,9 +11,17 @@
  * cores). The blow is the kit's own impact (an element without an impact clip: its head's core flaring at the target)
  * and, AFTER_S later, its aftermath; a kit without hooks (Metal) takes the folder's impact clip and its ground mark
  * lingering. Each blow goes through the lab's hit path (the host).
+ * Its body is the element's own comet when the folder has one (role "comet", 06/11: comet-head.ts, the 1080p video,
+ * turned so its head leads along the fall); the core-and-ribbon head above stays for elements without one. With a
+ * five-phase recipe (five-phase.ts, Fire: docs/work/tasks/skill-five-phase-samples.md) the rain plays all five phases:
+ * the charge while its word is typed (the lab's typed mode), the release at the hand with its ribbon streaking up out
+ * of the frame, the halo seal marking each beast, the comets, each blow's spray, lotus, turning ring and burning body,
+ * the painted burn mark, embers and smoke after.
  */
 import * as THREE from "three";
 import { aimClipSkill, type ClipSkill } from "./clip-skills";
+import { CometHead, COMET_M } from "./comet-head";
+import type { FivePhase } from "./five-phase";
 import { CrescentTrail, type TrailMatter } from "../view/skills/crescent-trail";
 import { crescentMatter } from "../view/skills/element-clips";
 import type { ElementKit, ElementHooks } from "../view/skills/element-kit";
@@ -23,10 +31,14 @@ import type { TargetField } from "../view/skills/targets";
 import type { ImpactRole } from "../view/screen-fx";
 import type { WeaponGlow } from "../view/skills/weapons";
 
-/** Meteors at most, their gap (s), the fall (s), the slant off the vertical (degrees), the height they fall from (m). */
+/**
+ * Meteors at most, their gap (s), the fall (s; the comet reads on its way down), the slant off the vertical (degrees),
+ * the height they fall from (m). The first lands FIRST_S after the key: the release streaks up first.
+ */
 export const METEORS = 8;
 export const GAP_S = 0.27;
-export const FALL_S = 0.18;
+export const FALL_S = 0.3;
+export const FIRST_S = 0.45;
 const SLANT_DEG = 20;
 const HEIGHT_M = 14;
 /** A mark leads its blow (s); the first blow comes this long after the key. */
@@ -79,6 +91,9 @@ export interface MeteorHost {
   strike(at: THREE.Vector3, role: ImpactRole): void;
   /** The element's status on a struck beast. */
   status(i: number): void;
+  /** The element's five-phase sample layers (null: none; five-phase.ts) and the hand the release leaves from. */
+  five?(): FivePhase | null;
+  hand?(out: THREE.Vector3): void;
 }
 
 /** What the last rain did (__lab.meteor). */
@@ -172,6 +187,9 @@ interface Meteor {
   lit: boolean;
   /** Its fall on screen (rad): the head's and the landing cut's turn. */
   rot: number;
+  /** Its fall (world, unit) and its comet's loop phase. */
+  readonly fall: THREE.Vector3;
+  readonly phase: number;
 }
 
 const v = new THREE.Vector3();
@@ -190,12 +208,23 @@ export class MeteorRain {
   private readonly group = new THREE.Group();
   private readonly blank: THREE.DataTexture;
   last: MeteorReport | null = null;
+  /** The element's comet (its video when it plays; the lab sets `driven` on fixed steps and `videoOn` from ?video). */
+  readonly comet: CometHead;
+  /** The five-phase layers of this rain (set at its cast; null: the plain rain). */
+  private fiveNow: FivePhase | null = null;
 
   constructor(private readonly host: MeteorHost) {
     this.group.name = "fx-meteor-heads";
     host.layer.add(this.group);
     this.blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
     this.blank.needsUpdate = true;
+    this.comet = new CometHead(host.layer, this.blank);
+  }
+
+  /** Whether the element on has its own comet in (its folder loaded). */
+  hasComet(): boolean {
+    const folder = this.folder();
+    return this.comet.use(folder, this.host.stage.flipbooks.library(folder));
   }
 
   private folder(): string {
@@ -266,20 +295,30 @@ export class MeteorRain {
     // Swept from one side (the side the meteors come from) to the other.
     const order = aim.points.map((p, k) => ({ p, k })).sort((x, y) => x.p.x - y.p.x || x.p.z - y.p.z);
     const look = this.lookFor();
+    const five = this.host.five?.() ?? null;
+    this.fiveNow = five;
+    const comet = this.hasComet();
     const report: MeteorReport = { element: folder, meteors: 0, marks: 0, impactAt: [], markAt: [], blows: 0, kills: 0, kitImpacts: 0, points: [],
-      head: look?.headId ?? "", tail: look?.tailId ?? "", sparkle: look?.spark?.id ?? "" };
+      head: comet ? this.comet.id : look?.headId ?? "", tail: look?.tailId ?? "", sparkle: look?.spark?.id ?? "" };
     const trails = this.trails;
     const slant = (SLANT_DEG * Math.PI) / 180;
     order.forEach(({ p, k }, n) => {
-      const landAt = MARK_S + n * GAP_S;
+      const landAt = FIRST_S + n * GAP_S;
       const target = new THREE.Vector3(p.x, 0.35, p.z);
       // From high up and to the left (screen left on the play camera), SLANT_DEG off the vertical.
       const start = new THREE.Vector3(p.x - Math.tan(slant) * HEIGHT_M, HEIGHT_M, p.z);
       const hits = aim.hits.filter((h) => h.point === k).map((h) => ({ i: h.i, dx: h.dx, dz: h.dz }));
-      this.meteors.push({ target, start, fallAt: landAt - FALL_S, landAt, hits, role: n === 0 ? "primary" : "secondary", trail: trails[n % Math.max(1, trails.length)] ?? null, spark: 0, landed: false, burnt: false, lit: false, rot: 0 });
-      // Marked on the ground before its blow; where the kit has no aftermath, the mark stays as the burnt ground.
-      const burn = this.hooks().sword?.aftermath !== undefined ? 0.3 : BURN_S;
-      if (this.host.mark(folder, p.x, p.z, 3, landAt - MARK_S, MARK_S + burn)) report.marks += 1;
+      const fall = target.clone().sub(start).normalize();
+      this.meteors.push({ target, start, fallAt: landAt - FALL_S, landAt, hits, role: n === 0 ? "primary" : "secondary", trail: trails[n % Math.max(1, trails.length)] ?? null, spark: 0, landed: false, burnt: false, lit: false, rot: 0, fall, phase: n * 0.37 });
+      if (five !== null) {
+        // The halo seal marks it MARK_S before its blow and flares out with it.
+        five.markAt(p.x, p.z, MARK_S, landAt - MARK_S);
+        report.marks += 1;
+      } else {
+        // Marked on the ground before its blow; where the kit has no aftermath, the mark stays as the burnt ground.
+        const burn = this.hooks().sword?.aftermath !== undefined ? 0.3 : BURN_S;
+        if (this.host.mark(folder, p.x, p.z, 3, landAt - MARK_S, MARK_S + burn)) report.marks += 1;
+      }
       report.markAt.push(landAt - MARK_S);
       report.impactAt.push(landAt);
       report.points.push({ x: p.x, z: p.z });
@@ -288,11 +327,25 @@ export class MeteorRain {
     this.t = 0;
     this.last = report;
     this.host.release(order[0] !== undefined ? v.set(order[0].p.x, 0, order[0].p.z) : c);
+    if (five !== null && report.meteors > 0) {
+      // R at the hand on the key's frame, and the ribbon streaking up out of the frame (the meteors answer it).
+      this.host.caster(c);
+      if (this.host.hand !== undefined) this.host.hand(a);
+      else a.set(c.x, 1.3, c.z);
+      const t0 = order[0]!.p;
+      const dx = t0.x - c.x;
+      const dz = t0.z - c.z;
+      const l = Math.hypot(dx, dz) || 1;
+      five.release(a, dx / l, dz / l, c.x, c.z, false);
+      five.skyStreak(a);
+    }
     return report.meteors;
   }
 
   /** How far its landing's light leads the blow: the kit's impact, or none (no impact clip: its head's core flares at once). */
   private lead(): number {
+    // The five-phase blow starts its spray at a bright frame on the landing frame itself.
+    if (this.fiveNow !== null) return 0;
     const folder = this.folder();
     const player = this.host.stage.flipbooks;
     const lib = player.library(folder);
@@ -317,30 +370,57 @@ export class MeteorRain {
     }
     this.t += dt;
     const look = this.meteors.length > 0 ? this.lookFor() : this.look;
+    const comet = this.meteors.length > 0 && this.hasComet();
     for (const m of this.meteors) {
       // Its burnt ground, past the blow's peak.
       if (m.landed && !m.burnt && this.t >= m.landAt + AFTER_S) {
         m.burnt = true;
-        this.hooks().sword?.aftermath?.({ slot: "k1", x: m.target.x, z: m.target.z, r: 1.2, life: BURN_S, rate: 6, pal: this.host.pal() });
+        if (this.fiveNow !== null) this.fiveNow.aftermath(m.target.x, m.target.z, 3.2, 0);
+        else this.hooks().sword?.aftermath?.({ slot: "k1", x: m.target.x, z: m.target.z, r: 1.2, life: BURN_S, rate: 6, pal: this.host.pal() });
       }
       if (m.landed || this.t < m.fallAt) continue;
       // Its impact's light, its attack's length ahead of the blow.
-      if (!m.lit && this.t >= m.landAt - this.lead() - 1e-6) {
+      if (!m.lit && this.fiveNow === null && this.t >= m.landAt - this.lead() - 1e-6) {
         m.lit = true;
         this.impact(m);
       }
       const u = Math.min(1, (this.t - m.fallAt) / FALL_S);
       v.lerpVectors(m.start, m.target, u);
       // Its head and tail down to the ground, drawn on its landing frame too (the contact keeps its light).
-      m.trail?.head(v.x, v.y, v.z, TAIL_W);
-      if (look !== null) this.head(look, v, m, dt);
+      m.trail?.head(v.x, v.y, v.z, comet ? TAIL_W * 0.7 : TAIL_W);
+      if (comet) this.cometFrame(look, v, m, dt);
+      else if (look !== null) this.head(look, v, m, dt);
       if (u < 1) continue;
       m.landed = true;
       this.land(m);
     }
     for (const tr of this.trails) tr.update(dt, this.host.camera);
     look?.head.update(dt);
+    this.comet.update(dt);
     if (this.meteors.length > 0 && this.meteors.every((m) => m.landed && m.burnt)) this.meteors = [];
+  }
+
+  /**
+   * The meteor's body this frame from its element's comet (its head leading along the fall), and the sparkles it sheds
+   * (its sparkle clip; the five-phase rain adds twinkles).
+   */
+  private cometFrame(look: Look | null, at: THREE.Vector3, m: Meteor, dt: number): void {
+    // Grows in over its first tenth of the fall (it comes out of the sky, not out of nothing).
+    const u = Math.min(1, (this.t - m.fallAt) / FALL_S);
+    this.comet.draw(at, m.fall, COMET_M * (0.7 + 0.3 * Math.min(1, u * 3)), Math.min(1, u * 3.5), m.phase);
+    m.spark += SPARKS_PER_S * dt;
+    while (m.spark >= 1) {
+      m.spark -= 1;
+      const back = Math.random() * 0.12;
+      c.lerpVectors(m.start, m.target, Math.max(0, u - back));
+      c.x += (Math.random() - 0.5) * 0.5;
+      c.z += (Math.random() - 0.5) * 0.5;
+      const sm = look?.spark?.meta ?? null;
+      if (this.fiveNow !== null && Math.random() < 0.5) this.fiveNow.twinkle(c, 0.3 + Math.random() * 0.3, 0.4, 1.3, 0, 0, -0.8, 0);
+      else if (look !== null && look.spark !== null && sm !== null) {
+        look.spark.spawn(c, 0.4 + Math.random() * 0.3, { frame: sm.start + Math.floor(Math.random() * (sm.frames - sm.start)), rate: 1, life: 0.45, fadeOut: 0.3, vy: -0.6, lift: 0.4, ground: 0 });
+      }
+    }
   }
 
   /** The meteor's head this frame (its element's bright core, turned along the fall on screen) and the sparkles it sheds. */
@@ -379,6 +459,21 @@ export class MeteorRain {
       return;
     }
     this.host.strike(m.target, m.role);
+    const five = this.fiveNow;
+    if (five !== null) {
+      // Each beast under it: the spray, lotus, turning ring and burning body, its blow through the hit path.
+      m.lit = true;
+      for (const h of m.hits) {
+        if (!this.host.targets.alive(h.i)) continue;
+        const killed = five.hit("km", h.i, h.dx, h.dz, m.role, 1, true);
+        if (r !== null) {
+          r.blows += 1;
+          r.kitImpacts += 1;
+          if (killed) r.kills += 1;
+        }
+      }
+      return;
+    }
     for (const h of m.hits) {
       if (!this.host.targets.alive(h.i)) continue;
       const killed = this.host.blow(h.i, h.dx, h.dz, 1, m.role);
@@ -438,5 +533,7 @@ export class MeteorRain {
     this.meteors = [];
     for (const tr of this.trails) tr.clear();
     this.look?.head.clear();
+    this.comet.clear();
+    this.fiveNow = null;
   }
 }

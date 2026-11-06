@@ -136,6 +136,11 @@ export interface FlipbookMeta {
   readonly code?: string;
   /** The clip's own video (lab-flipbooks, 06/11): the lab's showcases play it in place of the atlas, sharper. */
   readonly video?: FlipbookVideo;
+  /**
+   * A comet's axis (role "comet", 06/11): its head in the video frame (0–1 from the top left; the atlas cell's head is
+   * its pivot) and the unit direction from the head along its tail in frame pixels (y down): it flies along −tail.
+   */
+  readonly comet?: { readonly head: readonly [number, number]; readonly tail: readonly [number, number]; readonly cell?: readonly [number, number] };
 }
 
 /** A clip's video: its file, size, rate and length, its peak (s) and its origin in the frame (from the top left). */
@@ -173,6 +178,23 @@ function videoOf(video: unknown, base: string): { video?: FlipbookVideo } {
   const p = video.pivot;
   const pivot: readonly [number, number] = Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === "number" && x >= 0 && x <= 1) ? [p[0] as number, p[1] as number] : [0.5, 0.5];
   return { video: { url: base + video.file, w, h, fps, frames, start, peakTime, pivot } };
+}
+
+/**
+ * An entry's comet axis when it is sound: `head` its head in the video frame (0–1 from the top left: a pair, or
+ * lab-flipbooks' `{ uv, cellUv }` with the head in the atlas cell too) and `dir` the unit direction along its tail in
+ * frame pixels, y down (a pair, or `{ vec }`).
+ */
+function cometOf(head: unknown, dir: unknown): { comet?: FlipbookMeta["comet"] } {
+  const pair = (v: unknown): v is [number, number] => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "number" && Number.isFinite(x));
+  const unit = (v: unknown): v is [number, number] => pair(v) && v.every((x) => x >= 0 && x <= 1);
+  const h = record(head) ? head.uv : head;
+  const cell = record(head) && unit(head.cellUv) ? { cell: [head.cellUv[0], head.cellUv[1]] as const } : {};
+  const d = record(dir) ? dir.vec : dir;
+  if (!unit(h) || !pair(d)) return {};
+  const l = Math.hypot(d[0], d[1]);
+  if (!(l > 1e-6)) return {};
+  return { comet: { head: [h[0], h[1]], tail: [d[0] / l, d[1] / l], ...cell } };
 }
 
 function frameOf(timing: unknown, key: "peak" | "holdEnd", frames: number): { peak?: number; holdEnd?: number } {
@@ -275,6 +297,7 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       ...(entry.layer === "body" || entry.layer === "rim" ? { layer: entry.layer } : {}),
       ...(typeof entry.code === "string" && /^[A-Za-z0-9-]{1,12}$/.test(entry.code) ? { code: entry.code } : {}),
       ...videoOf(entry.video, base),
+      ...cometOf(entry.head, entry.dir),
     });
   }
   return out;
