@@ -640,6 +640,10 @@ export type SimEvent = { readonly tick: number } & (
       readonly x: number;
       readonly z: number;
       readonly hpLeft: number;
+      /** Present only for the opt-in qi-dragon swarm. */
+      readonly castId?: number;
+      readonly phase?: "release" | "touch" | "burst";
+      readonly dragon?: number;
     }
   | {
       readonly type: "cast";

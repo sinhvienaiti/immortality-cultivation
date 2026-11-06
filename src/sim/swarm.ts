@@ -1,11 +1,14 @@
-/** Qi dragon swarm, part A: deterministic snapshot, geometry and lifecycle only. */
+/** Qi dragon swarm: deterministic routes, live-body collisions and three damage channels. */
 import { SWARM } from "../content/data/swarm";
 import { kiemSkill } from "../content/data/school-kiem";
-import type { BeastState, Cast, SwarmCastV1, World } from "../content/types";
+import { DAMAGE } from "../content/rules";
+import type { BeastState, Cast, Grade, SwarmCastV1, World } from "../content/types";
+import { areaClusterLeft, createAreaHit, damageBeast, scaleHit, wHpOf, type AreaHit } from "./combat";
 import { emit } from "./events";
 import { clamp, mulDiv, mulDivSym, U_PER_MM } from "./fixed";
-import { damageImmune } from "./posture";
-import { horizontalDistance, inset, steerRoute, straightRoute, SWARM_TABLE_VERSION, type SwarmBounds, type SwarmPath, type SwarmPoint } from "./swarm-geometry";
+import { damageImmune, isBroken } from "./posture";
+import { speciesDef } from "./targeting";
+import { horizontalDistance, inset, pointAt, steerRoute, straightRoute, SWARM_TABLE_VERSION, type SwarmBounds, type SwarmPath, type SwarmPoint } from "./swarm-geometry";
 
 declare module "../content/types" {
   interface SkillsState { swarm?: SwarmState }
@@ -24,7 +27,15 @@ export interface SwarmPlan {
   readonly snapshot: readonly SwarmBeast[]; readonly dragons: readonly SwarmDragon[];
   readonly burstTick: number; readonly endTick: number;
 }
-export interface SwarmCast extends SwarmPlan { readonly castId: number; readonly seat: number; readonly startTick: number; readonly packet: SwarmCastV1 }
+export type SwarmPhase = "release" | "touch" | "burst";
+export interface SwarmChannel { allocated: number; potential: number; dealt: number; capped: number; overkill: number; immune: number }
+export interface SwarmCast extends SwarmPlan {
+  readonly castId: number; readonly seat: number; readonly startTick: number; readonly packet: SwarmCastV1;
+  readonly grade: Grade; readonly area: AreaHit;
+  readonly victims: Map<number, { dealt: number; touched: boolean; hits: number }>;
+  readonly channels: Record<SwarmPhase, SwarmChannel>;
+  firstHitTick: number;
+}
 export interface SwarmState { readonly casts: SwarmCast[] }
 export const createSwarmState = (): SwarmState => ({ casts: [] });
 const mm = (u: number): number => mulDivSym(u, 1, U_PER_MM);
@@ -47,9 +58,9 @@ export function patrolPoint(region: number, bounds: SwarmBounds): SwarmPoint {
 function snapshotBeast(b: BeastState): SwarmBeast {
   return { id: b.serial, slot: b.slot, x: mm(b.x), y: mm(b.y), z: mm(b.z), boss: b.boss, sky: b.gate === "sky" || b.y > 0 };
 }
-export function swarmSnapshot(world: World): SwarmBeast[] {
+export function swarmSnapshot(world: World, includeImmune = false): SwarmBeast[] {
   const f = world.stage.field;
-  return world.beasts.list.filter((b) => b.alive && !damageImmune(world, b) && b.x >= f.minXMm * U_PER_MM && b.x <= f.maxXMm * U_PER_MM && b.z >= f.minZMm * U_PER_MM && b.z <= f.maxZMm * U_PER_MM)
+  return world.beasts.list.filter((b) => b.alive && (includeImmune || !damageImmune(world, b)) && b.x >= f.minXMm * U_PER_MM && b.x <= f.maxXMm * U_PER_MM && b.z >= f.minZMm * U_PER_MM && b.z <= f.maxZMm * U_PER_MM)
     .map(snapshotBeast).sort((a, b) => a.id - b.id);
 }
 function cellIndex(value: number, min: number, max: number): number {
@@ -187,6 +198,147 @@ export function swarmBodyAt(dragon: SwarmDragon, tick: number): { visible: boole
   return { visible: tick < dragon.diveTick + SWARM.timing.retractTicks, headMm, tailMm: Math.min(headMm, tailMm) };
 }
 
+/** Largest remainders, with a one-HP floor for the whole-field burst only. */
+export function splitSwarmPool(pool: number, victims: readonly { id: number; weight: number }[]): { id: number; amount: number }[] {
+  if (victims.length === 0) return [];
+  const budget = Math.max(pool, victims.length), left = budget - victims.length;
+  const weight = victims.reduce((sum, b) => sum + b.weight, 0);
+  const rows = victims.map((b) => ({ id: b.id, amount: 1 + Math.floor(left * b.weight / weight), remainder: left * b.weight % weight }));
+  let spare = budget - rows.reduce((sum, b) => sum + b.amount, 0);
+  rows.sort((a, b) => b.remainder - a.remainder || a.id - b.id);
+  for (let i = 0; spare > 0; i += 1, spare -= 1) rows[i]!.amount += 1;
+  return rows.sort((a, b) => a.id - b.id).map(({ id, amount }) => ({ id, amount }));
+}
+
+/** q is the maximum axis fraction along P→beast; no ray intersection or floating state. */
+export function swarmWeight(point: SwarmPoint, pearl: SwarmPoint, bounds: SwarmBounds): number {
+  const dx = point.x - pearl.x, dz = point.z - pearl.z;
+  const edgeX = dx >= 0 ? bounds.maxXMm - pearl.x : pearl.x - bounds.minXMm;
+  const edgeZ = dz >= 0 ? bounds.maxZMm - pearl.z : pearl.z - bounds.minZMm;
+  const qx = dx === 0 ? 0 : edgeX <= 0 ? 1000 : Math.floor(Math.abs(dx) * 1000 / edgeX);
+  const qz = dz === 0 ? 0 : edgeZ <= 0 ? 1000 : Math.floor(Math.abs(dz) * 1000 / edgeZ);
+  const q = clamp(Math.max(qx, qz), 0, 1000);
+  return 1000 - Math.floor((1000 - SWARM.damage.boundaryWeightPm) * q / 1000);
+}
+
+function sampleAtArc(dragon: SwarmDragon, index: number, arc: number): SwarmPoint {
+  const a = pointAt(dragon.samples, index), b = pointAt(dragon.samples, index + 1);
+  const length = dragon.arc[index + 1]! - dragon.arc[index]!;
+  if (length <= 0) return a;
+  const along = clamp(arc - dragon.arc[index]!, 0, length);
+  if (along === 0) return a;
+  if (along === length) return b;
+  return { x: a.x + mulDivSym(b.x - a.x, along, length), y: a.y + mulDivSym(b.y - a.y, along, length), z: a.z + mulDivSym(b.z - a.z, along, length) };
+}
+function occupiedSegments(dragon: SwarmDragon, tick: number): { a: SwarmPoint; b: SwarmPoint }[] {
+  const body = swarmBodyAt(dragon, tick);
+  if (!body.visible) return [];
+  const out: { a: SwarmPoint; b: SwarmPoint }[] = [];
+  if (dragon.arc.length === 1) return [{ a: pointAt(dragon.samples, 0), b: pointAt(dragon.samples, 0) }];
+  let first = 0, high = dragon.arc.length - 1;
+  while (first < high) {
+    const mid = Math.floor((first + high) / 2);
+    if (dragon.arc[mid + 1]! < body.tailMm) first = mid + 1; else high = mid;
+  }
+  for (let i = first; i + 1 < dragon.arc.length && dragon.arc[i]! <= body.headMm; i += 1) {
+    if (dragon.arc[i + 1]! < body.tailMm || dragon.arc[i]! > body.headMm) continue;
+    out.push({ a: sampleAtArc(dragon, i, Math.max(body.tailMm, dragon.arc[i]!)), b: sampleAtArc(dragon, i, Math.min(body.headMm, dragon.arc[i + 1]!)) });
+  }
+  return out;
+}
+function inCapsule(p: SwarmPoint, a: SwarmPoint, b: SwarmPoint, radius: number): boolean {
+  if (p.x < Math.min(a.x, b.x) - radius || p.x > Math.max(a.x, b.x) + radius || p.y < Math.min(a.y, b.y) - radius || p.y > Math.max(a.y, b.y) + radius || p.z < Math.min(a.z, b.z) - radius || p.z > Math.max(a.z, b.z) + radius) return false;
+  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+  const px = p.x - a.x, py = p.y - a.y, pz = p.z - a.z;
+  const length2 = dx * dx + dy * dy + dz * dz, dot = px * dx + py * dy + pz * dz;
+  const radius2 = radius * radius;
+  if (dot <= 0 || length2 === 0) return px * px + py * py + pz * pz <= radius2;
+  if (dot >= length2) return (p.x - b.x) * (p.x - b.x) + (p.y - b.y) * (p.y - b.y) + (p.z - b.z) * (p.z - b.z) <= radius2;
+  // Cross product avoids subtracting two almost equal products near the capsule's axis.
+  const x = py * dz - pz * dy, y = pz * dx - px * dz, z = px * dy - py * dx;
+  const lhs = x * x + y * y + z * z, rhs = radius2 * length2;
+  if (Number.isSafeInteger(lhs) && Number.isSafeInteger(rhs)) return lhs <= rhs;
+  return BigInt(x) * BigInt(x) + BigInt(y) * BigInt(y) + BigInt(z) * BigInt(z) <= BigInt(radius2) * BigInt(length2);
+}
+export function swarmTouches(dragon: SwarmDragon, tick: number, point: SwarmPoint, hurtboxMm: number): boolean {
+  return occupiedSegments(dragon, tick).some(({ a, b }) => inCapsule(point, a, b, SWARM.damage.bodyRadiusMm + hurtboxMm));
+}
+
+/** The sim has no separate beast hitbox: use its authored body dimensions, centred above its feet. */
+function hurtbox(beast: BeastState): { point: SwarmPoint; radius: number } {
+  const body = speciesDef(beast.species).placeholder;
+  return { point: { x: mm(beast.x), y: mm(beast.y) + mulDiv(body.heightMm, 1, 2), z: mm(beast.z) }, radius: mulDiv(Math.max(body.widthMm, body.lengthMm), 1, 2) };
+}
+function channel(): SwarmChannel { return { allocated: 0, potential: 0, dealt: 0, capped: 0, overkill: 0, immune: 0 }; }
+function poolHp(world: World, cast: SwarmCast, w100: number): number {
+  return scaleHit(world, cast.seat, wHpOf(world, w100), cast.grade, "slot2", null);
+}
+function swarmHit(world: World, cast: SwarmCast, beast: BeastState, amount: number, phase: SwarmPhase, dragon?: number): void {
+  const book = cast.victims.get(beast.serial) ?? { dealt: 0, touched: false, hits: 0 };
+  if (phase === "touch") book.touched = true;
+  cast.victims.set(beast.serial, book);
+  const data = cast.channels[phase];
+  data.allocated += amount;
+  if (damageImmune(world, beast)) { data.immune += amount; return; }
+  const potential = isBroken(world, beast) ? mulDiv(amount, DAMAGE.brokenPm, 1000) : amount;
+  const cap = Math.max(0, wHpOf(world, beast.boss ? SWARM.damage.bossCapW100 : SWARM.damage.ordinaryCapW100) - book.dealt);
+  const clusterLeft = beast.cluster < 0 ? potential : areaClusterLeft(world, cast.area, beast.cluster);
+  const allowed = Math.min(potential, cap, clusterLeft);
+  const dealt = damageBeast(world, beast, amount, "typed", { seat: cast.seat, source: "slot2", grade: cast.grade, scaled: true, area: cast.area, limit: cap, swarm: { castId: cast.castId, phase, ...(dragon === undefined ? {} : { dragon }) } });
+  data.potential += potential; data.capped += potential - allowed; data.overkill += allowed - dealt; data.dealt += dealt;
+  book.dealt += dealt;
+  if (dealt > 0) { book.hits += 1; if (cast.firstHitTick < 0) cast.firstHitTick = world.tick - cast.startTick; }
+}
+function releaseSwarm(world: World, cast: SwarmCast): void {
+  const radius = SWARM.damage.releaseRadiusMm;
+  const victims = swarmSnapshot(world).filter((b) => (b.x - cast.origin.x) * (b.x - cast.origin.x) + (b.z - cast.origin.z) * (b.z - cast.origin.z) <= radius * radius);
+  if (victims.length === 0) return;
+  const pool = poolHp(world, cast, SWARM.damage.releaseW100), share = Math.floor(pool / victims.length), remainder = pool % victims.length;
+  for (let i = 0; i < victims.length; i += 1) swarmHit(world, cast, world.beasts.list[victims[i]!.slot]!, share + (i < remainder ? 1 : 0), "release");
+}
+function burstSwarm(world: World, cast: SwarmCast): void {
+  // The nuke snapshots the current living field, including late spawns, before any burst hit kills.
+  const victims = swarmSnapshot(world, true), byId = new Map(victims.map((b) => [b.id, b]));
+  const shares = splitSwarmPool(poolHp(world, cast, SWARM.damage.burstW100), victims.map((b) => ({ id: b.id, weight: swarmWeight(b, cast.pearl, cast.bounds) })));
+  for (const share of shares) swarmHit(world, cast, world.beasts.list[byId.get(share.id)!.slot]!, share.amount, "burst");
+}
+interface GridBeast { readonly beast: BeastState; readonly point: SwarmPoint; readonly radius: number }
+function touchGrid(world: World): { cells: Map<string, GridBeast[]>; radius: number } {
+  const cells = new Map<string, GridBeast[]>();
+  let radius = 0;
+  for (const b of swarmSnapshot(world)) {
+    const beast = world.beasts.list[b.slot]!, body = hurtbox(beast), key = Math.floor(body.point.x / SWARM.cellMm) + ":" + Math.floor(body.point.z / SWARM.cellMm);
+    const entry = { beast, ...body }, cell = cells.get(key);
+    if (cell === undefined) cells.set(key, [entry]); else cell.push(entry);
+    radius = Math.max(radius, body.radius);
+  }
+  return { cells, radius };
+}
+function touchSwarm(world: World, cast: SwarmCast, tick: number, grid: ReturnType<typeof touchGrid>): void {
+  for (const dragon of cast.dragons) {
+    const segments = occupiedSegments(dragon, tick), candidates = new Map<number, GridBeast>();
+    if (segments.length === 0) continue;
+    const reach = SWARM.damage.bodyRadiusMm + grid.radius;
+    let minX = Number.MAX_SAFE_INTEGER, maxX = -Number.MAX_SAFE_INTEGER;
+    let minZ = Number.MAX_SAFE_INTEGER, maxZ = -Number.MAX_SAFE_INTEGER;
+    for (const { a, b } of segments) {
+      minX = Math.min(minX, a.x, b.x); maxX = Math.max(maxX, a.x, b.x);
+      minZ = Math.min(minZ, a.z, b.z); maxZ = Math.max(maxZ, a.z, b.z);
+    }
+    // Query each broad-phase cell once for this body's bounding rectangle.
+    const cellMinX = Math.floor((minX - reach) / SWARM.cellMm), cellMaxX = Math.floor((maxX + reach) / SWARM.cellMm);
+    const cellMinZ = Math.floor((minZ - reach) / SWARM.cellMm), cellMaxZ = Math.floor((maxZ + reach) / SWARM.cellMm);
+    for (let x = cellMinX; x <= cellMaxX; x += 1) for (let z = cellMinZ; z <= cellMaxZ; z += 1) {
+      for (const b of grid.cells.get(x + ":" + z) ?? []) if (!cast.victims.get(b.beast.serial)?.touched) candidates.set(b.beast.serial, b);
+    }
+    const amount = poolHp(world, cast, SWARM.damage.touchW100);
+    for (const b of Array.from(candidates.values()).sort((a, b) => a.beast.serial - b.beast.serial)) {
+      if (!b.beast.alive || damageImmune(world, b.beast)) continue;
+      if (segments.some(({ a, b: end }) => inCapsule(b.point, a, end, SWARM.damage.bodyRadiusMm + b.radius))) swarmHit(world, cast, b.beast, amount, "touch", dragon.index);
+    }
+  }
+}
+
 function castEvent(world: World, cast: SwarmCast, stage: "swarm-cast" | "swarm-burst" | "swarm-end"): void {
   emit(world, { type: "skill-fx", seat: cast.seat, skill: kiemSkill(2).id, stage, castId: cast.castId, x: cast.origin.x / 1000, z: cast.origin.z / 1000, toX: cast.pearl.x / 1000, toZ: cast.pearl.z / 1000, count: SWARM.dragons, ...(stage === "swarm-cast" ? { swarm: cast.packet } : {}) });
 }
@@ -198,17 +350,20 @@ export function resolveSwarm(world: World, cast: Cast): boolean {
   const f = world.stage.field;
   const bounds: SwarmBounds = { minXMm: f.minXMm, maxXMm: f.maxXMm, minZMm: f.minZMm, maxZMm: f.maxZMm };
   const plan = planSwarm(bounds, { x: mm(cast.origin.x), y: SWARM.geometry.groundYMm, z: mm(cast.origin.z) }, snapshot);
-  const live: SwarmCast = { castId: cast.actionId, seat: cast.seat, startTick: world.tick, ...plan, packet: encodeSwarmCast(plan, cast.actionId, cast.seat, world.tick) };
+  const live: SwarmCast = { castId: cast.actionId, seat: cast.seat, startTick: world.tick, ...plan, packet: encodeSwarmCast(plan, cast.actionId, cast.seat, world.tick), grade: cast.quality, area: createAreaHit(), victims: new Map(), channels: { release: channel(), touch: channel(), burst: channel() }, firstHitTick: -1 };
   state.casts.push(live); castEvent(world, live, "swarm-cast");
   return true;
 }
 export function stepSwarm(world: World): void {
   const state = world.skills.swarm;
-  if (state === undefined) return;
+  if (state === undefined || state.casts.length === 0) return;
+  const grid = touchGrid(world);
   let keep = 0;
   for (const cast of state.casts) {
     const tick = world.tick - cast.startTick;
-    if (tick === cast.burstTick) castEvent(world, cast, "swarm-burst");
+    if (tick === SWARM.timing.releaseTick) releaseSwarm(world, cast);
+    touchSwarm(world, cast, tick, grid);
+    if (tick === cast.burstTick) { castEvent(world, cast, "swarm-burst"); burstSwarm(world, cast); }
     if (tick === cast.endTick) castEvent(world, cast, "swarm-end");
     if (tick < cast.endTick) state.casts[keep++] = cast;
   }

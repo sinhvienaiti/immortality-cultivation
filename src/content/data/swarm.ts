@@ -1,7 +1,7 @@
 /** Dragon Skill §10; ticket 293 round 3 replaces the original fixed flight ticks. */
 export const SWARM = {
   id: "swarm",
-  versions: { geometry: 1, tables: 1, schema: 1, collision: 1, damage: 1 },
+  versions: { geometry: 1, tables: 1, schema: 1, collision: 2, damage: 2 },
   dragons: 5,
   cellMm: 4000,
   bossScore: 2,
@@ -13,6 +13,6 @@ export const SWARM = {
   timing: { releaseTick: 1, launchTick: 2, launchStride: 6, speedMmPerSecond: 16_000, tickHz: 60, retractTicks: 30, burstDelayTicks: 32, aftermathTicks: 40, maxEndTick: 379 },
   bodyMm: 16_000,
   packetMaxBytes: 24_576,
-  /** Reserved for ticket 294; no damage is applied by the part-A sim. */
+  /** Dragon Skill §10.4: initial values; only these three channels may be swept. */
   damage: { releaseW100: 50, releaseRadiusMm: 6000, touchW100: 15, bodyRadiusMm: 850, burstW100: 250, boundaryWeightPm: 600, ordinaryCapW100: 250, bossCapW100: 150, clusterCapPct: 60, maxHits: 3 },
 } as const;

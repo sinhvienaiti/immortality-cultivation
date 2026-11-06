@@ -263,7 +263,7 @@ describe("swarm round-3 timing and edge cases", () => {
 });
 
 describe("swarm packed contract, replay and integration", () => {
-  it("is opt-in, changes only its rulesHash and does not add damage or line strikes", () => {
+  it("is opt-in, changes only its rulesHash and deals swarm damage without line strikes", () => {
     expect(SWORD_KEY2_VARIANTS).toContain("swarm");
     expect(makeWorld().world.skills.swarm).toBeUndefined();
     const old = matchRulesHash(THANH_THACH_AI), twin = matchRulesHash(THANH_THACH_AI, { swordKey2: "twin-pearl" });
@@ -279,7 +279,8 @@ describe("swarm packed contract, replay and integration", () => {
     const cast = world.skills.swarm!.casts[0]!;
     expect(world.skills.strikes).toHaveLength(0);
     for (let t = 0; t <= cast.endTick; t += 1) { world.tick = t; stepSkills(world); }
-    expect(target.hp).toBe(hp); expect(of("hit")).toHaveLength(0);
+    expect(target.hp).toBeLessThan(hp); expect(of("hit").length).toBeGreaterThan(0);
+    expect(of("hit").every((e) => e.castId === 293 && e.phase !== undefined)).toBe(true);
     expect(of("skill-fx").map((e) => [e.stage, e.tick, e.castId])).toEqual([["swarm-cast", 0, 293], ["swarm-burst", cast.burstTick, 293], ["swarm-end", cast.endTick, 293]]);
     expect(of("skill-fx")[0]!.swarm).toBeInstanceOf(Int32Array);
     expect(world.skills.swarm!.casts).toHaveLength(0);
@@ -377,11 +378,11 @@ describe("swarm packed contract, replay and integration", () => {
       while (!runner.finished && runner.world.tick < 43200) {
         const w = runner.world, locked = w.words.seats[0]!.locked;
         const next = locked >= 0 ? w.words.live[locked] : w.words.live.find((word) => word.slot === 2 && word.state === "ready");
-        if (next && (w.phase === "wave" || w.phase === "boss")) runner.send({ type: "key", seat: 0, letter: next.text.charCodeAt(next.typed) - 97, ms: w.tick * 17, origin: at(0, 3), aim: null });
+        if (packets.length === 0 && next && (w.phase === "wave" || w.phase === "boss")) runner.send({ type: "key", seat: 0, letter: next.text.charCodeAt(next.typed) - 97, ms: w.tick * 17, origin: at(0, 3), aim: null });
         runner.tick();
         for (const e of runner.drain()) if (e.type === "skill-fx" && e.swarm) packets.push(bytes(e.swarm));
       }
-      expect(runner.world.phase).toBe("defeat"); // Part A intentionally deals no key-2 damage.
+      expect(runner.world.phase).toBe("defeat"); // One real damaging cast, then no further typing: the pass eventually falls.
       expect(packets.length).toBeGreaterThan(0);
       const replay = rebuild(runner.header, runner.log, runner.world.tick, runner.localStepped);
       expect(replay.hashes()).toEqual(runner.hashes());

@@ -36,6 +36,8 @@ export interface HitBy {
   readonly area?: AreaHit | null;
   /** At most this much HP from this hit (Lạc Kiếm Trận's 4 W a cast), applied with the cluster cap. */
   readonly limit?: number;
+  /** Opt-in key-2 metadata; absent on all legacy hits. */
+  readonly swarm?: { readonly castId: number; readonly phase: "release" | "touch" | "burst"; readonly dragon?: number };
 }
 
 /** The 60 % swarm-cluster budget of one area hit (canon §7.2, BALANCE §9.1). */
@@ -208,6 +210,7 @@ export function damageBeast(world: World, beast: BeastState, amount: number, typ
     x: uToM(beast.x),
     z: uToM(beast.z),
     hpLeft: beast.hp,
+    ...(by.swarm ?? {}),
   });
   if (beast.hp > 0) {
     // Each whole W of typed damage takes 1 Thế (canon §10.7).
