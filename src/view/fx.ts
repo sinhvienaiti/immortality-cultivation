@@ -40,6 +40,7 @@ import { IC_FEEDBACK_PROFILE, reducedProfile } from "./feedback-profile";
 import { createDamageNumbers, createHitFx, createInkSmoke, type DamageNumbers, type HitFx, type InkSmoke } from "./hitfx";
 import type { Renderer3D } from "./renderer";
 import { createSwords, type SwordPool } from "./swords";
+import { QiDragonSwarm } from "./skills/qi-dragon-swarm";
 
 /** Lane 1's factories (view/hitfx.ts, view/swords.ts); tests and the preview pass their own. */
 export interface FxDeps {
@@ -190,6 +191,12 @@ export function createFx(renderer: Renderer3D, options: FxOptions = {}): FxView 
   const blow = (tier: number): void => {
     if (tier > pendingTier) pendingTier = tier;
   };
+  // createFx is constructed by newMatch: load and compile both pooled swarms during loading.
+  const swarm = renderer.stage?.renderer ? new QiDragonSwarm(renderer.camera, quality, reduced) : null;
+  if (swarm) {
+    renderer.layers.fx.add(swarm.group);
+    void swarm.prewarm(renderer.stage.renderer).catch((error: unknown) => console.error("qi-dragon-swarm prewarm", error));
+  }
   const seat = options.seat ?? 0;
   const show = numbers.show.bind(numbers) as ShowNumber;
   /** Per seat: the last ultimate beat (0–2) and its wall time, so the 3 volleys add up to the tier's swords. */
@@ -299,7 +306,7 @@ export function createFx(renderer: Renderer3D, options: FxOptions = {}): FxView 
             if (event.tier >= 3) blow(event.tier);
             break;
           case "skill-fx": {
-            if (event.stage === "swarm-cast" || event.stage === "swarm-burst" || event.stage === "swarm-end") break;
+            if (event.stage === "swarm-cast" || event.stage === "swarm-burst" || event.stage === "swarm-end") { swarm?.event(event); break; }
             let beat = 0;
             if (event.stage === "ultimate") {
               const last = ultimateBeat[event.seat];
@@ -353,6 +360,7 @@ export function createFx(renderer: Renderer3D, options: FxOptions = {}): FxView 
     },
     frame(world: World, info: FrameInfo): void {
       nowMs = info.now;
+      swarm?.frame(world.tick, info.alpha, info.worldDt);
       // The setting may have changed since the last frame: the shake follows it before any blow adds to it.
       trauma.reduced = reduced();
       const stop = reduced() ? stopReduced : stopFull;
@@ -393,6 +401,7 @@ export function createFx(renderer: Renderer3D, options: FxOptions = {}): FxView 
       applyShake(info.dt);
     },
     dispose(): void {
+      swarm?.dispose();
       hitFx.dispose();
       numbers.dispose();
       smoke.dispose();

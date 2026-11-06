@@ -272,6 +272,8 @@ export class LabHerd implements TargetField {
    * its ~800 strikes spread over the herd and the finisher has beasts left to cut; 1 otherwise.
    */
   toughness = 1;
+  /** The real-sim swarm lab keeps deaths gone until Reset. Other lab modes retain their refill. */
+  autoRespawn = true;
   private time = 0;
   private readonly m = new THREE.Matrix4();
   private readonly q = new THREE.Quaternion();
@@ -684,6 +686,14 @@ export class LabHerd implements TargetField {
     if (i >= 0 && i < this.count) this.hold[i] = Math.max(this.hold[i]!, seconds);
   }
 
+  /** Show a production sim hit with its exact remaining health, keeping the existing reaction/dissolve. */
+  hitFromSim(i: number, dx: number, dz: number, power: number, rgb: number, hpFraction: number): void {
+    if (!this.alive(i)) return;
+    const remaining = Math.max(0, hpFraction) * SPECIES[this.sp[i]!]!.hp;
+    this.hp[i] = remaining + (power >= 0.9 ? 3 : power >= 0.5 ? 2 : 1) / this.toughness;
+    this.hit(i, dx, dz, power, rgb);
+  }
+
   hit(i: number, dx: number, dz: number, power: number, rgb: number): boolean {
     if (!this.alive(i)) return false;
     const tier = this.tier(i);
@@ -932,7 +942,7 @@ export class LabHerd implements TargetField {
           cutA.setXYZW(idx, 0, 1, 0, 0);
           // A tide refills fast while a field-wide skill runs; otherwise the field stays cleared a while, so the
           // kills read (respawns in a vortex's crater 1.9 s on looked as if the beasts were never touched).
-          this.gone[i] = this.toughness > 1 ? GONE_S : GONE_CLEAR_S;
+          this.gone[i] = this.autoRespawn ? (this.toughness > 1 ? GONE_S : GONE_CLEAR_S) : Infinity;
           dis.setX(idx, 1);
           mesh.setMatrixAt(idx, this.zero);
           continue;
