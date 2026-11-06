@@ -11,6 +11,17 @@ export const METAL_SIGIL_TINT = {
 } as const;
 
 export type SigilMode = "painted" | "code";
+export type SigilTextureMode = "mask" | "color";
+export const PAINTED_SIGIL_ELEMENTS = ["metal", "fire", "water", "thunder", "wind", "ice", "earth", "wood", "light", "dark", "poison", "blood", "void", "star"] as const;
+
+export function sigilElementOf(element: string): string {
+  return PAINTED_SIGIL_ELEMENTS.includes(element as (typeof PAINTED_SIGIL_ELEMENTS)[number]) ? element : "metal";
+}
+
+export function sigilBaseOf(element: string): string {
+  const id = sigilElementOf(element);
+  return PAINTED_SIGIL_BASE + (id === "metal" ? "" : id + "/");
+}
 export interface SigilMaskEntry {
   readonly id: SigilMaskId;
   readonly file: string;
@@ -21,6 +32,7 @@ export interface SigilMaskEntry {
 }
 export interface SigilManifest {
   readonly version: 1;
+  readonly mode: SigilTextureMode;
   readonly masks: ReadonlyMap<SigilMaskId, SigilMaskEntry>;
 }
 
@@ -39,7 +51,10 @@ const positive = (v: unknown): v is number => typeof v === "number" && Number.is
 export function parseSigilManifest(json: unknown): SigilManifest | null {
   if (!isObject(json) || json.version !== 1 || !isObject(json.channels)) return null;
   const ch = json.channels;
-  if (Object.keys(ch).length !== 3 || ch.lines !== "r" || ch.glow !== "g" || ch.hot !== "b") return null;
+  const mode = json.mode ?? "mask";
+  if (mode === "color") {
+    if (Object.keys(ch).length !== 2 || ch.color !== "rgb" || ch.erosion !== "max(rgb)") return null;
+  } else if (mode !== "mask" || Object.keys(ch).length !== 3 || ch.lines !== "r" || ch.glow !== "g" || ch.hot !== "b") return null;
   if (!Array.isArray(json.masks)) return null;
   const masks = new Map<SigilMaskId, SigilMaskEntry>();
   for (const entry of json.masks) {
@@ -52,7 +67,7 @@ export function parseSigilManifest(json: unknown): SigilManifest | null {
     const id = entry.id as SigilMaskId;
     if (!masks.has(id)) masks.set(id, { id, file: entry.file, md5: entry.md5, metres: entry.metres, aspect: entry.aspect, px: [px[0], px[1]] });
   }
-  return masks.size > 0 ? { version: 1, masks } : null;
+  return masks.size > 0 ? { version: 1, mode, masks } : null;
 }
 
 export function sigilPaths(mode: SigilMode, manifest: SigilManifest | null, loaded: ReadonlySet<SigilMaskId>): Record<SigilMaskId, SigilMode> {
@@ -61,7 +76,12 @@ export function sigilPaths(mode: SigilMode, manifest: SigilManifest | null, load
   return paths;
 }
 
-export type PaintedSigils = { masks: ReadonlyMap<SigilMaskId, { texture: THREE.Texture; aspect: number }> };
+export interface PaintedSigilMask {
+  readonly texture: THREE.Texture;
+  readonly aspect: number;
+  readonly mode: SigilTextureMode;
+}
+export type PaintedSigils = { masks: ReadonlyMap<SigilMaskId, PaintedSigilMask> };
 
 export async function loadPaintedSigils(base = PAINTED_SIGIL_BASE): Promise<PaintedSigils | null> {
   let manifest: SigilManifest | null;
@@ -74,7 +94,7 @@ export async function loadPaintedSigils(base = PAINTED_SIGIL_BASE): Promise<Pain
     console.warn("[sigils] manifest unavailable, analytic sigils", error);
     return null;
   }
-  const masks = new Map<SigilMaskId, { texture: THREE.Texture; aspect: number }>();
+  const masks = new Map<SigilMaskId, PaintedSigilMask>();
   const loader = new THREE.TextureLoader();
   await Promise.all([...manifest.masks.values()].map(async (entry) => {
     try {
@@ -84,7 +104,7 @@ export async function loadPaintedSigils(base = PAINTED_SIGIL_BASE): Promise<Pain
       texture.minFilter = THREE.LinearMipmapLinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.anisotropy = 8;
-      masks.set(entry.id, { texture, aspect: entry.aspect });
+      masks.set(entry.id, { texture, aspect: entry.aspect, mode: manifest.mode });
     } catch (error) {
       console.warn(`[sigils] ${entry.id} unavailable`, error);
     }
@@ -95,4 +115,84 @@ export async function loadPaintedSigils(base = PAINTED_SIGIL_BASE): Promise<Pain
   if (fallback.length > 0) console.warn(`[sigils] analytic fallback: ${fallback.join(", ")}`);
   if (painted.length > 0) console.info(`[sigils] painted: ${painted.join(", ")}`);
   return { masks };
+}
+
+export function disposePaintedSigils(set: PaintedSigils): void {
+  for (const texture of new Set([...set.masks.values()].map((mask) => mask.texture))) texture.dispose();
+}
+
+/** Metal stays pinned. Loads are serialized, so even rapid changes never retain a third set. */
+export class PaintedSigilCache {
+  private readonly sets = new Map<string, PaintedSigils>();
+  private selected = "";
+  private revision = 0;
+  private metalTried = false;
+  private stopped = false;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly apply: (set: PaintedSigils | null) => void,
+    private readonly load: (element: string) => Promise<PaintedSigils | null> = (element) => loadPaintedSigils(sigilBaseOf(element)),
+  ) {}
+
+  get cachedElements(): readonly string[] { return [...this.sets.keys()]; }
+
+  select(element: string): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    const selected = sigilElementOf(element);
+    if (selected !== element) console.warn(`[sigils] no set for ${element}; using Metal, then analytic sigils`);
+    if (this.selected === selected) return this.queue;
+    this.selected = selected;
+    const revision = ++this.revision;
+    // Unbind before disposal: materials must never reference the evicted textures.
+    this.publish();
+    for (const [id, set] of this.sets) {
+      if (id !== "metal" && id !== selected) { this.sets.delete(id); disposePaintedSigils(set); }
+    }
+    this.queue = this.queue.then(async () => {
+      if (this.stopped || revision !== this.revision) return;
+      if (!this.metalTried) {
+        this.metalTried = true;
+        const metal = await this.tryLoad("metal");
+        if (this.stopped) { if (metal) disposePaintedSigils(metal); return; }
+        if (metal) this.sets.set("metal", metal);
+      }
+      if (revision !== this.revision) return;
+      this.publish();
+      if (selected !== "metal" && !this.sets.has(selected)) {
+        const set = await this.tryLoad(selected);
+        if (this.stopped || revision !== this.revision) { if (set) disposePaintedSigils(set); return; }
+        if (set) this.sets.set(selected, set);
+      }
+      this.publish();
+    });
+    return this.queue;
+  }
+
+  dispose(): void {
+    this.stopped = true;
+    this.revision += 1;
+    this.apply(null);
+    for (const set of this.sets.values()) disposePaintedSigils(set);
+    this.sets.clear();
+  }
+
+  private async tryLoad(element: string): Promise<PaintedSigils | null> {
+    let set: PaintedSigils | null = null;
+    try { set = await this.load(element); }
+    catch (error) { console.warn(`[sigils] ${element} load failed`, error); }
+    const missing = SIGIL_MASK_IDS.filter((id) => !set?.masks.has(id));
+    if (missing.length) console.warn(`[sigils] ${element} missing ${missing.join(", ")}; ${element === "metal" ? "using analytic sigils" : "using Metal, then analytic sigils"}`);
+    return set;
+  }
+
+  private publish(): void {
+    const metal = this.sets.get("metal"), active = this.sets.get(this.selected);
+    const masks = new Map<SigilMaskId, PaintedSigilMask>();
+    for (const id of SIGIL_MASK_IDS) {
+      const mask = active?.masks.get(id) ?? metal?.masks.get(id);
+      if (mask) masks.set(id, mask);
+    }
+    this.apply(masks.size ? { masks } : null);
+  }
 }

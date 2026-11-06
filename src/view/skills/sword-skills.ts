@@ -52,7 +52,7 @@ import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
 import { alongSlash, crescentOf, type CrescentClip } from "./element-clips";
-import { loadPaintedSigils, METAL_SIGIL_TINT, sigilModeOf, type PaintedSigils } from "./painted-sigils";
+import { METAL_SIGIL_TINT, PaintedSigilCache, sigilModeOf, type PaintedSigils } from "./painted-sigils";
 import { CUT } from "./sword-grammar";
 import { applyBladeLook, FaceRoll } from "./sword-material";
 import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
@@ -633,6 +633,7 @@ export class SwordSkillFx {
   // ── Element layer (canon D59, element-kit.ts) ─────────────────────────────
   /** The element kit these shapes are drawn in (Metal: the layers of this file, no hooks). */
   private kit: ElementKit = METAL;
+  private paintedSigils: PaintedSigilCache | null = null;
   /** Its phase hooks on the stage (none for Metal): a hook that returns true replaces the Metal layer it stands for. */
   private hooks: SwordHooks = NO_HOOKS;
   /** The host's base sheets, and the pools and ribbons drawn with each (a kit's `textures` swap them). */
@@ -757,7 +758,10 @@ export class SwordSkillFx {
     this.skillPal = this.skillPals(this.weaponDef);
     this.applyColours(this.weaponDef);
     if (typeof location !== "undefined") {
-      if (sigilModeOf(location.search) === "painted") void loadPaintedSigils().then((p) => this.setPaintedSigils(p));
+      if (sigilModeOf(location.search) === "painted") {
+        this.paintedSigils = new PaintedSigilCache((p) => this.setPaintedSigils(p));
+        void this.paintedSigils.select(this.kit.id);
+      }
       else console.info("[sigils] ?sigil=code: analytic sigils");
     }
   }
@@ -770,10 +774,10 @@ export class SwordSkillFx {
     ] as const;
     for (const [id, sig] of pairs) {
       const mask = p?.masks.get(id);
-      sig.setPainted(mask?.texture ?? null, mask?.aspect ?? 1);
+      sig.setPainted(mask?.texture ?? null, mask?.aspect ?? 1, mask?.mode);
     }
     const star = p?.masks.get("crack"), rift = p?.masks.get("rift");
-    this.rainMarks.setPainted(star?.texture ?? null, star?.aspect ?? 1, rift?.texture ?? null, rift?.aspect ?? 1);
+    this.rainMarks.setPainted(star?.texture ?? null, star?.aspect ?? 1, rift?.texture ?? null, rift?.aspect ?? 1, star?.mode, rift?.mode);
     this.applyColours(this.weaponDef);
   }
 
@@ -816,6 +820,7 @@ export class SwordSkillFx {
     this.skillPal = this.skillPals(this.weaponDef);
     this.use(this.palSlot);
     this.applyColours(this.weaponDef);
+    void this.paintedSigils?.select(kit.id);
   }
 
   /**

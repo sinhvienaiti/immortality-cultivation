@@ -10,7 +10,7 @@
  */
 import * as THREE from "three";
 import { TAG_UNIFORMS, withTagMask } from "./tag-mask";
-import { paintedPlane } from "./painted-sigils";
+import { paintedPlane, type SigilTextureMode } from "./painted-sigils";
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
@@ -1714,6 +1714,16 @@ void main() {
 #if defined(ARCS)
   lit = 0.25 + 0.75 * clamp(uCount - floor(order * 3.0), 0.0, 1.0);
 #endif
+#ifdef PAINTED_COLOR
+  {
+  // Authored RGB is additive light: black contributes nothing; palette and ink never recolour it.
+  float brightness = max(s.r, max(s.g, s.b));
+  float er = smoothstep((1.0 - uFade) * 1.1 - 0.1, (1.0 - uFade) * 1.1, brightness);
+  float gain = clamp(uGlow + uHeat * 0.5, 0.0, 6.0) * (0.85 + 0.15 * n);
+  gl_FragColor = vec4(s * gain * rev * lit * er, 0.0);
+  return;
+  }
+#endif
   light = (s.r + s.g * 0.35) * rev * lit * (0.85 + 0.15 * n);
   core = s.b * rev * lit;
   ink = s.g * rev;
@@ -2031,12 +2041,15 @@ export class GroundSigil {
   }
 
   /** Load-time switch: preserve the painted aspect without changing animation scale. */
-  setPainted(mask: THREE.Texture | null, aspect = 1): void {
+  setPainted(mask: THREE.Texture | null, aspect = 1, mode: SigilTextureMode = "mask"): void {
     const m = this.mesh.material as THREE.ShaderMaterial;
     const on = mask !== null;
-    if (on !== ("PAINTED" in m.defines)) {
+    const color = on && mode === "color";
+    if (on !== ("PAINTED" in m.defines) || color !== ("PAINTED_COLOR" in m.defines)) {
       if (on) m.defines.PAINTED = "";
       else delete m.defines.PAINTED;
+      if (color) m.defines.PAINTED_COLOR = "";
+      else delete m.defines.PAINTED_COLOR;
       m.needsUpdate = true;
     }
     this.uniforms.uMask.value = mask ?? BLACK_SIGIL_MASK;

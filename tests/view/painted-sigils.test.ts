@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { brightBox, cropOf, maskSize, packChannels, SIGIL_SOURCES } from "../../scripts/vfx/sigil-masks-lib";
+import { brightBox, COLOR_SIGIL_ELEMENTS, cropOf, maskSize, packChannels, packColor, sigilSourcesFor, SIGIL_SOURCES } from "../../scripts/vfx/sigil-masks-lib";
 import { GroundSigil } from "../../src/view/skills/fxkit";
 import { loadPaintedSigils, paintedPlane, parseSigilManifest, SIGIL_MASK_IDS, SIGIL_PLANES, sigilModeOf, sigilPaths, type SigilMaskId } from "../../src/view/skills/painted-sigils";
 import { GroundMarks } from "../../src/view/skills/sword-rain";
@@ -110,6 +110,29 @@ describe("painted sigil loading", () => {
 });
 
 describe("mask extraction", () => {
+  it("retains authored RGB and clears only near-black noise and the padded border", () => {
+    const rgb = new Uint8Array(8 * 8 * 3).fill(1);
+    rgb.set([240, 35, 8], (3 * 8 + 3) * 3);
+    rgb.set([0, 50, 180], (4 * 8 + 4) * 3);
+    const data = packColor(rgb, 8, 8);
+    expect([...data.slice((3 * 8 + 3) * 3, (3 * 8 + 3) * 3 + 3)]).toEqual([240, 35, 8]);
+    expect([...data.slice((4 * 8 + 4) * 3, (4 * 8 + 4) * 3 + 3)]).toEqual([0, 50, 180]);
+    expect(data.filter((v) => v !== 0)).toHaveLength(5);
+    expect(rgb[0]).toBe(1);
+  });
+  it.each(COLOR_SIGIL_ELEMENTS)("selects all seven lane-3 try1 sources for %s", (element) => {
+    const sources = sigilSourcesFor(element);
+    expect(Object.keys(sources)).toHaveLength(7);
+    for (const id of SIGIL_MASK_IDS) {
+      expect(sources[id].file).toBe(`${element}-${id === "crack" ? "crack-star" : id === "rift" ? "rift-groove" : `sigil-${id}`}.v1-try1.png`);
+      expect(sources[id].crop).toBe(SIGIL_SOURCES[id].crop);
+    }
+    expect(sources.spiral.flop).toBe(true);
+  });
+  it("retains Metal's source selections and refuses an unknown element", () => {
+    expect(sigilSourcesFor("metal")).toBe(SIGIL_SOURCES);
+    expect(() => sigilSourcesFor("missing")).toThrow("Unknown sigil element");
+  });
   it.each(rows)("matches the approved crop and pixel budget for $id", ({ id, box: [x, y, w, h], crop, px }) => {
     const c = cropOf({ x, y, w, h }, SIGIL_SOURCES[id].crop);
     expect([c.x, c.y, c.w, c.h]).toEqual(crop);

@@ -10,6 +10,31 @@ export const SIGIL_SOURCES: Readonly<Record<SigilMaskId, { file: string; crop: "
   rift: { file: "metal-rift-groove.v1-try3.png", crop: "box", flop: false },
 };
 
+export const COLOR_SIGIL_ELEMENTS = ["fire", "water", "thunder", "wind", "ice", "earth", "wood", "light", "dark", "poison", "blood", "void", "star"] as const;
+
+/** Lane 3 selected try1 for every non-Metal shape, including ticket 327's Fire hex/line. */
+export function sigilSourcesFor(element: string): typeof SIGIL_SOURCES {
+  if (element === "metal") return SIGIL_SOURCES;
+  if (!COLOR_SIGIL_ELEMENTS.includes(element as (typeof COLOR_SIGIL_ELEMENTS)[number])) throw new Error(`Unknown sigil element: ${element}`);
+  return Object.fromEntries(Object.entries(SIGIL_SOURCES).map(([id, source]) => [id, {
+    ...source,
+    file: `${element}-${id === "crack" ? "crack-star" : id === "rift" ? "rift-groove" : `sigil-${id}`}.v1-try1.png`,
+  }])) as unknown as typeof SIGIL_SOURCES;
+}
+
+/** Authored additive RGB; only near-black background noise and the padded border are cleared. */
+export function packColor(rgb: Uint8Array, w: number, h: number): Uint8Array {
+  const data = new Uint8Array(w * h * 3);
+  for (let y = 2; y < h - 2; y += 1) {
+    for (let x = 2; x < w - 2; x += 1) {
+      const i = (y * w + x) * 3;
+      if (Math.max(rgb[i]!, rgb[i + 1]!, rgb[i + 2]!) <= 2) continue;
+      data.set(rgb.subarray(i, i + 3), i);
+    }
+  }
+  return data;
+}
+
 export interface BrightBox { x: number; y: number; w: number; h: number }
 
 export function brightBox(maxCh: Uint8Array, w: number, h: number): BrightBox | null {

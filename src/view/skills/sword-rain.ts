@@ -16,6 +16,7 @@
  */
 import * as THREE from "three";
 import { GRAMMAR } from "./sword-grammar";
+import type { SigilTextureMode } from "./painted-sigils";
 
 const v3 = (c: readonly number[]): THREE.Vector3 => new THREE.Vector3(c[0], c[1], c[2]);
 
@@ -381,6 +382,7 @@ uniform vec3 uCyanLit;
 uniform vec3 uInk;
 #ifdef PAINTED
 uniform sampler2D uStarMask, uRiftMask;
+uniform vec2 uColorMode;
 uniform vec3 uBody, uCoreC, uInner;
 uniform float uInnerMix;
 #endif
@@ -401,6 +403,12 @@ void main() {
     vec2 uv = vec2(vL.x, -vL.y) * 0.5 + 0.5;
     vec3 s = mix(texture2D(uRiftMask, uv).rgb, texture2D(uStarMask, uv).rgb, step(vKind, 0.5));
     float rev = 1.0 - smoothstep(vSize.w - 0.04, vSize.w, abs(vL.x));
+    if ((vKind < 0.5 ? uColorMode.x : uColorMode.y) > 0.5) {
+      float brightness = max(s.r, max(s.g, s.b));
+      float er = smoothstep((1.0 - vLook.x) * 1.1 - 0.1, (1.0 - vLook.x) * 1.1, brightness);
+      gl_FragColor = vec4(s * clamp(vLook.w + vLook.y, 0.0, 6.0) * rev * er, 0.0);
+      return;
+    }
     vec3 add = uBody * (s.r + s.g * 0.35) * vLook.w + mix(uCoreC, uInner, uInnerMix) * s.b * vLook.y;
     float a = clamp(s.g * vLook.z, 0.0, 1.0);
     // Erosion reaches zero as alpha decays, without a pop.
@@ -509,6 +517,7 @@ export class GroundMarks {
       uniforms: {
         uWhite: { value: v3(GRAMMAR.white) }, uCyan: { value: v3(GRAMMAR.cyan) }, uCyanLit: { value: v3(GRAMMAR.cyanLit) }, uInk: { value: new THREE.Vector3(0.012, 0.016, 0.03) },
         uStarMask: { value: BLACK_MARK_MASK }, uRiftMask: { value: BLACK_MARK_MASK }, uAspect: { value: new THREE.Vector2(1, 1) },
+        uColorMode: { value: new THREE.Vector2() },
         uBody: { value: new THREE.Color(1, 1, 1) }, uCoreC: { value: new THREE.Color(1, 1, 1) }, uInner: { value: new THREE.Color(1, 1, 1) }, uInnerMix: { value: 0 },
       },
       depthTest: true,
@@ -524,7 +533,7 @@ export class GroundMarks {
   }
 
   /** The instanced draw uses painted marks only when both kinds are ready. */
-  setPainted(star: THREE.Texture | null, starAspect: number, rift: THREE.Texture | null, riftAspect: number): void {
+  setPainted(star: THREE.Texture | null, starAspect: number, rift: THREE.Texture | null, riftAspect: number, starMode: SigilTextureMode = "mask", riftMode: SigilTextureMode = "mask"): void {
     const m = this.mesh.material as THREE.ShaderMaterial;
     const on = star !== null && rift !== null;
     if (on !== ("PAINTED" in m.defines)) {
@@ -535,6 +544,7 @@ export class GroundMarks {
     m.uniforms.uStarMask!.value = star ?? BLACK_MARK_MASK;
     m.uniforms.uRiftMask!.value = rift ?? BLACK_MARK_MASK;
     m.uniforms.uAspect!.value.set(starAspect, riftAspect);
+    m.uniforms.uColorMode!.value.set(starMode === "color" ? 1 : 0, riftMode === "color" ? 1 : 0);
   }
 
   setTint(body: THREE.Color, core: THREE.Color, inner: readonly number[], innerMix: number): void {
