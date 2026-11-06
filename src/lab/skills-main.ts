@@ -127,6 +127,7 @@ import { TwinPearlGreybox, type TwinCastReport } from "./twin-pearl-greybox";
 import { keyIcon, SkillBar, type SkillBarState } from "./skill-bar";
 import { QiDragonSwarm } from "../view/skills/qi-dragon-swarm";
 import { QiSwarmLab, skillsLabQuality, type SwarmLabReport } from "./qi-dragon-swarm";
+import { AB_FLAGS, abFlagEnabled, withAbFlag } from "./ab-flags";
 
 const params = new URLSearchParams(location.search);
 // ?cut=sabre: the lopsided swept swing (kept for the Sabre school) in place of the Sword's symmetric crescent (read once).
@@ -1946,6 +1947,26 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   panel.dataset.labPanel = "1";
   const content = document.createElement("div");
   content.style.cssText = "display:flex;flex-direction:column;gap:4px";
+  const ab = document.createElement("details");
+  ab.style.cssText = "background:rgba(14,18,26,.78);border:1px solid #3a4558;border-radius:5px;padding:3px 8px";
+  const abSummary = document.createElement("summary");
+  abSummary.textContent = "A/B";
+  abSummary.title = "Compare layers (reloads the lab)";
+  abSummary.style.cssText = "cursor:pointer;font-weight:600";
+  ab.append(abSummary);
+  const currentUrl = new URL(location.href);
+  for (const flag of AB_FLAGS) {
+    const row = document.createElement("label");
+    row.style.cssText = "display:flex;align-items:center;gap:6px;min-height:22px;cursor:pointer";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = abFlagEnabled(currentUrl, flag);
+    box.onchange = () => location.assign(withAbFlag(new URL(location.href), flag, box.checked).href);
+    row.append(box, document.createTextNode(flag.label));
+    ab.append(row);
+  }
+  ab.ontoggle = () => bar?.avoid(panel);
+  content.append(ab);
   const names: [string, string][] = [
     ["0", "Phi Kiếm · Flying Sword"],
     ["1", "Ngự Kiếm Quyết · Threefold Sword Command"],
