@@ -3,7 +3,8 @@ export type IconStyle = "ink-gold" | "jewel-crest";
 export const KEY_ICONS: Readonly<Record<"0" | "1" | "2" | "3" | "4" | "5" | "6" | "7", string | null>> = {
   "0": "flying-sword",
   "1": "sword-qi-strike",
-  "2": null,
+  // Key 2 is the lab's Metal symmetric crescent (Cloud-Piercing Line): the crescent icon of Codex 314.
+  "2": "crescent-metal",
   "3": "returning-sword-guard",
   "4": "flowing-light-step",
   "5": "falling-sword-array",
@@ -13,7 +14,7 @@ export const KEY_ICONS: Readonly<Record<"0" | "1" | "2" | "3" | "4" | "5" | "6" 
 };
 
 export function iconSrc(style: IconStyle, id: string, base = "/art-src/lab/ui/skill-icons/"): string {
-  const take = id === "flowing-light-step" || id === "asura-six-arms-avatar" ? "try2" : "try1";
+  const take = id === "flowing-light-step" || id === "asura-six-arms-avatar" || (id === "crescent-metal" && style === "jewel-crest") ? "try2" : "try1";
   return `${base}${style}-${id}.v1-${take}-48.png`;
 }
 

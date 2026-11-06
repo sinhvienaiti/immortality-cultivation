@@ -24,7 +24,7 @@ describe("lab skill bar icons (pure helpers, node)", () => {
     expect(KEY_ICONS).toEqual({
       "0": "flying-sword",
       "1": "sword-qi-strike",
-      "2": null,
+      "2": "crescent-metal",
       "3": "returning-sword-guard",
       "4": "flowing-light-step",
       "5": "falling-sword-array",
@@ -35,7 +35,9 @@ describe("lab skill bar icons (pure helpers, node)", () => {
 
   it("selects Twin Dragons only for the grey box and leaves keys outside 0–7 empty", () => {
     expect(keyIcon("2", true)).toBe("twin-dragons");
-    expect(keyIcon("2", false)).toBeNull();
+    expect(keyIcon("2", false)).toBe("crescent-metal");
+    expect(iconSrc("jewel-crest", "crescent-metal")).toBe("/art-src/lab/ui/skill-icons/jewel-crest-crescent-metal.v1-try2-48.png");
+    expect(iconSrc("ink-gold", "crescent-metal")).toBe("/art-src/lab/ui/skill-icons/ink-gold-crescent-metal.v1-try1-48.png");
     expect(keyIcon("0", false)).toBe("flying-sword");
     for (const key of ["8", "9", "I", ""]) expect(keyIcon(key, false)).toBeNull();
   });
