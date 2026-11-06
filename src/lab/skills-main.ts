@@ -77,6 +77,8 @@ import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { FoeFlipbookFx, type FoePose } from "./foe-flipbook-fx";
 import { HeroPresenceFx, heroUltimateReady, type HeroPresencePose } from "./hero-presence-fx";
+import { AmbientFx } from "./ambient-fx";
+import { ChargeFillFx, type ChargeFillPose } from "./charge-fill-fx";
 import { speciesDef } from "../sim/targeting";
 import { uToM } from "../sim/fixed";
 import type { SimEvent, World } from "../content/types";
@@ -1094,7 +1096,12 @@ const AB_SCENE = params.get("ab");
 const AB_ONLY = params.get("only") === "left" ? "left" : params.get("only") === "right" ? "right" : null;
 FLIPBOOK_MOTION.blend = params.get("mv") !== "0";
 const hybridLib = AB_SCENE !== null || params.get("cometFlip") === "1" || params.get("video") === "0" ? stage.flipbooks.library("hybrid", (m) => m.role !== "comet") : undefined;
-if (hybridLib !== undefined && params.get("ktx2") !== "0") {
+// ?ambient=0 skips all atmosphere loads; the ground layer keeps combat and DOM tags in front.
+const ambient = new AmbientFx(view.layers.ground, VFX_BASE, location.search);
+// Painted charge follows correct letters only; ?chargefill=0 skips its manifest and atlases.
+const chargeFill = new ChargeFillFx(view.layers.fx, VFX_BASE, location.search);
+const chargeFillPose: ChargeFillPose = { x: 0, y: 0, z: 0, height: caster.heightM, bodyWidth: caster.heightM * 0.35 };
+if ((hybridLib !== undefined || ambient.enabled || chargeFill.enabled) && params.get("ktx2") !== "0") {
   const path = basisWasmUrl.slice(0, basisWasmUrl.lastIndexOf("/") + 1);
   if (basisJsUrl.slice(0, basisJsUrl.lastIndexOf("/") + 1) !== path) console.warn("[hybrid-ab] basis JS and WASM folders differ");
   setFlipbookKtx2({ loader: new KTX2Loader().setTranscoderPath(path).detectSupport(view.stage.renderer), variant: params.get("ktx2") === "etc1s" ? "etc1s" : "uastc" });
@@ -1493,6 +1500,7 @@ async function setElement(id: string): Promise<boolean> {
   }
   await stage.prepare(kit);
   fx.setElement(kit, stage);
+  chargeFill.prepareElement(kit.id);
   myriad.setElement(kit, stage);
   if (BLADE_HEAT === "furnace" && kit.id === "fire") applyBladeLook(FIRE_FURNACE_BLADE);
   swordAura.setElement(kit);
@@ -1737,6 +1745,7 @@ function updateTyping(dt: number): void {
     sound.key("key");
     typing.next += perLetter;
     const p = typing.typed / typing.letters;
+    chargeFill.sync(typing, fx.element.id);
     if (typing.typed >= typing.letters && typing.slot === "k5") {
       // Thiên Hà's last letter: the cut-in first, the release when it ends.
       startUltimate(typing.tx, typing.tz);
@@ -1780,6 +1789,7 @@ function updateTyping(dt: number): void {
 
 function reset(): void {
   typing = null;
+  chargeFill.clear();
   greybox?.reset();
   fx.reset();
   herd.respawnAll();
@@ -2215,7 +2225,9 @@ function frame(dt: number): void {
     ultDarkEnd = -1;
     if (!myriad.running) screen.holdDark(0);
   } else if (ultDark) screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
+  chargeFill.sync(typing, fx.element.id);
   updateTyping(world);
+  chargeFill.sync(typing, fx.element.id);
   updateBolt(world);
   crescentTagLeft = Math.max(0, crescentTagLeft - world);
   herd.update(world);
@@ -2283,6 +2295,11 @@ function frame(dt: number): void {
   foeFx.update(greybox !== null ? dt : world);
   deathFx.update(world);
   qiSwarm?.draw(world);
+  chargeFillPose.x = caster.x;
+  chargeFillPose.y = caster.root.position.y;
+  chargeFillPose.z = caster.z;
+  chargeFill.update(dt, chargeFillPose);
+  ambient.update(dt);
   placeTags();
   view.render(dt);
   greybox?.afterRender();
