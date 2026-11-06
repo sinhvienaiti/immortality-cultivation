@@ -37,8 +37,10 @@ const TAIL_W = 1.3;
 const HEAD_M = 1.6;
 /** The head's disc: its radius as a share of its clip's cell height, round the clip's light centre (its pivot). */
 const CORE_R = 0.24;
-/** A clip's centre counts as a bright core above this mean light (0–1) in that disc. */
-const CORE_LIGHT = 0.2;
+/** A clip's centre counts as a bright core above this mean light (0–1) in a tight disc there (CORE_TEST_R; a ring's
+ * hollow middle fails it). */
+const CORE_LIGHT = 0.25;
+const CORE_TEST_R = 0.1;
 /** Head clips by preference (their roles), sparkles shed a second from the tail. */
 const HEAD_ROLES = ["burst", "charge", "sparkle", "groundMark", "impact", "groundImpact"] as const;
 const SPARKS_PER_S = 40;
@@ -110,7 +112,7 @@ interface Look {
   readonly spark: FlipbookPool | null;
 }
 
-/** The light of a clip's frame `frame` in a disc of CORE_R round its pivot (0–1; the meteor head's test). */
+/** The light of a clip's frame `frame` in a disc of CORE_TEST_R round its pivot (0–1; the meteor head's test). */
 function coreLight(texture: THREE.Texture, meta: FlipbookMeta, frame: number): number {
   const img = texture.image as (CanvasImageSource & { width?: number; height?: number }) | undefined;
   if (typeof document === "undefined" || img === undefined || !((img.width ?? 0) > 0)) return 1;
@@ -127,7 +129,7 @@ function coreLight(texture: THREE.Texture, meta: FlipbookMeta, frame: number): n
   const d = ctx.getImageData(0, 0, w, h).data;
   const px = meta.pivot[0] * w;
   const py = meta.pivot[1] * h;
-  const r = CORE_R * h;
+  const r = CORE_TEST_R * h;
   let sum = 0;
   let n = 0;
   for (let y = Math.max(0, Math.floor(py - r)); y < Math.min(h, Math.ceil(py + r)); y += 1) {
@@ -212,18 +214,22 @@ export class MeteorRain {
     const lib = player.library(folder);
     const entries = player.loaded(folder).map((id) => lib.get(id)).filter((e) => e !== null && e.meta.layer !== "body") as NonNullable<ReturnType<typeof lib.get>>[];
     if (entries.length === 0) return null;
+    // The first by HEAD_ROLES whose centre is bright; none: the brightest centre of them all.
     let head: (typeof entries)[number] | undefined;
     let headFrame = 0;
+    let best = -1;
     for (const role of HEAD_ROLES) {
       for (const e of entries.filter((x) => x.meta.role === role)) {
         const frame = Math.min(e.meta.frames - 1, e.meta.peak ?? e.meta.start);
-        if (coreLight(e.texture, e.meta, frame) >= CORE_LIGHT) {
+        const light = coreLight(e.texture, e.meta, frame);
+        if (light > best) {
+          best = light;
           head = e;
           headFrame = frame;
-          break;
         }
+        if (light >= CORE_LIGHT) break;
       }
-      if (head !== undefined) break;
+      if (best >= CORE_LIGHT) break;
     }
     if (head === undefined) return null;
     const pool = new FlipbookPool(head.meta.id + "#meteor", "fire", 48, 14, this.blank);
