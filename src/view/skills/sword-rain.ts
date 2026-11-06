@@ -348,6 +348,9 @@ export const MARK_STAR = 0;
 export const MARK_RIFT = 1;
 
 const MARK_VERTEX = /* glsl */ `
+#ifdef PAINTED
+uniform vec2 uAspect;
+#endif
 attribute vec4 iPos;  // x, z (m), angle (rad), kind
 attribute vec4 iSize; // length, width (m), seed, reveal (0–1 along the rift)
 attribute vec4 iLook; // alpha, heat (core HDR), ink (scorch alpha), glow
@@ -358,7 +361,11 @@ varying float vKind;
 void main() {
   float c = cos(iPos.z);
   float s = sin(iPos.z);
+#ifdef PAINTED
+  vec2 l = position.xy * vec2(iSize.x, iSize.x / (iPos.w < 0.5 ? uAspect.x : uAspect.y));
+#else
   vec2 l = position.xy * iSize.xy;
+#endif
   vec2 w = vec2(c * l.x - s * l.y, s * l.x + c * l.y);
   vL = position.xy * 2.0;
   vSize = iSize;
@@ -372,6 +379,11 @@ uniform vec3 uWhite;
 uniform vec3 uCyan;
 uniform vec3 uCyanLit;
 uniform vec3 uInk;
+#ifdef PAINTED
+uniform sampler2D uStarMask, uRiftMask;
+uniform vec3 uBody, uCoreC, uInner;
+uniform float uInnerMix;
+#endif
 varying vec2 vL;
 varying vec4 vSize;
 varying vec4 vLook;
@@ -383,6 +395,20 @@ float vnoise(float x) {
   return mix(hash(i), hash(i + 1.0), f * f * (3.0 - 2.0 * f)) * 2.0 - 1.0;
 }
 void main() {
+#ifdef PAINTED
+  {
+    // Local +y is world +z: match GroundSigil's mask orientation.
+    vec2 uv = vec2(vL.x, -vL.y) * 0.5 + 0.5;
+    vec3 s = mix(texture2D(uRiftMask, uv).rgb, texture2D(uStarMask, uv).rgb, step(vKind, 0.5));
+    float rev = 1.0 - smoothstep(vSize.w - 0.04, vSize.w, abs(vL.x));
+    vec3 add = uBody * (s.r + s.g * 0.35) * vLook.w + mix(uCoreC, uInner, uInnerMix) * s.b * vLook.y;
+    float a = clamp(s.g * vLook.z, 0.0, 1.0);
+    // Erosion reaches zero as alpha decays, without a pop.
+    float er = smoothstep((1.0 - vLook.x) * 1.1 - 0.1, (1.0 - vLook.x) * 1.1, max(s.r, s.g * 0.6)) * rev;
+    gl_FragColor = vec4((uInk * a + add) * er, a * er);
+    return;
+  }
+#endif
   float seed = vSize.z;
   float heat = vLook.y;
   float dist;
@@ -446,6 +472,9 @@ void main() {
   gl_FragColor = vec4((uInk * a + add * m) * vLook.x * rev, a * vLook.x * rev);
 }`;
 
+const BLACK_MARK_MASK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+BLACK_MARK_MASK.needsUpdate = true;
+
 /** One instanced draw of ground cracks; fill with begin / push… / end each frame. */
 export class GroundMarks {
   readonly mesh: THREE.Mesh;
@@ -477,7 +506,11 @@ export class GroundMarks {
     const m = new THREE.ShaderMaterial({
       vertexShader: MARK_VERTEX,
       fragmentShader: MARK_FRAGMENT,
-      uniforms: { uWhite: { value: v3(GRAMMAR.white) }, uCyan: { value: v3(GRAMMAR.cyan) }, uCyanLit: { value: v3(GRAMMAR.cyanLit) }, uInk: { value: new THREE.Vector3(0.012, 0.016, 0.03) } },
+      uniforms: {
+        uWhite: { value: v3(GRAMMAR.white) }, uCyan: { value: v3(GRAMMAR.cyan) }, uCyanLit: { value: v3(GRAMMAR.cyanLit) }, uInk: { value: new THREE.Vector3(0.012, 0.016, 0.03) },
+        uStarMask: { value: BLACK_MARK_MASK }, uRiftMask: { value: BLACK_MARK_MASK }, uAspect: { value: new THREE.Vector2(1, 1) },
+        uBody: { value: new THREE.Color(1, 1, 1) }, uCoreC: { value: new THREE.Color(1, 1, 1) }, uInner: { value: new THREE.Color(1, 1, 1) }, uInnerMix: { value: 0 },
+      },
       depthTest: true,
       polygonOffset: true,
       polygonOffsetFactor: -2,
@@ -488,6 +521,32 @@ export class GroundMarks {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;
     this.mesh.visible = false;
+  }
+
+  /** The instanced draw uses painted marks only when both kinds are ready. */
+  setPainted(star: THREE.Texture | null, starAspect: number, rift: THREE.Texture | null, riftAspect: number): void {
+    const m = this.mesh.material as THREE.ShaderMaterial;
+    const on = star !== null && rift !== null;
+    if (on !== ("PAINTED" in m.defines)) {
+      if (on) m.defines.PAINTED = "";
+      else delete m.defines.PAINTED;
+      m.needsUpdate = true;
+    }
+    m.uniforms.uStarMask!.value = star ?? BLACK_MARK_MASK;
+    m.uniforms.uRiftMask!.value = rift ?? BLACK_MARK_MASK;
+    m.uniforms.uAspect!.value.set(starAspect, riftAspect);
+  }
+
+  setTint(body: THREE.Color, core: THREE.Color, inner: readonly number[], innerMix: number): void {
+    const u = (this.mesh.material as THREE.ShaderMaterial).uniforms;
+    u.uBody!.value.copy(body);
+    u.uCoreC!.value.copy(core);
+    u.uInner!.value.setRGB(inner[0]!, inner[1]!, inner[2]!);
+    u.uInnerMix!.value = innerMix;
+  }
+
+  get painted(): boolean {
+    return "PAINTED" in (this.mesh.material as THREE.ShaderMaterial).defines;
   }
 
   begin(): void {

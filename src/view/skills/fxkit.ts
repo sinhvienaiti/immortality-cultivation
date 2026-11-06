@@ -10,6 +10,7 @@
  */
 import * as THREE from "three";
 import { TAG_UNIFORMS, withTagMask } from "./tag-mask";
+import { paintedPlane } from "./painted-sigils";
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
@@ -1523,6 +1524,11 @@ uniform vec3 uSolidBody;
 uniform vec3 uSolidLit;
 uniform vec3 uSolidCore;
 #endif
+#ifdef PAINTED
+uniform sampler2D uMask;
+uniform vec3 uInner;
+uniform float uInnerMix;
+#endif
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -1687,8 +1693,37 @@ void main() {
   float revealArc = revealSoft(fract((ang + PI) / (2.0 * PI)), uReveal, 0.05);
   // The weapon's motif in jade (uMotif): a hollow ring where the pattern has a node, ruyi curls beside it.
   float mot = 0.0;
+  vec3 coreC = uCore;
+  float fadeK = uFade;
 
-#if defined(HEX)
+#if defined(PAINTED)
+  vec2 q = p;
+#if defined(SPIRAL)
+  q = rot2(p, -uPhase);              // The painted arms turn with the analytic phase.
+#endif
+  vec3 s = texture2D(uMask, q * 0.5 + 0.5).rgb; // r lines, g glow, b hot
+#if defined(LINE) || defined(ARROW)
+  float order = (p.x + 1.0) * 0.5;   // From the caster.
+#elif defined(CRACK)
+  float order = r;                   // From the impact.
+#else
+  float order = fract((atan(q.y, q.x) + PI) / (2.0 * PI));
+#endif
+  float rev = revealSoft(order, uReveal, 0.05);
+  float lit = 1.0;
+#if defined(ARCS)
+  lit = 0.25 + 0.75 * clamp(uCount - floor(order * 3.0), 0.0, 1.0);
+#endif
+  light = (s.r + s.g * 0.35) * rev * lit * (0.85 + 0.15 * n);
+  core = s.b * rev * lit;
+  ink = s.g * rev;
+  heatL = s.r * uHeat * 0.5 * rev;
+  heatC = s.b * uHeat * rev;
+  ashL = s.g * 0.6 * rev;
+  coreC = mix(uCore, uInner, uInnerMix);
+  // Erode faint parts first; all channels are gone at uFade = 0.
+  fadeK = smoothstep((1.0 - uFade) * 1.1 - 0.1, (1.0 - uFade) * 1.1, max(s.r, s.g * 0.6));
+#elif defined(HEX)
   // Six-sword array: a hexagon outline with six sockets at its corners, an inner hex, spokes to the centre,
   // a ring of runes round the heart; dark strokes under the bright lines so they pop on pale stone.
   float dOuter = sdHex(vec2(p.y, p.x), 0.86);
@@ -1866,14 +1901,14 @@ void main() {
 #endif
 
   float edge = 1.0 - smoothstep(0.96, 1.0, r);
-#if defined(LINE) || defined(ARROW)
+#if defined(LINE) || defined(ARROW) || defined(PAINTED)
   edge = 1.0;
 #endif
   float la = clamp(light * uGlow + heatL, 0.0, 6.0) * edge;
   float ca = clamp(core * uGlow * 2.0 + heatC * 2.0, 0.0, 6.0) * edge;
   // The motif adds soft jade (≤ uJade, no bloom) over a thin ink so it reads on pale stone.
   float ma = clamp(mot * min(uGlow, 1.0), 0.0, 1.0) * edge * uMotif;
-  vec3 rgb = uColor * min(la, 1.4) + uCore * ca + uJade * ma;
+  vec3 rgb = uColor * min(la, 1.4) + coreC * ca + uJade * ma;
   ink += mot * 0.3 * uMotif;
   float inkA = clamp(ink * uInk, 0.0, 1.0) * edge;
   float ashA = clamp(ashL * uAsh, 0.0, 0.8) * edge;
@@ -1899,10 +1934,13 @@ void main() {
   float er = smoothstep((1.0 - uFade) * 1.1 - 0.1, (1.0 - uFade) * 1.1, n);
   gl_FragColor = vec4((rgbS * (1.0 - ashA) + ashC) * er, clamp(aS + ashA * (1.0 - aS), 0.0, 1.0) * er);
 #else
-  float a = clamp(inkA + ashA * (1.0 - inkA), 0.0, 1.0) * uFade;
-  gl_FragColor = vec4((rgb + ashC) * uFade, a);
+  float a = clamp(inkA + ashA * (1.0 - inkA), 0.0, 1.0) * fadeK;
+  gl_FragColor = vec4((rgb + ashC) * fadeK, a);
 #endif
 }`;
+
+const BLACK_SIGIL_MASK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+BLACK_SIGIL_MASK.needsUpdate = true;
 
 /** A flat plane on the ground with a sigil shader. */
 export class GroundSigil {
@@ -1917,6 +1955,9 @@ export class GroundSigil {
     uPhase: { value: number };
     uColor: { value: THREE.Color };
     uCore: { value: THREE.Color };
+    uMask: { value: THREE.Texture };
+    uInner: { value: THREE.Color };
+    uInnerMix: { value: number };
     uShape: { value: number };
     uGlyph: { value: number };
     uHeat: { value: number };
@@ -1939,7 +1980,7 @@ export class GroundSigil {
   private outT = -1;
   private out0 = 0;
 
-  constructor(kind: SigilKind, sizeX: number, sizeZ: number, colour: string, core: string) {
+  constructor(kind: SigilKind, private readonly sizeX: number, private readonly sizeZ: number, colour: string, core: string) {
     this.uniforms = {
       uTime: { value: 0 },
       uReveal: { value: 0 },
@@ -1950,6 +1991,9 @@ export class GroundSigil {
       uPhase: { value: 0 },
       uColor: { value: new THREE.Color(colour) },
       uCore: { value: new THREE.Color(core) },
+      uMask: { value: BLACK_SIGIL_MASK },
+      uInner: { value: new THREE.Color(1, 1, 1) },
+      uInnerMix: { value: 0 },
       uShape: { value: 0 },
       uGlyph: { value: 1 },
       uHeat: { value: 0 },
@@ -1984,6 +2028,24 @@ export class GroundSigil {
     this.mesh.position.y = 0.02;
     this.mesh.renderOrder = 5;
     this.mesh.visible = false;
+  }
+
+  /** Load-time switch: preserve the painted aspect without changing animation scale. */
+  setPainted(mask: THREE.Texture | null, aspect = 1): void {
+    const m = this.mesh.material as THREE.ShaderMaterial;
+    const on = mask !== null;
+    if (on !== ("PAINTED" in m.defines)) {
+      if (on) m.defines.PAINTED = "";
+      else delete m.defines.PAINTED;
+      m.needsUpdate = true;
+    }
+    this.uniforms.uMask.value = mask ?? BLACK_SIGIL_MASK;
+    this.mesh.geometry.dispose();
+    this.mesh.geometry = new THREE.PlaneGeometry(...(on ? paintedPlane(this.sizeX, aspect) : [this.sizeX, this.sizeZ] as const));
+  }
+
+  get painted(): boolean {
+    return "PAINTED" in (this.mesh.material as THREE.ShaderMaterial).defines;
   }
 
   place(x: number, z: number, yaw = 0): void {
