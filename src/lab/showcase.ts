@@ -16,10 +16,12 @@
  * strikes, not the spawn, bring the light and the shake.
  * A clip with its own video (the manifest's `video`, 1080p at 24 fps; owner 06/11 ~02:20: the 640 × 360 atlases at 6 fps
  * "hơi mờ, nhìn như video kém chất lượng") plays it on the same card, the same blend (added light, black clear), place
- * and turn: up to MAX_VIDEOS at once (VideoBank), the rest from their atlas.
+ * and turn: up to MAX_VIDEOS at once (VideoBank), the rest from their atlas. Such a clip's atlas stays off the GPU until a
+ * cast needs it (no slot free, or its video stalls), then goes again ATLAS_RELEASE_S after its card ends: all 48 at load
+ * held 1.9 GB of textures (lab-perf, 06/11).
  */
 import * as THREE from "three";
-import { FlipbookPool, type FlipbookMeta, type FlipbookPlayer, type FlipbookVideo } from "../view/skills/flipbook";
+import { FlipbookPool, type FlipbookLibrary, type FlipbookMeta, type FlipbookPlayer, type FlipbookVideo } from "../view/skills/flipbook";
 import { SCREEN_TIERS } from "../view/screen-fx";
 
 /** Where a pillar's column meets the ground in its cell (x from the left, y from the top). */
@@ -30,6 +32,23 @@ const PILLAR_S = 2.4;
 const SCENE_S = 4.6;
 /** An avatar's and a beast's share shown (25–40 % see-through: SKILLS_EXPANSION, "Cách dựng"). */
 const FIGURE_ALPHA = 0.68;
+/**
+ * Light share per clip with ?readable=1 (lab-perf, 06/11): each key 8 and 9 skill whose peak frame left at least half of
+ * the beasts' word-tag spots on light so bright that a tag plate under 0.6 opacity misses 7:1, dimmed so its median tag
+ * spot drops to grey 164 (where a 0.6 plate holds 7:1); from the measured light behind the tags (linear, over the
+ * stone's), at least half. Off by default: the owner compares (docs/work/tasks/lab-castable-skills.md).
+ */
+export const READABLE_LIGHT: Readonly<Record<string, number>> = {
+  "pillar-thunder-field": 0.5, "ult-metal-geng": 0.5, "ult-wood-primordial-tree": 0.5, "ult-water-profound-sea-v2": 0.55,
+  "ult-fire-one-spark": 0.5, "ult-earth-ink-peaks": 0.5, "ult-thunder-nine-heavens-v2": 0.55, "ult-wind-firmament": 0.5,
+  "ult-ice-cold-silence": 0.55, "ult-light": 0.5, "ult-poison": 0.6, "ult-blood": 0.85, "ult-void": 0.55, "ult-star": 0.5,
+  "myriad-lotus-domain": 0.5, "nine-heavens-tribulation-net": 0.5, "karmic-ember-tempest": 0.7, "glacial-moon-tide": 0.6,
+  "asura-six-arms-avatar": 0.8, "myriad-palm-bodhi-avatar": 0.7, "heaven-earth-titan-avatar": 0.75,
+  "immortal-sword-progenitor-avatar": 0.5, "white-fiend-tiger": 0.7, "abyssal-xuanwu-tortoise": 0.85,
+  "auspicious-thunder-qilin": 0.75, "astral-kunpeng-leviathan": 0.8, "all-knowing-baize-spirit": 0.8,
+  "primordial-chaos-bell": 0.5, "blade-swallowing-immortal-gourd": 0.55, "nine-dragon-refining-cauldron": 0.65,
+  "seven-treasure-suppressing-pagoda": 0.5, "yin-yang-void-mirror": 0.65,
+};
 /** The caption shows this long, then fades over CAPTION_FADE_S. */
 const CAPTION_S = 4.5;
 const CAPTION_FADE_S = 0.6;
@@ -194,6 +213,10 @@ export interface VideoHandle {
 export const VIDEO_FAILED = -2;
 /** A video not showing a frame this long after its cast (real ms) gives way to its atlas. */
 const VIDEO_STALL_MS = 1500;
+/** A deferred atlas fetched for a card goes again once no card of it has shown for this long (world s). */
+const ATLAS_RELEASE_S = 10;
+/** A deferred atlas arriving this much after its cast (real ms) is too late for that card: it is not spawned. */
+const ATLAS_LATE_MS = 1500;
 
 /** A video slot: its element, texture and one-cell card; the clip it holds, its cast's number, its card's time left. */
 interface VideoSlot {
@@ -228,8 +251,11 @@ class VideoBank {
     this.blank.needsUpdate = true;
   }
 
+  /** Deferred atlases lent to cards (library base + id): whose, the pool showing it, world s since it last showed. */
+  private readonly leases = new Map<string, { lib: FlipbookLibrary; id: string; pool: FlipbookPool; idle: number }>();
+
   /** Whether this page plays the clips' H.264 (a browser without it keeps the atlases). */
-  private readonly playable = typeof document !== "undefined" && document.createElement("video").canPlayType('video/mp4; codecs="avc1.640028"') !== "";
+  readonly playable = typeof document !== "undefined" && document.createElement("video").canPlayType('video/mp4; codecs="avc1.640028"') !== "";
 
   /** Whether a cast of `id` could take a slot now (one idle, or a new one under MAX_VIDEOS). */
   free(): boolean {
@@ -293,8 +319,28 @@ class VideoBank {
     };
   }
 
-  /** World time: the cards age; a driven video is seeked to its clock; a card done pauses its video. */
+  /** `pool` shows `lib`'s deferred atlas `id` now: it stays until ATLAS_RELEASE_S after its last card. */
+  lease(lib: FlipbookLibrary, id: string, pool: FlipbookPool): void {
+    const key = lib.base + id;
+    const l = this.leases.get(key);
+    if (l !== undefined) l.idle = 0;
+    else this.leases.set(key, { lib, id, pool, idle: 0 });
+  }
+
+  /** Deferred atlases on the GPU now (perf checks). */
+  get leased(): number {
+    return this.leases.size;
+  }
+
+  /** World time: the cards age; a driven video is seeked to its clock; a card done pauses its video; idle atlases go. */
   update(dt: number): void {
+    for (const [key, l] of this.leases) {
+      if (l.pool.live > 0) l.idle = 0;
+      else if ((l.idle += dt) >= ATLAS_RELEASE_S) {
+        l.lib.release(l.id);
+        this.leases.delete(key);
+      }
+    }
     for (const s of this.slots) {
       if (s.left <= 0) continue;
       s.pool.update(dt);
@@ -404,16 +450,30 @@ export class Showcase {
   private readonly listeners: (() => void)[] = [];
   private turn = -1;
   private readonly bank: VideoBank;
+  private readonly lib: FlipbookLibrary;
   /** The video card the last play started (null: it played its atlas). */
   played: VideoHandle | null = null;
+  /** ?readable=1: each clip's light × READABLE_LIGHT (its ground darkening kept). */
+  readable = false;
+  /** ?atlases=all: every atlas on the GPU from the start, as before 06/11 (to compare). */
+  deferAtlases = true;
 
   constructor(player: FlipbookPlayer, private readonly host: ShowcaseHost, private readonly cfg: ShowcaseConfig = ULT_SHOWCASE) {
     this.bank = bankOf(player);
-    const lib = player.library(cfg.folder);
+    // A clip with a video keeps its atlas off the GPU until a cast needs it (decided when the manifest arrives, after
+    // the lab's ?video=0 has set the bank).
+    const lib = player.library(cfg.folder, (meta) => meta.video !== undefined && this.deferAtlases && this.bank.enabled && this.bank.playable);
+    this.lib = lib;
     lib.watch((id) => {
       const e = lib.get(id);
       const role = e?.meta.role;
-      if (e === null || role === undefined || !cfg.roles.includes(role) || this.pools.has(id) || cfg.rejected.has(id)) return;
+      if (e === null || role === undefined || !cfg.roles.includes(role) || cfg.rejected.has(id)) return;
+      const known = this.pools.get(id);
+      // A deferred atlas arriving (or going): the player re-attached its pool; a pillar's keeps its foot.
+      if (known !== undefined) {
+        if (this.items.get(id)!.place === "foe") known.attach({ ...e.meta, pivot: FOOT }, e.texture, e.controls);
+        return;
+      }
       const it = this.match(id, e.meta);
       const pool = player.pool(cfg.folder, id, { mode: "fire", capacity: 2, renderOrder: 15 });
       if (it.place === "foe") pool.attach({ ...e.meta, pivot: FOOT }, e.texture, e.controls);
@@ -531,6 +591,11 @@ export class Showcase {
     this.bank.stopAll();
   }
 
+  /** The video slots (perf checks): the clip each holds, its card's time left, whether it still has a file and is paused. */
+  videoSlots(): { id: string; left: number; src: boolean; paused: boolean; readyState: number }[] {
+    return this.bank.slots.map((s) => ({ id: s.id, left: +s.left.toFixed(2), src: s.el.hasAttribute("src"), paused: s.el.paused, readyState: s.el.readyState }));
+  }
+
   /** Its clip's peak frame (the manifest's timing.peak, inside the clip). */
   peakOf(id: string): number {
     return this.map(id)?.peak ?? 0;
@@ -557,6 +622,31 @@ export class Showcase {
     return peak > meta.start
       ? { start: meta.start, peak, last, rate: (peak - meta.start) / (meta.fps * ATTACK_S), slowRate: (last + 1 - peak) / (meta.fps * tail) }
       : { start: meta.start, peak, last, rate: (last + 1 - meta.start) / (meta.fps * tail), slowRate: null };
+  }
+
+  /** A card from `id`'s atlas: now, or once its deferred atlas arrives (not when that is too late for the cast). */
+  private atlasCard(id: string, pool: FlipbookPool, at: THREE.Vector3, size: number, o: Parameters<FlipbookPool["spawn"]>[2]): void {
+    const spawn = (p: THREE.Vector3): void => {
+      pool.clear();
+      pool.spawn(p, size, o);
+      // A clip with a video lends its atlas only while its cards show (the library lets a non-deferred one stay).
+      if (this.lib.get(id)?.meta.video !== undefined) this.bank.lease(this.lib, id, pool);
+    };
+    if (!this.lib.deferred(id)) {
+      spawn(at);
+      return;
+    }
+    // `at` may be a shared scratch vector: the late card keeps its own copy.
+    const asked = performance.now();
+    const where = at.clone();
+    void this.lib.fetchAtlas(id).then((ok) => {
+      if (ok && performance.now() - asked <= ATLAS_LATE_MS) spawn(where);
+    });
+  }
+
+  /** Deferred atlases of keys 8 and 9 on the GPU now (perf checks). */
+  get atlasesLeased(): number {
+    return this.bank.leased;
   }
 
   /** The caption of `id` (a castable skill's: its stats and keys lines), without playing it. */
@@ -603,6 +693,7 @@ export class Showcase {
       occlude: figure ? 0.12 : 0.25,
       alpha: figure ? FIGURE_ALPHA : 1,
       lift: 0,
+      intensity: this.readable ? (READABLE_LIGHT[pick] ?? 1) : 1,
     };
     let size: number;
     if (it.place === "foe") {
@@ -654,15 +745,8 @@ export class Showcase {
       slot.pool.clear();
       slot.pool.spawn(v, size, { ...o, frame: 0, rate: 0, slowFrom: undefined, slowRate: undefined, life });
       const at = v.clone();
-      const spawnAtlas = (): void => {
-        pool.clear();
-        pool.spawn(at, size, o);
-      };
-      this.played = this.bank.start(slot, life, duration, spawnAtlas);
-    } else {
-      pool.clear();
-      pool.spawn(v, size, o);
-    }
+      this.played = this.bank.start(slot, life, duration, () => this.atlasCard(pick, pool, at, size, o));
+    } else this.atlasCard(pick, pool, v, size, o);
     if (opts.feel !== false) {
       this.host.light(p.set(v.x, 1.5, v.z), it.light, it.place === "foe" ? 6 : 8);
       // The ultimate tier's shake and flash for ultimates, avatars and beasts; the skill tier's for the rest.

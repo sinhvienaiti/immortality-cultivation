@@ -291,15 +291,108 @@ interface Entry {
   controls: FlipbookControls | null;
 }
 
-/** One element folder's atlases (loaded once; pools attach as they arrive). */
+/** An atlas as the library loads one (sRGB, mipmapped, straight alpha). */
+async function loadAtlas(loader: THREE.TextureLoader, url: string, anisotropy: number): Promise<THREE.Texture> {
+  const texture = await loader.loadAsync(url);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = anisotropy;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  // Straight alpha as stored: the shader premultiplies after sampling.
+  texture.premultiplyAlpha = false;
+  return texture;
+}
+
+/**
+ * A deferred atlas fetched while the lab plays: decoded off the main thread (createImageBitmap, flipped and left
+ * unpremultiplied there, so the upload takes the fast path). Through an <img> the first draw decoded, flipped and
+ * unpremultiplied 2560 × 2880 on the main thread: one ~600 ms frame per fallback card (lab-perf, 06/11).
+ */
+async function fetchBitmapAtlas(url: string, anisotropy: number): Promise<THREE.Texture> {
+  if (typeof createImageBitmap !== "function") return loadAtlas(new THREE.TextureLoader(), url, anisotropy);
+  const loader = new THREE.ImageBitmapLoader();
+  loader.setOptions({ imageOrientation: "flipY", premultiplyAlpha: "none", colorSpaceConversion: "none" });
+  const texture = new THREE.Texture(await loader.loadAsync(url));
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = anisotropy;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.premultiplyAlpha = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * One element folder's atlases (loaded once; pools attach as they arrive). `defer` names clips whose atlas waits until
+ * asked (fetchAtlas): they arrive at once with a blank stand-in, so pools know their clip, and `release` lets a fetched
+ * one go again. Keys 8 and 9 defer every clip that plays its 1080p video (48 atlases, 1.9 GB on the GPU, 06/11).
+ */
 export class FlipbookLibrary {
   private readonly entries = new Map<string, Entry>();
   /** Every clip the manifest declares, known before its atlas arrives (a kit pairs its layers by them). */
   private readonly declared = new Map<string, FlipbookMeta>();
   private readonly listeners = new Set<(id: string) => void>();
   private loading: Promise<void> | null = null;
+  /** Deferred clips showing the stand-in now; their atlas loads in flight. */
+  private readonly standing = new Set<string>();
+  private readonly fetching = new Map<string, Promise<boolean>>();
+  private stand: THREE.DataTexture | null = null;
+  private anisotropy = 4;
 
-  constructor(readonly base: string) {}
+  constructor(readonly base: string, private readonly defer: ((meta: FlipbookMeta) => boolean) | null = null) {}
+
+  /** Clip `id` has only its stand-in (a deferred atlas not fetched, or released). */
+  deferred(id: string): boolean {
+    return this.standing.has(id);
+  }
+
+  /** The 1 × 1 clear texture deferred clips show until their atlas is fetched. */
+  private standIn(): THREE.DataTexture {
+    if (this.stand === null) {
+      this.stand = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
+      this.stand.needsUpdate = true;
+    }
+    return this.stand;
+  }
+
+  /** Loads a deferred clip's atlas now (once at a time); true when it is in (pools get it through `watch`). */
+  fetchAtlas(id: string): Promise<boolean> {
+    if (!this.standing.has(id)) return Promise.resolve(this.entries.has(id));
+    let pending = this.fetching.get(id);
+    if (pending === undefined) {
+      const meta = this.entries.get(id)!.meta;
+      pending = fetchBitmapAtlas(meta.url, this.anisotropy)
+        .then((texture) => {
+          this.fetching.delete(id);
+          this.standing.delete(id);
+          this.add(meta, texture, null);
+          return true;
+        })
+        .catch((error: unknown) => {
+          this.fetching.delete(id);
+          console.warn("[flipbook] " + meta.url + " did not load", error);
+          return false;
+        });
+      this.fetching.set(id, pending);
+    }
+    return pending;
+  }
+
+  /** Lets a fetched deferred atlas go (its GPU copy and image); the stand-in returns until the next fetch. */
+  release(id: string): void {
+    const entry = this.entries.get(id);
+    if (entry === undefined || this.standing.has(id) || this.defer === null || !this.defer(entry.meta)) return;
+    entry.texture.dispose();
+    const image: unknown = entry.texture.image;
+    if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap) image.close();
+    this.standing.add(id);
+    this.add(entry.meta, this.standIn(), null);
+  }
 
   get(id: string): Entry | null {
     return this.entries.get(id) ?? null;
@@ -319,6 +412,7 @@ export class FlipbookLibrary {
   /** Fetches the manifest and every atlas in it (once). No manifest: no clips (the kit's hooks draw without them). */
   load(anisotropy = 4): Promise<void> {
     if (this.loading !== null) return this.loading;
+    this.anisotropy = anisotropy;
     if (typeof fetch !== "function" || typeof location === "undefined" || !/^https?:$/.test(location.protocol)) return (this.loading = Promise.resolve());
     this.loading = (async () => {
       let metas: Map<string, FlipbookMeta>;
@@ -334,18 +428,16 @@ export class FlipbookLibrary {
       const loader = new THREE.TextureLoader();
       await Promise.all(
         [...metas.values()].map(async (meta) => {
+          // A deferred clip arrives with its stand-in (no masks: a masked clip never defers).
+          if (this.defer !== null && meta.controlA === undefined && meta.controlB === undefined && this.defer(meta)) {
+            this.standing.add(meta.id);
+            this.add(meta, this.standIn(), null);
+            return;
+          }
           const loaded: THREE.Texture[] = [];
           try {
-            const texture = await loader.loadAsync(meta.url);
+            const texture = await loadAtlas(loader, meta.url, anisotropy);
             loaded.push(texture);
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.anisotropy = anisotropy;
-            texture.generateMipmaps = true;
-            texture.minFilter = THREE.LinearMipmapLinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
-            // Straight alpha as stored: the shader premultiplies after sampling.
-            texture.premultiplyAlpha = false;
             const controls: { a?: THREE.Texture; b?: THREE.Texture } = {};
             for (const [key, url] of [["a", meta.controlA], ["b", meta.controlB]] as const) {
               if (url === undefined) continue;
@@ -391,6 +483,7 @@ export class FlipbookLibrary {
     }
     this.entries.clear();
     this.declared.clear();
+    this.standing.clear();
     this.loading = null;
   }
 }
@@ -1497,11 +1590,11 @@ export class FlipbookPlayer {
     this.group.name = "fx-flipbooks";
   }
 
-  /** The library of an element folder (loaded on first use). */
-  library(folder: string): FlipbookLibrary {
+  /** The library of an element folder (loaded on first use; `defer`, given by its first caller: FlipbookLibrary). */
+  library(folder: string, defer: ((meta: FlipbookMeta) => boolean) | null = null): FlipbookLibrary {
     let lib = this.libraries.get(folder);
     if (lib === undefined) {
-      lib = new FlipbookLibrary(this.base + folder + "/");
+      lib = new FlipbookLibrary(this.base + folder + "/", defer);
       this.libraries.set(folder, lib);
       this.unwatch.push(
         lib.watch((id) => {

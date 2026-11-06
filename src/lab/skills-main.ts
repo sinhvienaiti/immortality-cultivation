@@ -44,6 +44,8 @@
  * (DRAGON_SKILL.md §9; twin-pearl-greybox.ts): a real sim world with the header flag swordKey2,
  * selectable field-wide tides and the cast's hit volumes drawn as translucent shapes with phase labels;
  * L cycles layouts, N restores the tide, V brings the boss in; __lab.twinPearl reads each cast's numbers (key-to-first-hit too).
+ * ?readable=1 dims the key 8 and 9 skills whose light buries the word tags' spots (showcase.ts READABLE_LIGHT), to
+ * compare; ?atlases=all keeps every key 8 and 9 atlas on the GPU from the start (before 06/11: 1.9 GB); __lab.memory() and __lab.tagSpots() serve the perf and readability checks (lab-perf-memory.mjs).
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -905,6 +907,10 @@ const expansion = new Showcase(stage.flipbooks, showcaseHost, EXPANSION_SHOWCASE
 showcase.driven = fixed;
 // ?video=0: the atlases (6 fps) instead of the clips' 1080p videos, to compare.
 showcase.videos = params.get("video") !== "0";
+// ?readable=1: the skills whose light buries the word tags' spots dimmed by READABLE_LIGHT (lab-perf, 06/11), to compare.
+showcase.readable = expansion.readable = params.get("readable") === "1";
+// ?atlases=all: keys 8 and 9 keep every atlas on the GPU from the start, as before 06/11 (to compare memory and hitches).
+showcase.deferAtlases = expansion.deferAtlases = params.get("atlases") !== "all";
 // Keys 8 and 9 cast their skills on the herd (clip-skills.ts, lab-castable-skills.md): key 8 the pillars and ultimates,
 // key 9 the expansion batch by batch. The strikes land on the clip's frames through the same hit path as keys 0–7
 // (emitImpact, the screen's tier, the kick, the lights).
@@ -1929,6 +1935,10 @@ declare global {
       victims(): Record<string, unknown>;
       /** Beast i on screen now (CSS px of its middle), its height in the air (m), alive, a hero victim. */
       beast(i: number): { x: number; y: number; air: number; alive: boolean; hero: boolean };
+      /** Perf checks: textures on the GPU (three's count, the scene's uploaded ones and their bytes), the video slots, the JS heap. */
+      memory(): { gl: { textures: number; geometries: number }; uploaded: number; uploadedMB: number; videoTextures: number; videos: ReturnType<Showcase["videoSlots"]>; heapMB: number; byFolder: Record<string, { n: number; mb: number }>; atlasesLeased: number };
+      /** Perf checks: where a word tag would float over each live beast (CSS px, the point 0.3 m above its head). */
+      tagSpots(): { x: number; y: number }[];
       /** Key 7's (Myriad Swords) state: its clock (s, −1 idle), swords drawn, strikes so far. The short name stays for the capture scenarios. */
       van():{ clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
@@ -2522,6 +2532,56 @@ void (async () => {
     beast(i) {
       screenV.set(herd.x(i), herd.midY(i) + herd.airY(i), herd.z(i)).project(view.camera);
       return { x: Math.round((screenV.x * 0.5 + 0.5) * innerWidth), y: Math.round((-screenV.y * 0.5 + 0.5) * innerHeight), air: +herd.airY(i).toFixed(2), alive: herd.alive(i), hero: herd.isHero(i) };
+    },
+    memory() {
+      const r = view.stage.renderer;
+      const seen = new Set<THREE.Texture>();
+      let uploaded = 0;
+      let bytes = 0;
+      let videoTextures = 0;
+      const byFolder: Record<string, { n: number; mb: number }> = {};
+      const visit = (v: unknown): void => {
+        if (!(v instanceof THREE.Texture) || seen.has(v)) return;
+        seen.add(v);
+        if ((r.properties.get(v) as { __webglInit?: boolean }).__webglInit !== true) return;
+        const img = v.image as { width?: number; height?: number; videoWidth?: number; videoHeight?: number } | null;
+        const w = img?.videoWidth || img?.width || 0;
+        const h = img?.videoHeight || img?.height || 0;
+        const mips = v.generateMipmaps && v.minFilter !== THREE.LinearFilter && v.minFilter !== THREE.NearestFilter;
+        uploaded += 1;
+        if (v instanceof THREE.VideoTexture) videoTextures += 1;
+        const b = w * h * 4 * (mips ? 4 / 3 : 1);
+        bytes += b;
+        // By source folder (vfx/<folder>, tex, …): which assets hold the memory.
+        const src = (img as { src?: string; currentSrc?: string } | null)?.currentSrc || (img as { src?: string } | null)?.src || "";
+        const m = src.match(/\/art-src\/lab\/(?:vfx\/)?([^/]+)\//);
+        const key = v instanceof THREE.VideoTexture ? "video" : m !== null ? m[1]! : src === "" ? "generated" : "other";
+        const f = (byFolder[key] ??= { n: 0, mb: 0 });
+        f.n += 1;
+        f.mb = Math.round(f.mb * 10 + b / 1e5) / 10;
+      };
+      view.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material;
+        if (m === undefined) return;
+        for (const mat of Array.isArray(m) ? m : [m]) {
+          for (const v of Object.values(mat)) visit(v);
+          if (mat instanceof THREE.ShaderMaterial) for (const u of Object.values(mat.uniforms)) visit(u.value);
+        }
+      });
+      const heap = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
+      // Keys 8 and 9 share one video bank (showcase.ts bankOf).
+      const videos = showcase.videoSlots();
+      return { gl: { textures: r.info.memory.textures, geometries: r.info.memory.geometries }, uploaded, uploadedMB: Math.round(bytes / 1e5) / 10, videoTextures, videos, heapMB: Math.round(heap / 1e5) / 10, byFolder, atlasesLeased: showcase.atlasesLeased };
+    },
+    tagSpots() {
+      const out: { x: number; y: number }[] = [];
+      for (let i = 0; i < herd.size; i += 1) {
+        if (!herd.alive(i)) continue;
+        screenV.set(herd.x(i), 2 * herd.midY(i) + herd.airY(i) + 0.3, herd.z(i)).project(view.camera);
+        if (screenV.z > 1 || Math.abs(screenV.x) > 1 || Math.abs(screenV.y) > 1) continue;
+        out.push({ x: Math.round((screenV.x * 0.5 + 0.5) * innerWidth), y: Math.round((-screenV.y * 0.5 + 0.5) * innerHeight) });
+      }
+      return out;
     },
     van: () => ({ clock: myriad.clock, shown: myriad.shownCount(), strikes: myriad.strikes, dives: myriad.dives }),
     cutin: () => cutin.time,
