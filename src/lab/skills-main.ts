@@ -1671,6 +1671,7 @@ function reset(): void {
 }
 
 let bar: SkillBar | null = null;
+let togglePanel: (() => void) | null = null;
 let clipSlot8: string | null | undefined = undefined;
 let clipSlot9: string | null | undefined = undefined;
 
@@ -1746,6 +1747,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "o" || e.key === "O") freeOrbit.toggle();
   else if (e.key === "a" || e.key === "A") setAura(swordAura.direction === "off" ? "a" : "off");
   else if ((e.key === "i" || e.key === "I") && bar !== null) bar.setStyle(bar.state().style === "ink-gold" ? "jewel-crest" : "ink-gold");
+  else if (e.key === "h" || e.key === "H") togglePanel?.();
   else if (e.key === "t" || e.key === "T") {
     tagsOn = !tagsOn;
     wordTags.show(tagsOn);
@@ -1765,8 +1767,10 @@ window.addEventListener(
 // Panel.
 if (params.get("ui") !== "0" && AB_SCENE === null) {
   const panel = document.createElement("div");
-  panel.style.cssText = "position:fixed;left:12px;top:12px;z-index:10;display:flex;flex-direction:column;gap:6px;font:13px system-ui;color:#e6e9ef";
+  panel.style.cssText = "position:fixed;left:12px;top:12px;z-index:10;width:240px;max-height:calc(100vh - 24px);overflow-y:auto;display:flex;flex-direction:column;gap:4px;font:12px system-ui;color:#e6e9ef";
   panel.dataset.labPanel = "1";
+  const content = document.createElement("div");
+  content.style.cssText = "display:flex;flex-direction:column;gap:4px";
   const names: [string, string][] = [
     ["0", "Phi Kiếm · Flying Sword"],
     ["1", "Ngự Kiếm Quyết · Threefold Sword Command"],
@@ -1790,11 +1794,40 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     ["A", "Sword aura on / off"],
     ["T", "Word tags over the herd on / off (readability check; skills dim only behind them)"],
     ["I", "Icon style: ink-gold / jewel-crest"],
+    ["H", "Panel: collapse / expand"],
   ];
   if (greybox !== null) {
     names[2] = ["2", "Twin Dragons, One Burning Pearl · grey box (sim volumes)"];
     names.push(["L", "Grey box: next layout"], ["N", "Grey box: restore this layout"], ["V", "Grey box: boss at gate A"]);
   }
+  const SHORT: Record<string, string> = {
+    "0": "Flying Sword",
+    "1": "Threefold Sword",
+    "2": greybox !== null ? "Twin Dragons, grey box" : "Cloud-Piercing Line",
+    "3": "Sword Aegis",
+    "4": "Flowing-Light Step",
+    "5": "Falling Sword Array",
+    "6": "Milky-Way Sword Rain",
+    "7": "Sword Convergence",
+    "8": "Pillars & ultimates",
+    "9": "Skills expansion",
+    M: "Meteor rain",
+    K: "Word streak",
+    C: "Channel",
+    B: "Enemy blow",
+    R: "Reset",
+    W: "Next sword",
+    E: "Next element",
+    Z: "Zoom",
+    O: "Orbit camera",
+    A: "Sword aura",
+    T: "Word tags",
+    I: "Icon style",
+    H: "Hide panel",
+    L: "Grey box: next layout",
+    N: "Grey box: restore",
+    V: "Grey box: boss at A",
+  };
   if (params.get("bar") !== "0") {
     bar = new SkillBar(document.body, { style: params.get("icons") === "jewel" ? "jewel-crest" : "ink-gold" });
     for (const [key, name] of names.slice(0, 8)) {
@@ -1807,10 +1840,11 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   }
   for (const [key, name] of names) {
     const b = document.createElement("button");
-    b.textContent = key + " · " + name;
-    b.style.cssText = "text-align:left;padding:6px 10px;background:rgba(14,18,26,.78);color:#e6e9ef;border:1px solid #3a4558;border-radius:6px;cursor:pointer";
+    b.textContent = key + " · " + (SHORT[key] ?? name);
+    b.title = name;
+    b.style.cssText = "text-align:left;padding:3px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(14,18,26,.78);color:#e6e9ef;border:1px solid #3a4558;border-radius:5px;cursor:pointer";
     b.onclick = () => window.dispatchEvent(new KeyboardEvent("keydown", { key }));
-    panel.append(b);
+    content.append(b);
   }
   const w = document.createElement("label");
   w.textContent = "WPM ";
@@ -1820,7 +1854,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   input.style.cssText = "width:60px";
   input.onchange = () => (wpm = Math.max(10, Number(input.value) || 45));
   w.append(input);
-  panel.append(w);
+  content.append(w);
   // Typed charge (?typed=1): the word is typed at the WPM before the release; off, a key casts at once (D58).
   const tl = document.createElement("label");
   tl.style.cssText = "display:flex;gap:6px;align-items:center";
@@ -1832,7 +1866,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     typing = null;
   };
   tl.append(typedBox, document.createTextNode("Typed charge (type the word first)"));
-  panel.append(tl);
+  content.append(tl);
   // Screen-effect intensity (accessibility: shake, punch, darkening, flash, split; 0 turns them off).
   const il = document.createElement("label");
   il.style.cssText = "display:flex;gap:6px;align-items:center";
@@ -1843,7 +1877,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   slider.value = String(Math.round(screen.intensity * 100));
   slider.oninput = () => (screen.intensity = Number(slider.value) / 100);
   il.append(document.createTextNode("Screen effects"), slider);
-  panel.append(il);
+  content.append(il);
   // Weapon selector: the four wave-1 swords (WEAPON_DESIGN §6); shapes are the stand-in until their GLBs exist.
   const wl = document.createElement("label");
   wl.textContent = "Sword ";
@@ -1860,7 +1894,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   select.onchange = () => void setWeapon(select.value);
   weaponListeners.push((id) => (select.value = id));
   wl.append(select);
-  panel.append(wl);
+  content.append(wl);
   // Element selector (canon D59): the registered kits; one still being built names the look it draws as.
   const el = document.createElement("label");
   el.textContent = "Element ";
@@ -1877,7 +1911,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   elSelect.onchange = () => void setElement(elSelect.value);
   elementListeners.push((id) => (elSelect.value = id));
   el.append(elSelect);
-  panel.append(el);
+  content.append(el);
   // Keys 8 and 9's lists (showcase.ts): any item directly; they fill as their clips arrive.
   // Key 8's list casts the chosen skill and names its stats (shape, radius, strikes, damage).
   const showcaseList = (label: string, sc: Showcase, empty: string, kinds: Record<string, string>, castable?: { cast(id: string): void; detail(id: string): string | undefined }): void => {
@@ -1912,7 +1946,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
       scSelect.blur();
     };
     sl.append(scSelect);
-    panel.append(sl);
+    content.append(sl);
   };
   showcaseList("Kỹ năng (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ để tung —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" }, {
     cast: (id) => {
@@ -1950,7 +1984,25 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   auraSelect.onchange = () => void setAura(auraIdOf(auraSelect.value));
   auraListeners.push((id) => (auraSelect.value = id));
   al.append(auraSelect);
-  panel.append(al);
+  content.append(al);
+  const header = document.createElement("button");
+  header.textContent = "Lab panel · H";
+  header.style.cssText = "text-align:left;padding:3px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(14,18,26,.78);color:#e6e9ef;border:1px solid #3a4558;border-radius:5px;cursor:pointer;font-weight:600";
+  header.onclick = () => togglePanel?.();
+  panel.append(header, content);
+  let collapsed = false;
+  try { collapsed = localStorage.getItem("lab.panel.collapsed") === "1"; } catch { /* private mode */ }
+  const applyPanel = () => {
+    content.style.display = collapsed ? "none" : "flex";
+    panel.style.width = collapsed ? "auto" : "240px";
+  };
+  applyPanel();
+  togglePanel = () => {
+    collapsed = !collapsed;
+    applyPanel();
+    try { localStorage.setItem("lab.panel.collapsed", collapsed ? "1" : "0"); } catch { /* ignore */ }
+    bar?.avoid(panel);
+  };
   document.body.append(panel);
   bar?.avoid(panel);
 }
