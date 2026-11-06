@@ -52,6 +52,7 @@ import type { ElementStage } from "./element-stage";
 import { approach, BeamPool, clamp01, easeInCubic, easeOutCubic, easeOutQuad, GroundSigil, pulse, Rand, RibbonPool, SEAL_SHAPE, smooth01, SpritePool, type SpriteSpec } from "./fxkit";
 import { loadSwordAtlas, SwordImpostors } from "./real-swords";
 import { alongSlash, crescentOf, type CrescentClip } from "./element-clips";
+import { loadPaintedSigils, METAL_SIGIL_TINT, sigilModeOf, type PaintedSigils } from "./painted-sigils";
 import { CUT } from "./sword-grammar";
 import { applyBladeLook, FaceRoll } from "./sword-material";
 import { AURA_FADE, AURA_FLY, AURA_LEAD, AURA_STRIKE, AURA_WAIT, type SwordAura } from "./sword-aura";
@@ -504,6 +505,8 @@ export class SwordSkillFx {
   private readonly sealCol = new THREE.Color();
   private readonly sealCore = new THREE.Color();
   private readonly tmpCol = new THREE.Color();
+  private readonly markBody = new THREE.Color();
+  private readonly markCore = new THREE.Color();
   /** Release light burning behind the caster (pushed along the view ray, behindCaster; no pull): the body stays readable. */
   private readonly backGlow: SpritePool;
   private readonly backStar: SpritePool;
@@ -753,6 +756,25 @@ export class SwordSkillFx {
     this.pal = this.weaponDef.glow;
     this.skillPal = this.skillPals(this.weaponDef);
     this.applyColours(this.weaponDef);
+    if (typeof location !== "undefined") {
+      if (sigilModeOf(location.search) === "painted") void loadPaintedSigils().then((p) => this.setPaintedSigils(p));
+      else console.info("[sigils] ?sigil=code: analytic sigils");
+    }
+  }
+
+  /** Apply independently loaded masks; missing kinds keep their analytic path. */
+  setPaintedSigils(p: PaintedSigils | null): void {
+    const pairs = [
+      ["line", this.sigLine], ["arrow", this.sigArrow], ["arcs", this.sigArcs], ["hex", this.sigHex],
+      ["spiral", this.sigSpiral], ["crack", this.sigCrack], ["crack", this.sigCrackS],
+    ] as const;
+    for (const [id, sig] of pairs) {
+      const mask = p?.masks.get(id);
+      sig.setPainted(mask?.texture ?? null, mask?.aspect ?? 1);
+    }
+    const star = p?.masks.get("crack"), rift = p?.masks.get("rift");
+    this.rainMarks.setPainted(star?.texture ?? null, star?.aspect ?? 1, rift?.texture ?? null, rift?.aspect ?? 1);
+    this.applyColours(this.weaponDef);
   }
 
   /** Every slot's colours for a weapon in the element's palette (load time). */
@@ -920,6 +942,15 @@ export class SwordSkillFx {
     this.sigilColours(this.sigCrack, "k5");
     this.sigilColours(this.sigCrackS, "k4");
     this.sigilColours(this.sigSeal, this.sealSlot);
+    if (this.kit.id === "metal") {
+      this.markBody.setRGB(...METAL_SIGIL_TINT.body);
+      this.markCore.setRGB(...METAL_SIGIL_TINT.core);
+      this.rainMarks.setTint(this.markBody, this.markCore, METAL_SIGIL_TINT.inner, METAL_SIGIL_TINT.innerMix);
+    } else {
+      this.markBody.copy(this.tmpSigil("k5", false));
+      this.markCore.copy(this.tmpSigil("k5", true));
+      this.rainMarks.setTint(this.markBody, this.markCore, METAL_SIGIL_TINT.inner, 0);
+    }
     // The weapon's motif on every sigil (fxkit biRing, cloudCurl): Clear Wind's jade rings and cloud curls.
     const motif = def.motif;
     for (const sig of this.sigils) {
@@ -938,6 +969,12 @@ export class SwordSkillFx {
   private sigilColours(sig: GroundSigil, slot: SwordSlot): void {
     sig.uniforms.uColor.value.copy(this.tmpSigil(slot, false));
     sig.uniforms.uCore.value.copy(this.tmpSigil(slot, true));
+    sig.uniforms.uInner.value.setRGB(...METAL_SIGIL_TINT.inner);
+    if (sig.painted && this.kit.id === "metal") {
+      sig.uniforms.uColor.value.setRGB(...METAL_SIGIL_TINT.body);
+      sig.uniforms.uCore.value.setRGB(...METAL_SIGIL_TINT.core);
+      sig.uniforms.uInnerMix.value = METAL_SIGIL_TINT.innerMix;
+    } else sig.uniforms.uInnerMix.value = 0;
   }
 
   /** A slot's sigil light (`core` false: ≤ 0.64 a channel) or HDR line colour (true), into tmpCol (no allocation). */
