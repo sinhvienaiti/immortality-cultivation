@@ -597,6 +597,11 @@ export interface ClipSkillHost {
   readonly layer: THREE.Object3D;
   /** The lab's flipbooks (an element's mark clip is taken from its library when that element is loaded). */
   readonly player: FlipbookPlayer;
+  /**
+   * Puts a texture on the GPU now (the renderer's initTexture): a mark atlas uploads as it arrives, not on the frame its
+   * first mark shows (a 4096 × 2304 upload stalls that frame by ~0.1 s, on a strike).
+   */
+  upload?(texture: THREE.Texture): void;
   caster(out: THREE.Vector3): void;
   /** The cast, on the key's frame (the release event). */
   release(skill: ClipSkill, at: THREE.Vector3): void;
@@ -667,7 +672,7 @@ export class ClipSkillRunner {
   /** `marksOf`: a runner whose ground marks it shares (keys 8 and 9: one atlas per element, not two). */
   constructor(private readonly showcase: Showcase, private readonly host: ClipSkillHost, rows: readonly ClipSkill[] = KEY8_SKILLS, private readonly nav = KEY8_NAV, marksOf?: ClipSkillRunner) {
     this.table = new Map(rows.map((r) => [r.id, r]));
-    this.marks = marksOf?.marks ?? new GroundMarks(host.layer, host.player);
+    this.marks = marksOf?.marks ?? new GroundMarks(host.layer, host.player, (t) => host.upload?.(t));
     this.ownsMarks = marksOf === undefined;
   }
 
@@ -877,7 +882,7 @@ class GroundMarks {
   private readonly blank: THREE.DataTexture;
   private readonly o: FlipOptions = {};
 
-  constructor(layer: THREE.Object3D, private readonly player: FlipbookPlayer) {
+  constructor(layer: THREE.Object3D, private readonly player: FlipbookPlayer, private readonly upload: (t: THREE.Texture) => void = () => {}) {
     this.group.name = "fx-clip-skill-marks";
     layer.add(this.group);
     this.blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
@@ -907,6 +912,7 @@ class GroundMarks {
 
   /** `folder`'s mark clip, from its atlas (or from memory: tests). */
   adopt(folder: string, meta: FlipbookMeta, texture: THREE.Texture): void {
+    this.upload(texture);
     const pool = new FlipbookPool(meta.id, meta.mode, 24, 4, this.blank);
     pool.attach(meta, texture);
     layFlat(pool);

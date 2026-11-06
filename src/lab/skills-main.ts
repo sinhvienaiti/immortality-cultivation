@@ -920,6 +920,7 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
     targets: herd,
     layer: view.layers.fx,
     player: stage.flipbooks,
+    upload: (t) => view.stage.renderer.initTexture(t),
     caster: (out) => out.set(caster.x, 0, caster.z),
     release(skill, at) {
       clipSkillNow = skill;
