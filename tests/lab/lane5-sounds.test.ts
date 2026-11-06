@@ -155,7 +155,10 @@ describe("lane 5: existing lab events use measured sprint files", () => {
     sound.guardBlock(-11);
     expect(ids(sound)).toEqual(["tt-sfx-enemy-hit-hero-shield", "tt-sfx-guard-deflect"]);
     expect(sound.takes().every((t) => t.group === "impact" && t.pan === -0.5)).toBe(true);
-    expect(readFileSync("src/lab/skills-main.ts", "utf8")).toContain("} else sound.guardBlock(caster.x);");
+    const branch = readFileSync("src/lab/skills-main.ts", "utf8").match(/if \(!fx\.block\(bolt\.x, bolt\.z\)\) \{([\s\S]*?)\} else \{([\s\S]*?)\}/);
+    expect(branch).not.toBeNull();
+    expect(branch![1]).not.toContain("sound.guardBlock");
+    expect(branch![2]).toContain("sound.guardBlock(caster.x);");
   });
 
   it("fires cut-in audio once on the rendered shout/stamp frames and natural end, and rearms after reset", () => {

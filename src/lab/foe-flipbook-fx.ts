@@ -13,10 +13,15 @@ export interface FoePose {
   species?: string;
   serial?: number;
   elite?: boolean;
+  hpFraction?: number;
+  groundY?: number;
 }
 export interface FoeSource {
   alive(target: number): boolean;
   pose(target: number, out: FoePose): void;
+  /** Optional live-scene enumeration, including empty slots. No temporary arrays. */
+  auraCount?(): number;
+  auraTarget?(index: number): number;
 }
 export interface FoeClip { readonly folder: string; readonly id: string; readonly delay: number }
 const clip = (folder: string, id: string, delay = 0): FoeClip => ({ folder, id, delay });
@@ -37,7 +42,15 @@ const HEAVY = clip("beast", "beast-hit-heavy-ink-burst");
 const STUN = clip("beast", "stagger-stars-loop");
 const BREAK = clip("beast", "posture-break-shatter");
 const BIND = clip("mech", "mech-seal-net-bind");
-export const FOE_CLIPS: readonly FoeClip[] = [RAT, WOLF, BOAR, CROW, APE, COMMON, ...BOSS, LIGHT, DIRECTIONAL, HEAVY, STUN, BREAK, BIND];
+const IRONHIDE = clip("boss", "elite-aura-ironhide-loop");
+const GROUND = clip("boss", "captain-aura-ground-loop");
+const FRENZY = clip("boss", "boss-frenzy-aura-loop");
+const ROAR = clip("boss", "boss-phase-roar-shockwave");
+const FLARE = clip("boss", "boss-phase-aura-flare");
+const VORTEX = clip("boss", "boss-entrance-vortex");
+const FOG = clip("boss", "boss-entrance-fog");
+export const FOE_AURA_CLIPS: readonly FoeClip[] = [IRONHIDE, GROUND, FRENZY, ROAR, FLARE, VORTEX, FOG];
+export const FOE_CLIPS: readonly FoeClip[] = [RAT, WOLF, BOAR, CROW, APE, COMMON, ...BOSS, LIGHT, DIRECTIONAL, HEAVY, STUN, BREAK, BIND, ...FOE_AURA_CLIPS];
 export function deathClips(species: string | undefined, tier: number): readonly FoeClip[] {
   if (species === "thiet-boi-lang-vuong" && tier >= 4) return BOSS;
   return (species !== undefined && Object.hasOwn(DEATHS, species) ? DEATHS[species] : undefined) ?? FALLBACK;
@@ -46,6 +59,7 @@ export function hitClip(damage?: string, directional = false): FoeClip {
   return damage === "heavy" || damage === "ult" ? HEAVY : directional ? DIRECTIONAL : LIGHT;
 }
 export function oldDeathFx(search: string): boolean { return new URLSearchParams(search).get("deathfx") === "old"; }
+export function foeAuraEnabled(search: string): boolean { return new URLSearchParams(search).get("foeaura") !== "0"; }
 
 interface Atlas {
   readonly clip: FoeClip;
@@ -73,6 +87,20 @@ interface Status {
   readonly pose: FoePose;
   breakPending: boolean;
 }
+interface Aura {
+  active: boolean;
+  stopped: boolean;
+  seen: number;
+  boss: boolean;
+  rank: number;
+  start: number;
+  phaseAt: number;
+  phased: boolean;
+  hp: number;
+  readonly pose: FoePose;
+  readonly entrance: FoePose;
+  readonly phase: FoePose;
+}
 const pose = (): FoePose => ({ target: -1, x: 0, y: 0, z: 0, radius: 0.5, beastTier: 0 });
 
 export class FoeFlipbookFx {
@@ -83,6 +111,12 @@ export class FoeFlipbookFx {
   private readonly dir = new THREE.Vector3();
   private readonly ink = new THREE.Color(0.045, 0.05, 0.065);
   private readonly options: FlipOptions = { frame: 0, life: 0, delay: 0, rate: 1, fadeOut: 0, dir: null, occlude: 0, lift: 0.02 };
+  private readonly auraOptions: FlipOptions = { frame: 0, life: ONE_FRAME, delay: 0, rate: 0, fadeOut: 0, dir: null, occlude: 0, lift: 0, ground: -1e5, intensity: 0.45 };
+  // A new target warms its snapshots once; stable crowds reuse all states and the eight ranking slots.
+  private readonly auras = new Map<number, Aura>();
+  private readonly auraSlots: Aura[] = [];
+  private readonly elites: (Aura | null)[] = Array(8).fill(null);
+  private auraFrame = 0;
   private time = 0;
   private readonly deaths: Pending<DeathEvent>[] = Array.from({ length: 10 }, () => ({ event: { kind: "death", target: -1, x: 0, y: 0, z: 0, dx: 0, dz: -1, rgb: 0xffffff, beastTier: 0 }, pose: pose(), rank: 0 }));
   private readonly hits: Pending<ImpactEvent>[] = Array.from({ length: 8 }, () => ({ event: { kind: "impact", slot: "", tier: "basic", role: "primary", target: -1, x: 0, y: 0, z: 0, dx: 0, dz: -1, power: 0, killed: false, material: "flesh", rgb: 0xffffff, beastTier: 0 }, pose: pose(), rank: 0 }));
@@ -94,9 +128,11 @@ export class FoeFlipbookFx {
   private readonly legacy: (event: DeathEvent, painted: boolean) => void;
   private readonly priority: (p: FoePose) => number;
   readonly old: boolean;
+  readonly aurasEnabled: boolean;
 
   constructor(parent: THREE.Object3D, base: string, private readonly source: FoeSource, search = "", options: FoeFxOptions = {}) {
     this.old = oldDeathFx(search);
+    this.aurasEnabled = foeAuraEnabled(search);
     this.player = options.player ?? new FlipbookPlayer(base);
     this.legacy = options.legacy ?? (() => {});
     this.priority = options.priority ?? ((p) => p.x * p.x + p.z * p.z);
@@ -114,7 +150,7 @@ export class FoeFlipbookFx {
 
   /** The existing library defers every atlas; only this requested id is fetched, with its PNG fallback. */
   prepare(c: FoeClip): void {
-    if (this.old) return;
+    if (FOE_AURA_CLIPS.includes(c) ? !this.aurasEnabled : this.old) return;
     const a = this.atlas(c);
     a.used = this.time;
     if (this.time < a.retryAt || a.loading || (a.pool !== null && !a.lib!.deferred(c.id))) return;
@@ -126,7 +162,7 @@ export class FoeFlipbookFx {
       if (entry === null) return;
       if (!(await lib.fetchAtlas(c.id))) return;
       // Mode must be chosen after the manifest arrives: the player's early default is RGBA.
-      a.pool ??= this.player.pool(c.folder, c.id, { mode: entry.meta.mode, capacity: 1100, renderOrder: 13 });
+      a.pool ??= this.player.pool(c.folder, c.id, { mode: entry.meta.mode, capacity: 1100, renderOrder: FOE_AURA_CLIPS.includes(c) ? 1 : 13 });
       a.used = this.time;
       a.retryAt = 0;
     }).catch((error: unknown) => console.warn("[foe-flipbook] " + c.id, error)).finally(() => { a.loading = false; });
@@ -137,7 +173,7 @@ export class FoeFlipbookFx {
     const a = this.atlas(c);
     a.lib = this.player.library(c.folder, () => true);
     a.lib.add(meta, texture);
-    a.pool = this.player.pool(c.folder, c.id, { mode: meta.mode, capacity: 1100, renderOrder: 13 });
+    a.pool = this.player.pool(c.folder, c.id, { mode: meta.mode, capacity: 1100, renderOrder: FOE_AURA_CLIPS.includes(c) ? 1 : 13 });
     a.used = this.time;
   }
 
@@ -166,7 +202,7 @@ export class FoeFlipbookFx {
   }
 
   death(e: DeathEvent, p: FoePose): boolean {
-    this.stop(e.target);
+    this.stop(e.target, p.serial);
     if (this.old) return false;
     const clips = deathClips(p.species, e.beastTier);
     let ready = true;
@@ -184,7 +220,7 @@ export class FoeFlipbookFx {
 
   /** Retains the best candidates in a fixed 50 ms bucket; the reused bus event is copied now. */
   queueDeath(e: DeathEvent, p: FoePose): void {
-    this.stop(e.target);
+    this.stop(e.target, p.serial);
     if (this.old) { this.legacy(e, false); return; }
     if (this.deathStart >= 0 && this.time - this.deathStart >= 0.05 - 1e-6) this.flushDeaths();
     if (this.deathStart < 0) this.deathStart = this.time;
@@ -274,14 +310,119 @@ export class FoeFlipbookFx {
     if (s.breakPending && this.draw(BREAK, s.pose)) s.breakPending = false;
   }
 
-  stop(target: number): void {
-    for (const s of this.statuses) if (s.active && s.target === target) s.active = false;
+  stop(target: number, serial?: number): void {
+    for (const s of this.statuses) if (s.active && s.target === target && (serial === undefined || s.pose.serial === serial)) s.active = false;
+    const a = this.auras.get(target);
+    if (a?.active && (serial === undefined || a.pose.serial === serial)) {
+      a.active = false;
+      a.stopped = true;
+      // Death events can arrive after update: remove this body's sprites on that very frame.
+      this.renderAuras();
+      for (const c of FOE_AURA_CLIPS) this.atlas(c).pool?.update(0);
+    }
+  }
+
+  private updateAuras(): void {
+    if (!this.aurasEnabled || !this.source.auraCount || !this.source.auraTarget) return;
+    this.auraFrame += 1;
+    this.elites.fill(null);
+    const count = this.source.auraCount();
+    for (let i = 0; i < count; i += 1) {
+      const target = this.source.auraTarget(i);
+      let a = this.auras.get(target);
+      if (!this.source.alive(target)) {
+        if (a) { a.active = false; a.stopped = false; }
+        continue;
+      }
+      if (!a) {
+        a = { active: false, stopped: false, seen: 0, boss: false, rank: 0, start: 0, phaseAt: -1, phased: false, hp: 1, pose: pose(), entrance: pose(), phase: pose() };
+        this.auras.set(target, a);
+        this.auraSlots.push(a);
+      }
+      const serial = a.pose.serial;
+      this.source.pose(target, a.pose);
+      const p = a.pose;
+      if (serial !== p.serial) { a.active = false; a.stopped = false; }
+      a.seen = this.auraFrame;
+      a.boss = p.species === "thiet-boi-lang-vuong" && p.beastTier >= 4;
+      const elite = p.species === "thiet-giap-tru" && p.beastTier === 2 && p.elite !== false;
+      if ((!a.boss && !elite) || a.stopped) { a.active = false; continue; }
+      const hp = p.hpFraction ?? 1;
+      if (!a.active) {
+        a.active = true;
+        a.start = this.time;
+        a.phaseAt = -1;
+        a.phased = false;
+        a.hp = hp;
+        Object.assign(a.entrance, p);
+        if (a.boss) for (const c of FOE_AURA_CLIPS) if (c !== IRONHIDE) this.prepare(c);
+      }
+      if (a.boss && !a.phased && a.hp > 0.5 && hp <= 0.5) {
+        a.phased = true;
+        a.phaseAt = this.time;
+        Object.assign(a.phase, p);
+      }
+      a.hp = hp;
+      if (a.boss) {
+        // Keep the upcoming threshold's atlases warm, even if the boss takes >20 s to reach it.
+        if (!a.phased && hp > 0.5) { this.prepare(FRENZY); this.prepare(ROAR); this.prepare(FLARE); }
+        continue; // Boss layers never compete with elite slots.
+      }
+      a.rank = this.priority(p);
+      let at = 0;
+      while (at < 8 && this.elites[at] !== null && this.elites[at]!.rank <= a.rank) at += 1;
+      if (at === 8) continue;
+      for (let j = 7; j > at; j -= 1) this.elites[j] = this.elites[j - 1]!;
+      this.elites[at] = a;
+    }
+    for (const a of this.auraSlots) if (a.seen !== this.auraFrame) { a.active = false; a.stopped = false; }
+    this.renderAuras();
+  }
+
+  private renderAuras(): void {
+    if (!this.aurasEnabled) return;
+    for (const c of FOE_AURA_CLIPS) this.atlas(c).pool?.clear();
+    for (const a of this.elites) if (a?.active) this.drawAura(IRONHIDE, a.pose, this.time - a.start, true);
+    for (const a of this.auraSlots) {
+      if (!a.active || !a.boss) continue;
+      this.drawAura(GROUND, a.pose, this.time - a.start, true);
+      if (a.hp <= 0.5) this.drawAura(FRENZY, a.pose, this.time - a.start, true);
+      this.drawAura(VORTEX, a.entrance, this.time - a.start, false);
+      this.drawAura(FOG, a.entrance, this.time - a.start, false);
+      if (a.phaseAt >= 0) {
+        this.drawAura(ROAR, a.phase, this.time - a.phaseAt, false);
+        this.drawAura(FLARE, a.pose, this.time - a.phaseAt, false);
+      }
+    }
+  }
+
+  private drawAura(c: FoeClip, p: FoePose, age: number, loop: boolean): void {
+    // Expired one-shots must not request their atlas again after the 20 s idle release.
+    const a = this.atlas(c);
+    const known = a.lib?.get(c.id)?.meta;
+    if (!loop && known && age >= (known.frames - known.start) / known.fps) return;
+    if (!this.ready(c)) return;
+    const pool = a.pool!, m = pool.meta!;
+    const frames = m.frames - m.start;
+    if (!loop && age >= frames / m.fps) return;
+    const o = this.auraOptions;
+    o.frame = m.start + (loop ? age * m.fps % frames : age * m.fps);
+    o.tint = m.mode === "smoke" ? this.ink : undefined;
+    // Even overlapping entrance + phase layers total <0.9 per RGB channel on one boss.
+    o.intensity = c === IRONHIDE ? 0.45 : c === FRENZY ? 0.3 : 0.12;
+    // Depth-only negative lift puts the art behind the opaque model, without shifting its projection.
+    o.lift = -Math.max(0.1, p.radius);
+    const ground = c === GROUND || c === ROAR || c === VORTEX || c === FOG;
+    this.at.set(p.x, ground ? p.groundY ?? 0 : p.y, p.z);
+    pool.spawn(this.at, p.radius * (ground ? 4 : 3) / m.aspect, o);
+    a.used = a.busy = this.time;
   }
 
   update(dt: number): void {
     this.time += Math.max(0, dt);
     if (this.deathStart >= 0 && this.time - this.deathStart >= 0.05 - 1e-6) this.flushDeaths();
     if (this.hitStart >= 0 && this.time - this.hitStart >= 0.05 - 1e-6) this.flushHits();
+    this.updateAuras();
     // Rebuild just the two status pools from retained slots: exact cancellation, no individual sprite handles.
     this.atlas(STUN).pool?.clear();
     this.atlas(BIND).pool?.clear();
@@ -326,6 +467,8 @@ export class FoeFlipbookFx {
 
   clear(): void {
     for (const s of this.statuses) s.active = false;
+    for (const a of this.auraSlots) { a.active = false; a.stopped = false; }
+    this.elites.fill(null);
     this.deathN = this.hitN = this.bossN = 0;
     this.deathStart = this.hitStart = -1;
     this.player.clear();

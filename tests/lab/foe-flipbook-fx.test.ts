@@ -189,8 +189,8 @@ describe("foe crowd buckets and old layers", () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); setFlipbookKtx2(null); });
 
 describe("foe atlas residency", () => {
-  it("all fifteen chosen clips exist and parse with their own mode, pivot and rate", () => {
-    expect(FOE_CLIPS).toHaveLength(15);
+  it("all twenty-two chosen clips exist and parse with their own mode, pivot and rate", () => {
+    expect(FOE_CLIPS).toHaveLength(22);
     for (const folder of ["beast", "boss", "mech"]) {
       const raw = JSON.parse(readFileSync(`art-src/lab/vfx/${folder}/manifest.json`, "utf8"));
       const metas = parseFlipbookManifest(raw, `/art-src/lab/vfx/${folder}/`);

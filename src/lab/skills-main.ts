@@ -76,6 +76,7 @@ import { SCREEN_TIERS, ScreenFx, ULT_CLIMAX_FRAMES, type ImpactRole, type Screen
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { FoeFlipbookFx, type FoePose } from "./foe-flipbook-fx";
+import { HeroPresenceFx, heroUltimateReady, type HeroPresencePose } from "./hero-presence-fx";
 import { speciesDef } from "../sim/targeting";
 import { uToM } from "../sim/fixed";
 import type { SimEvent, World } from "../content/types";
@@ -709,6 +710,9 @@ function herdFoePose(i: number, p: FoePose): void {
   p.radius = herd.radius(i); p.beastTier = herd.tier(i);
   p.species = HERD_SPECIES[herd["sp"][i]!];
   p.serial = undefined; p.elite = p.beastTier >= 2;
+  p.groundY = herd.airY(i);
+  // LabHerd's king has 60 HP; this is its existing stand-in health, not a sim rule.
+  p.hpFraction = p.beastTier >= 4 ? herd["hp"][i]! / 60 : 1;
 }
 function simFoePose(world: World, slot: number, base: number, p: FoePose): void {
   const b = world.beasts.list[slot]!;
@@ -718,16 +722,22 @@ function simFoePose(world: World, slot: number, base: number, p: FoePose): void 
   p.beastTier = b.boss ? 4 : b.elite !== null || b.general ? 3 : b.tier === "medium" ? 2 : b.tier === "swarm" ? 0 : 1;
   p.x = uToM(b.x); p.z = uToM(b.z); p.y = uToM(b.y) + shape.heightMm / 2000;
   p.radius = shape.widthMm / 2000;
+  p.hpFraction = b.hp / Math.max(1, b.hpMax); p.groundY = uToM(b.y);
   if (base === GREY_FOE_BASE && greybox !== null) {
     // Same dimensions as the greybox's visible body, including its flyer and king.
     greybox["beastSize"](b, greyBody);
     p.radius = greyBody.x * 0.5; p.y = uToM(b.y) + greyBody.y * 0.5;
   } else if (base === SWARM_FOE_BASE) {
     const i = swarmFoeTargets[slot] ?? -1;
-    if (i >= 0) { p.x = herd.x(i); p.y = herd.midY(i) + herd.airY(i); p.z = herd.z(i); p.radius = herd.radius(i); }
+    if (i >= 0) { p.x = herd.x(i); p.y = herd.midY(i) + herd.airY(i); p.z = herd.z(i); p.radius = herd.radius(i); p.groundY = herd.airY(i); }
   }
 }
 const foeFx = new FoeFlipbookFx(view.layers.fx, "/art-src/lab/vfx/", {
+  auraCount() {
+    // The swarm sim is presented on the herd's bodies; enumerating it too would double-dress them.
+    return greybox !== null ? greybox.world.beasts.list.length : herd.size;
+  },
+  auraTarget(i) { return greybox !== null ? GREY_FOE_BASE + i : i; },
   alive(i) {
     if (i < GREY_FOE_BASE) return herd.alive(i);
     const world = i >= SWARM_FOE_BASE ? qiSwarm?.world : greybox?.world;
@@ -1005,6 +1015,10 @@ let pendingMyriad = false;
 let myriadFirstHit = false;
 // The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
 const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
+const heroPresence = new HeroPresenceFx(view.layers.fx, "/art-src/lab/vfx/", location.search);
+const heroPresencePose: HeroPresencePose = { x: 0, y: 0, z: 0, height: caster.heightM, ultimateReady: false, guardActive: false };
+// The painted foot ring replaces the old procedural one, including the presence=0 comparison.
+presence.ringOn = false;
 
 // The equipped sword (D55). Only swords: the sabre and spear skills are not built yet.
 const SWORDS = weaponsOf("sword");
@@ -1540,7 +1554,10 @@ function updateBolt(dt: number): void {
         caster.hit(bolt.x, bolt.z);
         presence.hit(caster.x, caster.z, bolt.x, bolt.z);
         screen.shake(4, 0.12);
-      } else sound.guardBlock(caster.x);
+      } else {
+        heroPresence.block();
+        sound.guardBlock(caster.x);
+      }
     } else {
       bolt.x += (dx / d) * step;
       bolt.z += (dz / d) * step;
@@ -1602,6 +1619,7 @@ type LabSlot = SwordSlot | "k7" | "km";
 const FIVE_LEN = { k2: 6, km: 2 } as const;
 
 function type(slot: LabSlot): void {
+  heroPresence.typed();
   // Keys wait while the cut-in holds the world (the typing timer is stopped too).
   if (cutin.active) return;
   if (slot === "k2" && simSwarm) {
@@ -1713,6 +1731,7 @@ function updateTyping(dt: number): void {
   const perLetter = 60 / (wpm * 5);
   while (typing && typing.next <= 0) {
     typing.typed += 1;
+    heroPresence.typed();
     // A typed charge's simulated letter clicks like a key.
     sound.key("key");
     typing.next += perLetter;
@@ -1771,6 +1790,7 @@ function reset(): void {
   screen.reset();
   kick.reset();
   presence.reset();
+  heroPresence.clear();
   deathFx.reset();
   foeFx.clear();
   swarmFoeTargets.fill(-1);
@@ -1814,9 +1834,11 @@ let clipSlot8: string | null | undefined = undefined;
 let clipSlot9: string | null | undefined = undefined;
 
 function refreshClipSlots(): void {
-  if (bar === null) return;
   const id8 = clipSkills.selectedId();
   const id9 = clipSkills9.selectedId();
+  // Selection/list changes only: Showcase.current() sorts a new list, so keep it out of the frame loop.
+  heroPresencePose.ultimateReady = heroUltimateReady(id8 === null ? undefined : clipSkills.skill(id8)?.damage, id9 === null ? undefined : clipSkills9.skill(id9)?.damage);
+  if (bar === null) return;
   if (id8 !== clipSlot8) {
     bar.setSlot("8", id8, id8 ?? "");
     clipSlot8 = id8;
@@ -1826,12 +1848,16 @@ function refreshClipSlots(): void {
     clipSlot9 = id9;
   }
 }
+showcase.onList(refreshClipSlots);
+expansion.onList(refreshClipSlots);
+refreshClipSlots();
 
 const KEYS: Record<string, LabSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5", "7": "k7" };
 window.addEventListener("keydown", (e) => {
   // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   lastKeyStamp = e.timeStamp;
+  if (!e.ctrlKey && !e.metaKey && (e.key.length === 1 || e.key === "Backspace" || e.key === "Enter")) heroPresence.typed();
   // Every typed key clicks (Typing Feel), on its own bus: no skill, hush or pre-duck ever takes it down.
   if (e.key.length === 1 && !e.repeat && !e.ctrlKey && !e.metaKey) sound.key(e.key === " " ? "space" : "key");
   const slot = KEYS[e.key];
@@ -1974,8 +2000,6 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
       bar.setSlot(key, keyIcon(key, simSwarm || greybox !== null), tooltip);
     }
     refreshClipSlots();
-    showcase.onList(refreshClipSlots);
-    expansion.onList(refreshClipSlots);
   }
   for (const [key, name] of names) {
     const b = document.createElement("button");
@@ -2222,6 +2246,11 @@ function frame(dt: number): void {
   handSword?.update(world, dt, fx, view.camera);
   updateFive(world);
   presence.update(world, dt, caster.x, caster.z, fx);
+  heroPresencePose.x = caster.x;
+  heroPresencePose.y = caster.root.position.y;
+  heroPresencePose.z = caster.z;
+  heroPresencePose.guardActive = fx.isRunning("guard");
+  heroPresence.update(world, dt, heroPresencePose);
   victims.update(world);
   // Numbers are UI: they compile and float on real time (through a hit-stop or the cut-in).
   compiler.update(dt);
@@ -2662,7 +2691,7 @@ void (async () => {
     },
     caster: () => ({ x: caster.x, z: caster.z, fx: caster.fx, fz: caster.fz }),
     reset,
-    setHerd: (mode) => { herd.setMode(mode); qiSwarm?.reset(); },
+    setHerd: (mode) => { herd.setMode(mode); qiSwarm?.reset(); foeFx.clear(); },
     setWpm: (v) => (wpm = v),
     typing: () => typing !== null,
     boltActive: () => bolt.active,
@@ -2799,7 +2828,9 @@ void (async () => {
       return { metal: crescentOf(stage, "metal").spawned, fire: crescentOf(stage, "fire").spawned };
     },
     showcase(id) {
-      return { played: clipSkills.cast(id), ids: showcase.ids() };
+      const played = clipSkills.cast(id);
+      refreshClipSlots();
+      return { played, ids: showcase.ids() };
     },
     streak(grade, n = 1) {
       if (grade !== undefined) for (let k = 0; k < n; k += 1) streakWord(grade);
@@ -2837,7 +2868,9 @@ void (async () => {
       return r === null ? null : { ...r, strikeAt: [...r.strikeAt], active: runner.active };
     },
     expansion(id) {
-      return { played: clipSkills9.cast(id), ids: expansion.ids() };
+      const played = clipSkills9.cast(id);
+      refreshClipSlots();
+      return { played, ids: expansion.ids() };
     },
     clipKit() {
       const a = clipAudit(stage, fx.element.id);
