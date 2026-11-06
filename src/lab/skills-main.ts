@@ -40,6 +40,7 @@
  * gives the reduced-motion version of each layer. ?streak=1..4 picks the mantle's qi-streak candidate
  * (art-src/lab/vfx/aura/qi-streak-<n>.png; default 3, the prep's recommendation until the owner picks one),
  * ?plates=graded the graded plates (default even).
+ * ?key2=swarm: key 2 runs the production swarm sim on the lab herd; ?tier=high|medium|low picks the view tier.
  * ?key2=twin-pearl: key 2 (and its panel button) casts Twin Dragons, One Burning Pearl's grey box instead
  * (DRAGON_SKILL.md §9; twin-pearl-greybox.ts): a real sim world with the header flag swordKey2,
  * selectable field-wide tides and the cast's hit volumes drawn as translucent shapes with phase labels;
@@ -58,6 +59,7 @@ import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import type { Quality } from "../content/types";
+import { gameStorage } from "../app/storage";
 import { CameraZoom } from "../view/camera-zoom";
 import { LabOrbit } from "./orbit";
 import { createRenderer, placeCamera } from "../view/renderer";
@@ -116,6 +118,8 @@ import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
 import { TwinPearlGreybox, type TwinCastReport } from "./twin-pearl-greybox";
 import { keyIcon, SkillBar, type SkillBarState } from "./skill-bar";
+import { QiDragonSwarm } from "../view/skills/qi-dragon-swarm";
+import { QiSwarmLab, skillsLabQuality, type SwarmLabReport } from "./qi-dragon-swarm";
 
 const params = new URLSearchParams(location.search);
 // ?cut=sabre: the lopsided swept swing (kept for the Sabre school) in place of the Sword's symmetric crescent (read once).
@@ -123,7 +127,8 @@ if (params.get("cut") === "sabre") SLASH_STYLE.style = "sabre";
 // ?dark=b: Dark in palette B (black, silver-grey rims) in place of the owner's pick A, to compare them (read once).
 if (params.get("dark") === "b") registerElement(DARK_B);
 else if (params.get("dark") !== null && params.get("dark") !== "a") console.warn(`[lab] ?dark=${params.get("dark")}: a or b; a is used`);
-const quality = (["low", "medium", "high", "ultra"].includes(params.get("q") ?? "") ? params.get("q") : "high") as Quality;
+const quality: Quality = skillsLabQuality(params);
+const simSwarm = params.get("key2") === "swarm";
 let wpm = Number(params.get("wpm") ?? "45");
 const fixed = params.get("fixed") === "1";
 const probeOn = params.get("probe") !== "0";
@@ -244,6 +249,13 @@ const herd = new LabHerd();
 const caster = new LabCaster();
 view.layers.actors.add(herd.group, caster.root);
 // ?key2=twin-pearl: the grey box of key 2 on its own sim world; the stand-in herd hides (the grey box draws the sim's beasts).
+let qiSwarm: QiSwarmLab | null = null;
+const qiPresenter = simSwarm ? new QiDragonSwarm(view.camera, quality, () => resolveReducedMotion("system", typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches, params.get("motion"))) : null;
+if (qiPresenter) {
+  view.layers.fx.add(qiPresenter.group);
+  // Observe failures immediately while the rest of the lab's assets load.
+  void qiPresenter.ready.catch((error: unknown) => console.error("swarm lab assets", error));
+}
 const greybox = params.get("key2") === "twin-pearl" ? new TwinPearlGreybox(view.camera, () => ({ x: caster.x, y: 1.2, z: caster.z })) : null;
 if (greybox !== null) {
   view.layers.fx.add(greybox.group);
@@ -1474,6 +1486,11 @@ const FIVE_LEN = { k2: 6, km: 2 } as const;
 function type(slot: LabSlot): void {
   // Keys wait while the cut-in holds the world (the typing timer is stopped too).
   if (cutin.active) return;
+  if (slot === "k2" && simSwarm) {
+    typing = null;
+    if (qiSwarm !== null) { probe.lastKey("k2"); caster.release("k2", 0, -9); qiSwarm.cast(); }
+    return;
+  }
   // The five-phase samples (Fire): key 2's crescent and key M's meteors, typed (the charge) or at once.
   if ((slot === "k2" || slot === "km") && fiveOf() !== null && greybox === null) {
     if (!typedMode) {
@@ -1629,6 +1646,7 @@ function reset(): void {
   fx.reset();
   herd.respawnAll();
   caster.place(0, 3, 0, -1);
+  qiSwarm?.reset();
   pending.charge = pending.cast = false;
   bolt.active = false;
   enemyBolt.clear();
@@ -1796,6 +1814,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     ["I", "Icon style: ink-gold / jewel-crest"],
     ["H", "Panel: collapse / expand"],
   ];
+  if (simSwarm) names[2] = ["2", "Twin Dragons, One Burning Pearl · real swarm sim (" + quality + ")"];
   if (greybox !== null) {
     names[2] = ["2", "Twin Dragons, One Burning Pearl · grey box (sim volumes)"];
     names.push(["L", "Grey box: next layout"], ["N", "Grey box: restore this layout"], ["V", "Grey box: boss at gate A"]);
@@ -1803,7 +1822,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   const SHORT: Record<string, string> = {
     "0": "Flying Sword",
     "1": "Threefold Sword",
-    "2": greybox !== null ? "Twin Dragons, grey box" : "Cloud-Piercing Line",
+    "2": simSwarm ? "Twin Dragons (swarm)" : greybox !== null ? "Twin Dragons, grey box" : "Cloud-Piercing Line",
     "3": "Sword Aegis",
     "4": "Flowing-Light Step",
     "5": "Falling Sword Array",
@@ -1831,8 +1850,8 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   if (params.get("bar") !== "0") {
     bar = new SkillBar(document.body, { style: params.get("icons") === "jewel" ? "jewel-crest" : "ink-gold" });
     for (const [key, name] of names.slice(0, 8)) {
-      const tooltip = key === "2" && greybox !== null ? "Twin Dragons, One Burning Pearl" : name.split(" · ").at(-1)!;
-      bar.setSlot(key, keyIcon(key, greybox !== null), tooltip);
+      const tooltip = key === "2" && simSwarm ? name : key === "2" && greybox !== null ? "Twin Dragons, One Burning Pearl" : name.split(" · ").at(-1)!;
+      bar.setSlot(key, keyIcon(key, simSwarm || greybox !== null), tooltip);
     }
     refreshClipSlots();
     showcase.onList(refreshClipSlots);
@@ -1991,7 +2010,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   header.onclick = () => togglePanel?.();
   panel.append(header, content);
   let collapsed = false;
-  try { collapsed = localStorage.getItem("lab.panel.collapsed") === "1"; } catch { /* private mode */ }
+  try { collapsed = gameStorage.readJson("lab.panel.collapsed") === 1; } catch { /* private mode */ }
   const applyPanel = () => {
     content.style.display = collapsed ? "none" : "flex";
     panel.style.width = collapsed ? "auto" : "240px";
@@ -2000,7 +2019,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   togglePanel = () => {
     collapsed = !collapsed;
     applyPanel();
-    try { localStorage.setItem("lab.panel.collapsed", collapsed ? "1" : "0"); } catch { /* ignore */ }
+    try { gameStorage.writeJson("lab.panel.collapsed", collapsed ? 1 : 0); } catch { /* ignore */ }
     bar?.avoid(panel);
   };
   document.body.append(panel);
@@ -2036,7 +2055,7 @@ function frame(dt: number): void {
   screen.restoreCamera(view.camera);
   // The cut-in holds the world (and the typing timer, which runs on world time); its last frame fires the ultimate.
   if (cutin.update(dt)) fireUltimate();
-  const world = cutin.active ? 0 : screen.advance(dt);
+  const world = cutin.active || qiSwarm?.paused ? 0 : screen.advance(dt);
   lastWorldDt = world;
   // The ultimate's held darkening ends a moment after its climax (key 7 sets its own from its phases).
   if (ultDark && ultDarkEnd >= 0 && labTime >= ultDarkEnd) {
@@ -2048,6 +2067,7 @@ function frame(dt: number): void {
   updateBolt(world);
   crescentTagLeft = Math.max(0, crescentTagLeft - world);
   herd.update(world);
+  if (qiSwarm !== null) { qiSwarm.advance(world); herd.update(0); }
   caster.update(world);
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
@@ -2102,6 +2122,7 @@ function frame(dt: number): void {
   screen.applyCamera(view.camera);
   // The grey box steps its sim world on real time (through a hit-stop) and places its volumes for this frame.
   greybox?.update(dt);
+  qiSwarm?.draw(world);
   placeTags();
   view.render(dt);
   greybox?.afterRender();
@@ -2357,7 +2378,9 @@ declare global {
       soundTakes(): readonly SoundTake[];
       /** The swarm's geometry: the weapon's full mesh, its LOD (WeaponDef.swarm) or the stand-in jian; resolves its triangle count. */
       swarm(mode: "full" | "lod" | "standin"): Promise<number>;
-      /** ?key2=twin-pearl only: the grey box (cast now, each cast's numbers, refill, the Vương, the sim world's tick). */
+      /** ?key2=swarm only: production SwarmCastV1 and actual sim damage, on the existing lab herd. */
+      qiSwarm?: { cast(): void; reports(): readonly SwarmLabReport[]; tick(): number; pause(on: boolean): void; active(): readonly (number | null)[] };
+      /** ?key2=twin-pearl only: the grey box and its sim counters. */
       twinPearl?: {
         cast(): void;
         reports(): readonly TwinCastReport[];
@@ -2383,7 +2406,14 @@ void (async () => {
     document.fonts.load('700 36px "Cormorant Garamond"', ULT_CUTIN.name),
     document.fonts.load('italic 700 54px "Cormorant Garamond"', "0123456789.KM×"),
   ]).catch(() => undefined);
-  await Promise.all([herd.load(), caster.load(), look.ready, equipped, elemented, fonts]);
+  await Promise.all([herd.load(), caster.load(), look.ready, equipped, elemented, fonts, qiPresenter?.ready]);
+  if (qiPresenter) {
+    qiSwarm = new QiSwarmLab(herd, qiPresenter, () => ({ x: caster.x, z: caster.z }), (event, target) => {
+      if (event.type === "skill-fx" && event.stage === "swarm-cast") compiler.headline(1_000_000 + event.castId!);
+      if (event.type === "hit" && event.castId !== undefined && target >= 0) compiler.add(1_000_000 + event.castId, target, event.amount, false, event.x, herd.midY(target), event.z, 0xffd899, herd.tier(target), 0.125, event.phase === "burst", true);
+    });
+    await qiPresenter.prewarm(view.stage.renderer);
+  }
   if (caster.model !== null) {
     presence.attach(caster.model);
     const names = collectLayerNames(fx, new Map());
@@ -2499,7 +2529,7 @@ void (async () => {
     },
     caster: () => ({ x: caster.x, z: caster.z, fx: caster.fx, fz: caster.fz }),
     reset,
-    setHerd: (mode) => herd.setMode(mode),
+    setHerd: (mode) => { herd.setMode(mode); qiSwarm?.reset(); },
     setWpm: (v) => (wpm = v),
     typing: () => typing !== null,
     boltActive: () => bolt.active,
@@ -3074,6 +3104,10 @@ void (async () => {
         return { ground, crows };
       },
     };
+  }
+  if (qiSwarm !== null && qiPresenter !== null) {
+    const lab = qiSwarm, presenter = qiPresenter;
+    window.__lab.qiSwarm = { cast: () => type("k2"), reports: () => lab.reports, tick: () => lab.world.tick, pause: (on) => { lab.paused = on; }, active: () => presenter.timeline.slots.map((s) => s?.packet.castId ?? null) };
   }
   if (params.get("herd") === "march") herd.setMode("march");
   if (!fixed) {

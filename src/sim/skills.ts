@@ -36,6 +36,7 @@ import { cleanseNode } from "./formation";
 import { postureHit } from "./posture";
 import { densestPoint, nearestToHeart, speciesDef } from "./targeting";
 import { createTwinPearlState, resolveTwinPearl, stepTwinPearl } from "./twin-pearl";
+import { createSwarmState, resolveSwarm, stepSwarm } from "./swarm";
 import { createWard } from "./wards";
 import { dealSlotWord } from "./words";
 
@@ -74,6 +75,7 @@ export function createSkillsState(init: WorldInit): SkillsState {
   const state: SkillsState = { seats, strikes: [], zones: [], nextId: 1 };
   // Trial key 2 (off by default): only a header that asks for it gets the key, so the default world is unchanged.
   if (init.header.swordKey2 === "twin-pearl") state.twinPearl = createTwinPearlState();
+  if (init.header.swordKey2 === "swarm") state.swarm = createSwarmState();
   return state;
 }
 
@@ -219,7 +221,7 @@ export function resolveCast(world: World, cast: Cast): boolean {
       done = resolveVolley(world, cast, seat, skills, def);
       break;
     case 2:
-      done = world.skills.twinPearl !== undefined ? resolveTwinPearl(world, cast) : resolveLine(world, cast, def);
+      done = world.skills.swarm !== undefined ? resolveSwarm(world, cast) : world.skills.twinPearl !== undefined ? resolveTwinPearl(world, cast) : resolveLine(world, cast, def);
       break;
     case 3:
       // Hộ thân: a ward at the Cast's origin; thân pháp: `local` glides on its own `cast resolved`.
@@ -434,6 +436,7 @@ export function stepSkills(world: World): void {
   strikes.length = keep;
   stepZones(world);
   stepTwinPearl(world);
+  stepSwarm(world);
   // A full bar asks ô 5 for its word the same tick (canon §6.6; words.ts would on the next).
   for (const seat of world.seats) if (seat.chanNguyenPm >= CHAN_NGUYEN.full * 1000) dealSlotWord(world, seat.seat, 5);
 }

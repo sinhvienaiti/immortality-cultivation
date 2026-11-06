@@ -7,9 +7,9 @@
  * Only ReplayHeader.swordKey2 enables this table; default matches stay unchanged.
  */
 /** Key 2 variants a match may run (ReplayHeader.swordKey2); absent: today's line. */
-export type SwordKey2 = "twin-pearl";
+export type SwordKey2 = "twin-pearl" | "swarm";
 
-export const SWORD_KEY2_VARIANTS: readonly SwordKey2[] = ["twin-pearl"];
+export const SWORD_KEY2_VARIANTS: readonly SwordKey2[] = ["twin-pearl", "swarm"];
 
 export const TWIN_PEARL = {
   id: "twin-pearl",

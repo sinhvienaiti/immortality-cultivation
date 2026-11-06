@@ -35,6 +35,8 @@ import { MECHANISM_DEFS } from "../content/data/mechanisms";
 import { SCHOOL_KIEM, TAM_PHAP } from "../content/data/school-kiem";
 import { THANH_THACH_AI } from "../content/data/stage-m0a";
 import { TELEGRAPHS } from "../content/data/telegraphs";
+import { SWARM } from "../content/data/swarm";
+import { SWARM_TABLE_VERSION } from "../sim/swarm-geometry";
 import { TWIN_PEARL, type SwordKey2 } from "../content/data/twin-pearl";
 import { AUDIO, DEFAULT_TIER, GAME_ID, NEW_WORDS, PRESETS, RULES, SIM, TT_BUDGETS, contentHash, type KeyAction } from "../content/rules";
 import type {
@@ -146,6 +148,7 @@ export function newWordAllowance(remaining: number, dueCount: number): number {
 export function matchRulesHash(stage: StageDef, variant: { readonly swordKey2?: SwordKey2 } = {}): string {
   const parts: unknown[] = [RULES, stage, BEASTS, GENERALS, ELITE_TRAITS, BOSSES, TELEGRAPHS, SCHOOL_KIEM, TAM_PHAP, MECHANISM_DEFS, CONSUMABLE_DEFS, SHOP_ITEMS];
   if (variant.swordKey2 === "twin-pearl") parts.push(TWIN_PEARL);
+  if (variant.swordKey2 === "swarm") parts.push(SWARM, SWARM_TABLE_VERSION);
   return contentHash(parts);
 }
 
