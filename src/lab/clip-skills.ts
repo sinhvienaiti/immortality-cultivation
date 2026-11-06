@@ -872,9 +872,9 @@ async function atlas(url: string): Promise<THREE.Texture> {
 }
 
 /**
- * Each element's ground mark (its folder's `groundMark` clip, else its crescent, laid flat): only that atlas, loaded on the
- * element's first use (or taken from its library when the element is on), never the whole folder. Its own pools, aged by
- * the runner.
+ * Each element's ground mark (its folder's `groundMark` clip, else its ground blow or burst, laid flat): only that atlas,
+ * loaded on the element's first use (or taken from its library when the element is on), never the whole folder. Its own
+ * pools, aged by the runner.
  */
 class GroundMarks {
   private readonly group = new THREE.Group();
@@ -902,9 +902,10 @@ class GroundMarks {
     const response = await fetch(base + "manifest.json", { cache: "no-cache" });
     if (!response.ok) return;
     const metas = [...parseFlipbookManifest(await response.json(), base).values()];
-    // Its ground mark; a folder without one (Dark) lays its crescent flat on the ground as the mark.
+    // Its ground mark; a folder without one (Dark) lays its ground blow (its ring of cracks) flat, else its burst. Never
+    // its crescent: the sword's cut is no mark of a blow from the sky (owner 06/11 09:30, canon D62).
     const meta = metas.find((x) => x.role === "groundMark" && x.layer !== "body")
-      ?? metas.find((x) => x.id === folder + "-crescent-sym") ?? metas.find((x) => x.role === "slash" && x.layer !== "body");
+      ?? metas.find((x) => x.role === "groundImpact" && x.layer !== "body") ?? metas.find((x) => x.role === "burst" && x.layer !== "body");
     if (meta === undefined) return;
     const known = this.player.loaded(folder).includes(meta.id) ? this.player.library(folder).get(meta.id) : null;
     this.adopt(folder, known?.meta ?? meta, known?.texture ?? (await atlas(meta.url)));

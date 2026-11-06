@@ -46,3 +46,13 @@ Việc: `docs/work/tasks/slanted-meteor.md` (repo cha). Anh duyệt 05/11 22:20;
 
 - **Chưa đo:** chữ ≥ 7:1 (quái trong lab chưa mang chữ) và hai giám khảo mù.
 - **Video cho anh:** `owner-review/2026-11-06/tu-tien/meteor-rain/`.
+
+## Vòng 3: đòn từ trời không dùng lưỡi liềm (anh 06/11 09:30, canon D62)
+
+- Anh: "những kỹ năng nào phóng ra từ kiếm thì dùng dạng vết chém lưỡi liềm, chứ những skill rơi từ trên trời xuống, thì phải làm dạng khác cho phù hợp".
+- Sao băng (phím M) nay không dùng vai `slash` nữa. Bản tạm dựng từ clip của chính hệ, chờ video sao băng từ ảnh anh duyệt:
+  - **Đầu:** lõi sáng tròn, là khung đỉnh của `burst`, `charge`, `sparkle`, `groundMark` hoặc `impact`. Lấy clip đầu tiên trong thứ tự đó mà giữa khung sáng (đo độ sáng trong đĩa quanh tâm sáng). Thẻ được cắt mềm thành đĩa quanh lõi. Nhờ vậy Hỏa lấy lõi xoáy của `charge` (khung đỉnh `burst` của Hỏa là một vòng rỗng giữa), Thủy và Lôi lấy lõi `burst`, còn Độc, Huyết, Không gian, Tinh tú, Kim, Quang lấy tâm của `groundMark`.
+  - **Đuôi:** clip `ribbon` của hệ nếu có, không thì một dải cắt từ chính clip đầu. Đuôi đặt dọc hướng rơi, dài 2 m, thon dần.
+  - **Lấp lánh ở đuôi:** clip `sparkle` của hệ, không có thì lõi nhỏ của chính đầu.
+  - **Cú chạm của hệ không có `impact` hay `burst`:** lõi đầu bùng lên ở đích, sáng hết ngay khung đầu, nở to và tan dần.
+- **Rà các đòn từ trời khác:** bảng phím 8 và 9 không có mục nào dùng `slash` (mỗi mục phát clip riêng). Chỗ duy nhất còn dùng là ấn đất dự phòng của Ám, nay đổi sang `groundImpact` nằm phẳng (vòng nứt đỏ thẫm), không có thì `burst`.
