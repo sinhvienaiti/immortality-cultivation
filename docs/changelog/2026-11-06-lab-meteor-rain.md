@@ -21,3 +21,28 @@ Việc: `docs/work/tasks/slanted-meteor.md` (repo cha). Anh duyệt 05/11 22:20;
   - Ám không có `groundMark` nên không có ấn trước cú;
   - chưa chấm mù 8,5.
 - Kiểm: test `tests/lab/meteor-rain.test.ts`. Chrome headless tung ở 6 hệ (Hỏa, Thủy, Lôi, Kim, Ám, Độc), 0 lỗi, mỗi lần 8 sao băng, 19 cú trúng.
+
+## Vòng 2 (06/11, sau khi điều phối giao riêng D62)
+
+- **Hệ không có clip `impact` hay `burst`** (Độc, Huyết, Không gian, Tinh tú, Quang): cú chạm là nhát chém lưỡi liềm của chính hệ (hook `cut` của bộ chất), chém theo hướng rơi.
+- **Hệ không có `groundMark`** (Ám): ấn là lưỡi liềm của hệ nằm phẳng trên đất. Phím 8/9 cũng dùng cách này.
+- **Đánh nhanh:** ánh cú chạm bật trước cú đánh đúng bằng thời gian nó tới đỉnh, để khung chạm đã ở đỉnh:
+  - bộ chất cho biết thời gian này qua `impactLead` mới (đòn clip 0,05 s; Lôi và Tinh tú thêm một nhịp cột 0,07 s);
+  - nhát chém lưỡi liềm thì 0,13 s;
+  - đầu sao băng vẫn vẽ ở khung chạm.
+- **Đất cháy** (`aftermath`) đến 0,2 s sau cú, khi cú chạm đã qua đỉnh: một chỗ chỉ có tối đa 2 lớp cộng sáng.
+- **Quái chết vì sao băng hay vì luồng phím C:** dùng cái chết của chính hệ. Bùng sáng chung của lab chỉ dùng khi hệ không có cái chết riêng.
+- **Đo trong Chrome headless,** bản không đánh (`__lab.meteor(true, true)`), quanh cú chạm đầu:
+
+| Hệ | Khung chạm / đỉnh | Lõi trắng / bề ngang | Điểm ảnh cháy sáng |
+|---|---|---|---|
+| Hỏa | 1,00 | 0 % | 0 % |
+| Thủy | 0,96 | 0 % | 0 % |
+| Lôi | 0,94 | 6 % | 0 % |
+| Kim | 0,98 | 9 % | 0 % |
+| Ám | 0,97 | 0 % | 0 % |
+| Độc | 1,00 | 0 % | 0 % |
+| Tinh tú | 1,00 | 7 % | 0 % |
+
+- **Chưa đo:** chữ ≥ 7:1 (quái trong lab chưa mang chữ) và hai giám khảo mù.
+- **Video cho anh:** `owner-review/2026-11-06/tu-tien/meteor-rain/`.

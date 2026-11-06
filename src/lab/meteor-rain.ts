@@ -5,8 +5,9 @@
  * vertical in FALL_S, GAP_S after the one before (the whole rain ≤ 2.5 s), and the ground burns after it.
  * Built from the element's own clips, no new art: the meteor is the element's crescent held small at its head (every
  * element has one), convex side leading, and a short soft trail of its crescent's energy band behind it (TAIL_M); the
- * blow is the kit's own impact and aftermath (its ground blow, burnt mark and embers), or, for a kit without them
- * (Metal), the folder's impact clip and its ground mark lingering. Each blow goes through the lab's hit path (the host).
+ * blow is the kit's own impact (an element without an impact clip: the kit's crescent cut, along the fall) and, AFTER_S
+ * later, its aftermath (its ground blow, burnt mark and embers); a kit without hooks (Metal) takes the folder's impact
+ * clip and its ground mark lingering. Each blow goes through the lab's hit path (the host).
  */
 import * as THREE from "three";
 import { aimClipSkill, type ClipSkill } from "./clip-skills";
@@ -34,6 +35,16 @@ const HEAD_M = 2.4;
 const BURN_S = 2;
 /** Each meteor strikes the marked beast and anything within this (m). */
 const SPLASH_M = 0.9;
+/** The burnt ground comes this long after the landing (s), past its blow's peak: no more than 2–3 lights on one spot. */
+const AFTER_S = 0.2;
+/**
+ * The landing's light starts this long before its blow (s; a kit's own impactLead where it gives one: Thunder's and
+ * Star's column comes a beat after their glint): the impact reaches its peak on the landing frame (fast attack: the first
+ * impact frame ≥ 95 % of its peak).
+ */
+const IMPACT_LEAD_S = 0.05;
+/** The same for a landing struck with the crescent cut (an element without an impact clip): its bloom and most of its flare (SLASH: 0.08 + 0.07 s), its brightest. */
+const CUT_LEAD_S = 0.13;
 
 /** The aim: one beast a point (the densest groups first), as key 9's multi shape picks them. */
 const AIM: ClipSkill = { id: "meteor", element: "fire", shape: "multi", radius: SPLASH_M, count: METEORS, strikes: [{ frame: "peak", power: 1 }], damage: "heavy", mark: true, linger: BURN_S };
@@ -70,8 +81,10 @@ export interface MeteorReport {
   markAt: number[];
   blows: number;
   kills: number;
-  /** Landings drawn by the kit's own impact (else the folder's impact clip). */
+  /** Landings drawn by the kit's own impact or cut (else the folder's impact clip). */
   kitImpacts: number;
+  /** Where each meteor lands (the ground under its beast), in landing order. */
+  points: { x: number; z: number }[];
 }
 
 interface Meteor {
@@ -84,6 +97,10 @@ interface Meteor {
   readonly role: ImpactRole;
   readonly trail: CrescentTrail | null;
   landed: boolean;
+  burnt: boolean;
+  lit: boolean;
+  /** Its fall on screen (rad): the head's and the landing cut's turn. */
+  rot: number;
 }
 
 const v = new THREE.Vector3();
@@ -133,15 +150,19 @@ export class MeteorRain {
     return this.trails;
   }
 
-  /** Casts the rain on the herd: marks, meteors, blows; what it aimed at (0: no beast). */
-  cast(): number {
+  /** No blows (no stops, no deaths): the rain's own light alone (measurement only, __lab.meteor(true, true)). */
+  private dry = false;
+
+  /** Casts the rain on the herd: marks, meteors, blows (`dry`: none); what it aimed at (0: no beast). */
+  cast(dry = false): number {
+    this.dry = dry;
     const folder = this.folder();
     this.host.prepareMark(folder);
     this.host.caster(c);
     const aim = aimClipSkill(AIM, this.host.targets, { x: c.x, z: c.z }, { x: c.x, z: c.z - 9 }, "field");
     // Swept from one side (the side the meteors come from) to the other.
     const order = aim.points.map((p, k) => ({ p, k })).sort((x, y) => x.p.x - y.p.x || x.p.z - y.p.z);
-    const report: MeteorReport = { element: folder, meteors: 0, marks: 0, impactAt: [], markAt: [], blows: 0, kills: 0, kitImpacts: 0 };
+    const report: MeteorReport = { element: folder, meteors: 0, marks: 0, impactAt: [], markAt: [], blows: 0, kills: 0, kitImpacts: 0, points: [] };
     const trails = this.trailsFor();
     const slant = (SLANT_DEG * Math.PI) / 180;
     order.forEach(({ p, k }, n) => {
@@ -150,18 +171,31 @@ export class MeteorRain {
       // From high up and to the left (screen left on the play camera), SLANT_DEG off the vertical.
       const start = new THREE.Vector3(p.x - Math.tan(slant) * HEIGHT_M, HEIGHT_M, p.z);
       const hits = aim.hits.filter((h) => h.point === k).map((h) => ({ i: h.i, dx: h.dx, dz: h.dz }));
-      this.meteors.push({ target, start, fallAt: landAt - FALL_S, landAt, hits, role: n === 0 ? "primary" : "secondary", trail: trails[n % Math.max(1, trails.length)] ?? null, landed: false });
+      this.meteors.push({ target, start, fallAt: landAt - FALL_S, landAt, hits, role: n === 0 ? "primary" : "secondary", trail: trails[n % Math.max(1, trails.length)] ?? null, landed: false, burnt: false, lit: false, rot: 0 });
       // Marked on the ground before its blow; where the kit has no aftermath, the mark stays as the burnt ground.
       const burn = this.hooks().sword?.aftermath !== undefined ? 0.3 : BURN_S;
       if (this.host.mark(folder, p.x, p.z, 3, landAt - MARK_S, MARK_S + burn)) report.marks += 1;
       report.markAt.push(landAt - MARK_S);
       report.impactAt.push(landAt);
+      report.points.push({ x: p.x, z: p.z });
       report.meteors += 1;
     });
     this.t = 0;
     this.last = report;
     this.host.release(order[0] !== undefined ? v.set(order[0].p.x, 0, order[0].p.z) : c);
     return report.meteors;
+  }
+
+  /** How far its landing's light leads the blow: the kit's impact, or (no impact clip) its crescent cut's bloom. */
+  private lead(): number {
+    const folder = this.folder();
+    const player = this.host.stage.flipbooks;
+    const lib = player.library(folder);
+    const impact = player.loaded(folder).some((x) => {
+      const m = lib.get(x)?.meta;
+      return m !== undefined && m.layer !== "body" && (m.role === "impact" || m.role === "burst");
+    });
+    return impact ? this.host.kit().impactLead ?? IMPACT_LEAD_S : CUT_LEAD_S;
   }
 
   private hooks(): ElementHooks {
@@ -179,19 +213,28 @@ export class MeteorRain {
     this.t += dt;
     const cr = this.meteors.length > 0 ? this.crescent() : null;
     for (const m of this.meteors) {
+      // Its burnt ground, past the blow's peak.
+      if (m.landed && !m.burnt && this.t >= m.landAt + AFTER_S) {
+        m.burnt = true;
+        this.hooks().sword?.aftermath?.({ slot: "k1", x: m.target.x, z: m.target.z, r: 1.2, life: BURN_S, rate: 6, pal: this.host.pal() });
+      }
       if (m.landed || this.t < m.fallAt) continue;
+      // Its impact's light, its attack's length ahead of the blow.
+      if (!m.lit && this.t >= m.landAt - this.lead() - 1e-6) {
+        m.lit = true;
+        this.impact(m);
+      }
       const u = Math.min(1, (this.t - m.fallAt) / FALL_S);
       v.lerpVectors(m.start, m.target, u);
-      if (u < 1) {
-        m.trail?.head(v.x, v.y, v.z, TAIL_W);
-        if (cr !== null) this.head(cr.pool, v, m);
-        continue;
-      }
+      // Its head and tail down to the ground, drawn on its landing frame too (the contact keeps its light).
+      m.trail?.head(v.x, v.y, v.z, TAIL_W);
+      if (cr !== null) this.head(cr.pool, v, m);
+      if (u < 1) continue;
       m.landed = true;
       this.land(m);
     }
     for (const tr of this.trails) tr.update(dt, this.host.camera);
-    if (this.meteors.length > 0 && this.meteors.every((m) => m.landed)) this.meteors = [];
+    if (this.meteors.length > 0 && this.meteors.every((m) => m.landed && m.burnt)) this.meteors = [];
   }
 
   /** The meteor's head this frame: its element's crescent held whole, convex side along the fall on screen. */
@@ -200,14 +243,22 @@ export class MeteorRain {
     b.copy(m.target).project(this.host.camera);
     const aspect = (this.host.camera as THREE.PerspectiveCamera).aspect ?? 16 / 9;
     const fall = Math.atan2(b.y - a.y, (b.x - a.x) * aspect);
+    m.rot = fall + Math.PI / 2;
     const held = heldCrescent(pool, 1);
-    const o: FlipOptions = { life: ONE_FRAME, rate: 0, frame: pool.meta!.start, rot: fall + Math.PI / 2 + held.turn, alpha: held.alpha, lift: 0.6, ground: 0 };
+    const o: FlipOptions = { life: ONE_FRAME, rate: 0, frame: pool.meta!.start, rot: m.rot + held.turn, alpha: held.alpha, lift: 0.6, ground: 0 };
     pool.spawn(at, HEAD_M, o);
   }
 
   /** A meteor lands: its blows and its element's impact and burnt ground. */
   private land(m: Meteor): void {
     const r = this.last;
+    if (this.dry) {
+      if (!m.lit) {
+        m.lit = true;
+        this.impact(m);
+      }
+      return;
+    }
     this.host.strike(m.target, m.role);
     for (const h of m.hits) {
       if (!this.host.targets.alive(h.i)) continue;
@@ -218,14 +269,21 @@ export class MeteorRain {
       }
       if (!killed) this.host.status(h.i);
     }
+    if (!m.lit) {
+      m.lit = true;
+      this.impact(m);
+    }
+  }
+
+  /** The landing's light: the kit's impact; an element without an impact clip its own crescent, cut along the fall. */
+  private impact(m: Meteor): void {
     const hooks = this.hooks().sword;
     const pal = this.host.pal();
-    const dx = 0.34;
-    const dz = 0;
-    const drawn = hooks?.impact?.({ slot: "k1", at: m.target, scale: 1.3, dx, dz, power: 1, big: true, pal }) === true;
+    const r = this.last;
+    const drawn = hooks?.impact?.({ slot: "k1", at: m.target, scale: 1.3, dx: 0.34, dz: 0, power: 1, big: true, pal }) === true
+      || hooks?.cut?.({ slot: "k1", at: v.copy(m.target).setY(0.8), rot: m.rot, size: 2.6, pal }) === true;
     if (drawn && r !== null) r.kitImpacts += 1;
-    else this.fallbackImpact(m.target);
-    hooks?.aftermath?.({ slot: "k1", x: m.target.x, z: m.target.z, r: 1.2, life: BURN_S, rate: 6, pal });
+    else if (!drawn) this.fallbackImpact(m.target);
   }
 
   /** Without the kit's impact: the folder's impact (or burst) clip, fast to its peak, then slow. */

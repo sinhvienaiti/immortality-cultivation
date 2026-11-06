@@ -596,6 +596,8 @@ export interface ElementKit {
    * the kit is used; a role with no clip yet leaves the base layer to draw.
    */
   readonly roles?: readonly ClipRole[];
+  /** How long its impact takes to reach its peak (s; its clip's attack and its law's beat): a blow's light may lead it by this. */
+  readonly impactLead?: number;
   readonly ground: GroundAftermath | null;
   readonly foe: FoeStatus | null;
   readonly screen: ScreenAccent;

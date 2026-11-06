@@ -324,6 +324,8 @@ let clipSkillNow: ClipSkill | null = null;
 let clipRgb = 0xffffff;
 /** Set while a key-8 skill lands a blow: its deaths take the lab's light burst (the Kiếm skills draw theirs in their strike). */
 let clipDeath = false;
+/** Set while the meteor rain (M) or the channel (C) lands a blow: its deaths are the element's own (else the light burst). */
+let elementKill = false;
 /** Lab frames drawn (the screen-impact dedupe: hitStop and shake of one blow arrive on one frame). */
 let frameNo = 0;
 const lastImpact = { frame: -1, slot: "" };
@@ -651,6 +653,10 @@ bus.on((e) => {
       deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
       return;
     }
+    if (elementKill) {
+      if (!elementDeath(e.x, e.y, e.z, e.dx, e.dz, herd.radius(e.target), true)) deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+      return;
+    }
     // An element with its own death draws it (key 7's here; the Kiếm skills' in their strike).
     if (elementDeath(e.x, e.y, e.z, e.dx, e.dz, herd.radius(e.target), inkDeath)) return;
     // Key 7's deaths dissolve into ink and qi motes (round 3b, item 4); the other skills keep their light burst.
@@ -953,9 +959,9 @@ const channel = new ChannelSkill({
   blow(i, dx, dz, power, pulse) {
     const rgb = fx.paletteOf("k1").flashHex;
     const killed = herd.hit(i, dx, dz, power, rgb);
-    clipDeath = true;
+    elementKill = true;
     emitImpact("kc", i, dx, dz, power, pulse ? "primary" : "secondary", killed, rgb);
-    clipDeath = false;
+    elementKill = false;
     // A word's pulse lights the beast it lands on.
     if (pulse) lights.flash(channelAt.set(herd.x(i), 1, herd.z(i)), view.camera.position, rgb, 3, true);
     return killed;
@@ -1004,9 +1010,9 @@ const meteor = new MeteorRain({
   blow(i, dx, dz, power, role) {
     const rgb = fx.paletteOf("k1").flashHex;
     const killed = herd.hit(i, dx, dz, power, rgb);
-    clipDeath = true;
+    elementKill = true;
     emitImpact("km", i, dx, dz, power, role, killed, rgb);
-    clipDeath = false;
+    elementKill = false;
     return killed;
   },
   strike(at, role) {
@@ -1776,8 +1782,10 @@ declare global {
       streak(grade?: Grade, n?: number): { count: number; best: number; tier: number; grades: Record<Grade, number>; rect: { left: number; top: number; width: number; height: number } };
       /** Key C (channel-skill.ts): "start" (C), "feed" a word, "sloppy" (Shift+C), or none: what it has done. */
       channel(action?: "start" | "feed" | "sloppy"): ChannelReport;
-      /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true) or reads the last one. */
-      meteor(cast?: boolean): (MeteorReport & { active: boolean }) | null;
+      /** A world point on screen (CSS px from the top left; captures). */
+      project(x: number, y: number, z: number): { x: number; y: number };
+      /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true; dry: its light alone, no blows) or reads the last one. */
+      meteor(cast?: boolean, dry?: boolean): (MeteorReport & { active: boolean }) | null;
       /** Key 9 (clip-skills.ts, SKILLS_EXPANSION): casts new skill `id` (none: the selected; one without its row plays as its video); what it cast and every id it has. */
       expansion(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
@@ -2136,10 +2144,14 @@ void (async () => {
       else if (action === "sloppy") channel.feed("sloppy");
       return { ...channel.report, active: channel.active };
     },
-    meteor(cast = false) {
-      if (cast) meteor.cast();
+    meteor(cast = false, dry = false) {
+      if (cast) meteor.cast(dry);
       const r = meteor.last;
-      return r === null ? null : { ...r, impactAt: [...r.impactAt], markAt: [...r.markAt], active: meteor.active };
+      return r === null ? null : { ...r, impactAt: [...r.impactAt], markAt: [...r.markAt], points: r.points.map((p) => ({ ...p })), active: meteor.active };
+    },
+    project(x, y, z) {
+      const q = new THREE.Vector3(x, y, z).project(view.camera);
+      return { x: (q.x * 0.5 + 0.5) * innerWidth, y: (-q.y * 0.5 + 0.5) * innerHeight };
     },
     clipSkill(key = 8) {
       const runner = key === 9 ? clipSkills9 : clipSkills;

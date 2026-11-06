@@ -1664,6 +1664,8 @@ export function clipKit(spec: ClipKitSpec): ElementKit {
     textures: {},
     flipbooks: {},
     roles: CLIP_ROLES,
+    // Its impact: the clip's attack, after its law's beat (strike: the column a beat after the glint; shatter: the hold).
+    impactLead: TIMES.impact[0] + (spec.look.hit === "strike" ? 0.07 : spec.look.hit === "shatter" ? 0.12 : 0),
     ground: null,
     foe: spec.foe,
     screen: spec.screen.frames !== undefined ? spec.screen : { ...spec.screen, frames: framesOf(spec.ramp) },
