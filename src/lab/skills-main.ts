@@ -256,7 +256,7 @@ if (qiPresenter) {
   // Observe failures immediately while the rest of the lab's assets load.
   void qiPresenter.ready.catch((error: unknown) => console.error("swarm lab assets", error));
 }
-const greybox = params.get("key2") === "twin-pearl" ? new TwinPearlGreybox(view.camera, () => ({ x: caster.x, y: 1.2, z: caster.z })) : null;
+const greybox = params.get("key2") === "twin-pearl" ? new TwinPearlGreybox(view.camera, () => ({ x: caster.x, y: 1.2, z: caster.z }), (frame) => sound.twinFrame(frame), (event, world) => sound.simBeast(event, world)) : null;
 if (greybox !== null) {
   view.layers.fx.add(greybox.group);
   herd.group.visible = false;
@@ -430,6 +430,8 @@ bus.on((e) => {
   // the shared release and hit sounds (a pulse keeps its hit, its kills their death).
   if (e.kind === "release" && e.slot === "kc") return;
   if (e.kind === "impact" && e.slot === "kc" && e.role === "secondary") return;
+  sound.skill(e);
+  sound.beast(e);
   sound.on(e);
 });
 // ?key2=twin-pearl measures key-to-first-hit, and the first unlock creates the AudioContext (60–120 ms on the main
@@ -830,7 +832,7 @@ function setAura(id: AuraId): AuraId {
  * closed, then cuts to the shout on the callout's "天", which starts 1.08 s into callout-k5/01.ogg (retune `shoutAt`
  * with that file); 1.7 s in all.
  */
-const cutin = new CutIn(document.body);
+const cutin = new CutIn(document.body, (phase) => sound.cutin(phase));
 const ULT_HOLD = Number(params.get("cutin") ?? "1.7") || 1.7;
 /** ?cutinArt=a|b|c picks the painting style (owner preview, 03/11 evening: he asked to try B, the anime cel). */
 /** ?cutinShout=c1..c4|b1..b3 swaps only the shout frame for an elegant-face candidate, skin matched to the gather (owner preview, 03/11 evening). */
@@ -1422,7 +1424,7 @@ function updateBolt(dt: number): void {
         caster.hit(bolt.x, bolt.z);
         presence.hit(caster.x, caster.z, bolt.x, bolt.z);
         screen.shake(4, 0.12);
-      }
+      } else sound.guardBlock(caster.x);
     } else {
       bolt.x += (dx / d) * step;
       bolt.z += (dz / d) * step;
@@ -1757,8 +1759,8 @@ window.addEventListener("keydown", (e) => {
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
   else if (e.key === "b" || e.key === "B") enemyShot();
   else if (e.key === "r" || e.key === "R") reset();
-  else if (e.key === "w" || e.key === "W") cycleWeapon();
-  else if (e.key === "e" || e.key === "E") cycleElement();
+  else if (e.key === "w" || e.key === "W") { sound.uiCue("confirm"); cycleWeapon(); }
+  else if (e.key === "e" || e.key === "E") { sound.uiCue("confirm"); cycleElement(); }
   else if (e.key === "=" || e.key === "+") zoom.zoomIn();
   else if (e.key === "-" || e.key === "_") zoom.zoomOut();
   else if (e.key === "z" || e.key === "Z") zoom.toggle();
@@ -1862,7 +1864,11 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     b.textContent = key + " · " + (SHORT[key] ?? name);
     b.title = name;
     b.style.cssText = "text-align:left;padding:3px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(14,18,26,.78);color:#e6e9ef;border:1px solid #3a4558;border-radius:5px;cursor:pointer";
-    b.onclick = () => window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+    b.onclick = () => {
+      if (key !== "H" && key !== "E" && key !== "W") sound.uiCue("confirm");
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+    };
+    b.onpointerenter = () => sound.uiCue("cursor-move");
     content.append(b);
   }
   const w = document.createElement("label");
@@ -1871,7 +1877,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   input.type = "number";
   input.value = String(wpm);
   input.style.cssText = "width:60px";
-  input.onchange = () => (wpm = Math.max(10, Number(input.value) || 45));
+  input.onchange = () => { sound.uiCue("confirm"); wpm = Math.max(10, Number(input.value) || 45); };
   w.append(input);
   content.append(w);
   // Typed charge (?typed=1): the word is typed at the WPM before the release; off, a key casts at once (D58).
@@ -1881,6 +1887,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   typedBox.type = "checkbox";
   typedBox.checked = typedMode;
   typedBox.onchange = () => {
+    sound.uiCue("confirm");
     typedMode = typedBox.checked;
     typing = null;
   };
@@ -1910,7 +1917,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     select.append(o);
   }
   select.value = fx.weapon;
-  select.onchange = () => void setWeapon(select.value);
+  select.onchange = () => { sound.uiCue("confirm"); void setWeapon(select.value); };
   weaponListeners.push((id) => (select.value = id));
   wl.append(select);
   content.append(wl);
@@ -1927,7 +1934,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     elSelect.append(o);
   }
   elSelect.value = fx.element.id;
-  elSelect.onchange = () => void setElement(elSelect.value);
+  elSelect.onchange = () => { sound.uiCue("confirm"); void setElement(elSelect.value); };
   elementListeners.push((id) => (elSelect.value = id));
   el.append(elSelect);
   content.append(el);
@@ -1958,6 +1965,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     fill();
     sc.onList(fill);
     scSelect.onchange = () => {
+      sound.uiCue(scSelect.value === "" ? "back" : "confirm");
       if (scSelect.value !== "") {
         if (castable !== undefined) castable.cast(scSelect.value);
         else sc.play(scSelect.value);
@@ -2000,7 +2008,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     auraSelect.append(o);
   }
   auraSelect.value = swordAura.direction;
-  auraSelect.onchange = () => void setAura(auraIdOf(auraSelect.value));
+  auraSelect.onchange = () => { sound.uiCue("confirm"); void setAura(auraIdOf(auraSelect.value)); };
   auraListeners.push((id) => (auraSelect.value = id));
   al.append(auraSelect);
   content.append(al);
@@ -2018,6 +2026,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   applyPanel();
   togglePanel = () => {
     collapsed = !collapsed;
+    sound.uiCue(collapsed ? "panel-close" : "panel-open");
     applyPanel();
     try { gameStorage.writeJson("lab.panel.collapsed", collapsed ? 1 : 0); } catch { /* ignore */ }
     bar?.avoid(panel);
@@ -2067,7 +2076,7 @@ function frame(dt: number): void {
   updateBolt(world);
   crescentTagLeft = Math.max(0, crescentTagLeft - world);
   herd.update(world);
-  if (qiSwarm !== null) { qiSwarm.advance(world); herd.update(0); }
+  if (qiSwarm !== null) { qiSwarm.advance(world); sound.swarmFrame(qiPresenter!.timeline.slots, qiSwarm.world.tick - 1); herd.update(0); }
   caster.update(world);
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
@@ -2409,6 +2418,8 @@ void (async () => {
   await Promise.all([herd.load(), caster.load(), look.ready, equipped, elemented, fonts, qiPresenter?.ready]);
   if (qiPresenter) {
     qiSwarm = new QiSwarmLab(herd, qiPresenter, () => ({ x: caster.x, z: caster.z }), (event, target) => {
+      sound.swarmEvent(event);
+      sound.simBeast(event, qiSwarm!.world);
       if (event.type === "skill-fx" && event.stage === "swarm-cast") compiler.headline(1_000_000 + event.castId!);
       if (event.type === "hit" && event.castId !== undefined && target >= 0) compiler.add(1_000_000 + event.castId, target, event.amount, false, event.x, herd.midY(target), event.z, 0xffd899, herd.tier(target), 0.125, event.phase === "burst", true);
     });

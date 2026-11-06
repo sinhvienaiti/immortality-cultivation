@@ -237,6 +237,7 @@ export class CutIn {
   private nameEm = 12.9;
   /** When the shout frame first showed (s), −1 before: its flash, punch and shake count from that frame. */
   private cutT = -1;
+  private soundStamped = false;
   /** fitTitle's last result and the screen size it was for ("" after start). */
   private titleKey = "";
   private titleFit: readonly [number, number, number] = [0, 0, 0];
@@ -244,7 +245,7 @@ export class CutIn {
   private t = -1;
   private spec: CutInSpec = { name: "", hanzi: "", seconds: 0.9 };
 
-  constructor(parent: HTMLElement) {
+  constructor(parent: HTMLElement, private readonly sound?: (phase: "open" | "shout" | "stamp" | "close") => void) {
     const div = (css: string): HTMLDivElement => {
       const d = document.createElement("div");
       d.style.cssText = css;
@@ -361,6 +362,8 @@ export class CutIn {
     this.spec = spec;
     this.t = 0;
     this.cutT = -1;
+    this.soundStamped = false;
+    this.sound?.("open");
     this.titleKey = "";
     const art = spec.art;
     this.edges = art ? ART_BAND : BAND;
@@ -399,6 +402,7 @@ export class CutIn {
     if (this.t < 0) return false;
     this.t += dt;
     if (this.t >= this.spec.seconds) {
+      this.sound?.("close");
       this.stop();
       return true;
     }
@@ -509,7 +513,10 @@ export class CutIn {
     const art = this.spec.art;
     const shoutAt = this.spec.shoutAt ?? 0.45 * T;
     // The cut is latched on the first frame at or past shoutAt, so that frame always shows the full flash and punch.
-    if (art && this.cutT < 0 && t >= shoutAt) this.cutT = t;
+    if (art && this.cutT < 0 && t >= shoutAt) {
+      this.cutT = t;
+      this.sound?.("shout");
+    }
     /** Seconds since the shout frame first showed (negative before). */
     const since = art && this.cutT >= 0 ? t - this.cutT : -1;
     // Open at once to its full height (the wipe reveals it); close over the last 0.14 s to its middle line.
@@ -688,6 +695,10 @@ export class CutIn {
     const sz = Math.round(nz * SEAL_OF_NAME);
     // With a two-frame painting the seal slams with the shout, early enough to be seen before the band closes.
     const st = (t - (art ? Math.min(shoutAt + 0.05, Math.max(shoutAt, T - 0.4)) : STAMP_AT)) / 0.12;
+    if (st > 0 && !this.soundStamped) {
+      this.soundStamped = true;
+      this.sound?.("stamp");
+    }
     // The settled width (measured once in start): no layout read per frame.
     const nameW = this.nameEm * nz;
     const sx = Math.min(W - sz * 0.62, nx + nameW + sz * 0.72);

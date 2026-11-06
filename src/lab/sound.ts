@@ -23,6 +23,9 @@
  * the bus calls `on` on the same frame as the body, VFX, camera and hit-stop.
  */
 import type { LabEvent } from "./events";
+import { TWIN_PEARL } from "../content/data/twin-pearl";
+import type { SimEvent, World } from "../content/types";
+import type { SwarmSlot } from "../view/skills/qi-dragon-swarm";
 import {
   BUS_GAIN, CALLOUT_TRIM_DB, FIREFLY_FADE, FIREFLY_TARGET, KEYS_MIX, LIMITER, MASTER_GAIN, MUSIC, SEND_LEVEL, SPEECH_DIP, VERB_RETURN, VOICE_CAP, classOf,
   fireflyGain, trimGain, type SoundBus, type VoiceGroup,
@@ -117,6 +120,75 @@ export interface TakeOptions {
   /** Its voice group (a capped number sound at once; VOICE_CAP). */
   readonly group?: VoiceGroup;
 }
+
+/** New sprint layers only; the lab's previously heard takes remain unchanged. */
+export const SPRINT_TAKES: Readonly<Record<string, FireflyTake & { readonly options: TakeOptions }>> = {
+  "ui-confirm": { ...take("tt-sfx-ui-confirm/take5.wav", -28, "ui", 0), options: { bus: "ui", send: 0 } },
+  "ui-back": { ...take("tt-sfx-ui-back/take4.wav", -28, "ui", 0.1798), options: { bus: "ui", send: 0 } },
+  "ui-panel-open": { ...take("tt-sfx-ui-panel-open/take1.wav", -28, "ui", 0.121), options: { bus: "ui", send: 0 } },
+  "ui-panel-close": { ...take("tt-sfx-ui-panel-close/take4.wav", -28, "ui", 0.142), options: { bus: "ui", send: 0 } },
+  "ui-cursor-move": { ...take("tt-sfx-ui-cursor-move/take4.wav", -30, "ui", 0.025), options: { bus: "ui", send: 0 } },
+  "guard-deflect": { ...take("tt-sfx-guard-deflect/take3.wav", -23, "combat", 0.0256), options: { send: 0.1, group: "impact" } },
+  "enemy-hit-hero-shield": { ...take("tt-sfx-enemy-hit-hero-shield/take3.wav", -18, "combat", 0.0162), options: { send: 0.1, group: "impact" } },
+  "k5-release-instant": { ...take("tt-sfx-k5-release-instant/take3.wav", -21, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "big" } },
+  "k5-release-tail": { ...take("tt-sfx-k5-release-tail/take1.wav", -25, "world", 0.0147), fade: [3.6147, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "k5-sky-split": { ...take("tt-sfx-k5-sky-split/take1.wav", -21, "world", 0.0134), fade: [3.6134, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "ult-release-instant": { ...take("tt-sfx-ult-release-instant/take2.wav", -21, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "big" } },
+  "ult-climax-boom": { ...take("tt-sfx-ult-climax-boom/take4.wav", -14, "world", 0.0213), fade: [3.6213, 1.2], options: { bus: "world", send: 0.3, group: "big" } },
+  "ult-sword-rain": { ...take("tt-sfx-ult-sword-rain/take1.wav", -25, "world", 0.0161), fade: [3.6161, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "ult-preverb-swell": { ...take("tt-sfx-ult-preverb-swell/take1.wav", -25, "world", 0.0887), fade: [3.6887, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "world-open-punch": { ...take("tt-sfx-world-open-punch/take1.wav", -21, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "ult-close-tail": { ...take("tt-sfx-ult-close-tail/take4.wav", -25, "world", 0.0315), fade: [3.6315, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "ult-heaven-drone": { ...take("tt-sfx-ult-heaven-drone/take1.wav", -25, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "k7-sword-river": { ...take("tt-sfx-k7-sword-river/take1.wav", -25, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-ink-whoosh": { ...take("tt-sfx-cutin-ink-whoosh/take6.wav", -21, "world", 0.0605), fade: [3.6605, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-frame-hit": { ...take("tt-sfx-cutin-frame-hit/take2.wav", -21, "world", 0.0191), fade: [3.6191, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-bell-tail": { ...take("tt-sfx-cutin-bell-tail/take4.wav", -25, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-sword-swarm": { ...take("tt-sfx-cutin-sword-swarm/take1.wav", -25, "world", 0.2694), fade: [3.8694, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-power-burst": { ...take("tt-sfx-cutin-power-burst/take3.wav", -21, "world", 0), fade: [3.6000, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-seal-stamp": { ...take("tt-sfx-cutin-seal-stamp/take3.wav", -21, "world", 0.0152), fade: [3.6152, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-exit-whoosh": { ...take("tt-sfx-cutin-exit-whoosh/take4.wav", -21, "world", 0.101), fade: [3.7010, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "cutin-time-freeze": { ...take("tt-sfx-cutin-time-freeze/take1.wav", -21, "world", 0.3082), fade: [3.9082, 1.2], options: { bus: "world", send: 0.3, group: "impact" } },
+  "confirm-flesh": { ...take("tt-sfx-confirm-flesh/take8.wav", -24, "combat", 0.0197), options: { send: 0, group: "impact" } },
+  "confirm-stone": { ...take("tt-sfx-confirm-stone/take8.wav", -24, "combat", 0.0149), options: { send: 0, group: "impact" } },
+  "confirm-spirit": { ...take("tt-sfx-confirm-spirit/take7.wav", -24, "combat", 0), options: { send: 0, group: "impact" } },
+  "mass-kill-burst": { ...take("tt-sfx-mass-kill-burst/take3.wav", -18, "combat", 0), options: { send: 0.25, group: "death" } },
+  "mass-kill-chain": { ...take("tt-sfx-mass-kill-chain/take4.wav", -18, "combat", 0.0155), options: { send: 0.25, group: "death" } },
+  "swarm-kill-crunch": { ...take("tt-sfx-swarm-kill-crunch/take4.wav", -18, "combat", 0.0135), options: { send: 0.25, group: "death" } },
+  "elite-death-bronze": { ...take("tt-sfx-elite-death-bronze/take1.wav", -18, "combat", 0), options: { send: 0.25, group: "death" } },
+  "boss-hit-heavy": { ...take("tt-sfx-boss-hit-heavy/take3.wav", -18, "combat", 0.0118), options: { send: 0.1, group: "impact" } },
+  "beast-wolf-death": { ...take("tt-sfx-beast-wolf-death/take3.wav", -18, "combat", 0.0178), options: { send: 0.25, group: "death" } },
+  "beast-crow-death": { ...take("tt-sfx-beast-crow-death/take2.wav", -18, "combat", 0.0123), options: { send: 0.25, group: "death" } },
+  "beast-boar-death": { ...take("tt-sfx-beast-boar-death/take4.wav", -23, "combat", 0.007), options: { send: 0.25, group: "death" } },
+  "beast-common-ink-dissolve": { ...take("tt-sfx-beast-common-ink-dissolve/take5.wav", -28, "combat", 0), options: { send: 0.25, group: "death" } },
+  "boss-death": { ...take("tt-sfx-boss-death/take3.wav", -18, "combat", 0.0088), options: { send: 0.25, group: "death" } },
+  "elite-death-roar": { ...take("tt-sfx-elite-death-roar/take2.wav", -18, "combat", 0.0214), options: { send: 0.25, group: "death" } },
+  "beast-wolf-snarl": { ...take("tt-sfx-beast-wolf-snarl/take2.wav", -23, "combat", 0.0498), options: { send: 0.1, group: "impact" } },
+  "beast-wolf-hurt": { ...take("tt-sfx-beast-wolf-hurt/take3.wav", -23, "combat", 0.0107), options: { send: 0.1, group: "impact" } },
+  "beast-crow-hurt": { ...take("tt-sfx-beast-crow-hurt/take2.wav", -23, "combat", 0), options: { send: 0.1, group: "impact" } },
+  "beast-boar-hurt": { ...take("tt-sfx-beast-boar-hurt/take2.wav", -23, "combat", 0.024), options: { send: 0.1, group: "impact" } },
+  "beast-common-dissolve-chain": { ...take("tt-sfx-beast-common-dissolve-chain/take1.wav", -25, "combat", 0.0471), options: { send: 0.25, group: "death" } },
+  "boss-death-dissolve": { ...take("tt-sfx-boss-death-dissolve/take1.wav", -25, "combat", 0.0188), options: { send: 0.25, group: "death" } },
+  "twin-bell-giant": { ...take("tt-sfx-twin-bell-giant/take6.wav", -11.5, "combat", 0.0147), options: { send: 0.3, group: "big" } },
+  "twin-dragon-roar-a": { ...take("tt-sfx-twin-dragon-roar-a/take5.wav", -13.5, "combat", 0.0165), options: { send: 0.3, group: "big" } },
+  "twin-dragon-roar-b": { ...take("tt-sfx-twin-dragon-roar-b/take4.wav", -13.5, "combat", 0.0401), options: { send: 0.3, group: "big" } },
+  "twin-bronze-bell-high": { ...take("tt-sfx-twin-bronze-bell-high/take4.wav", -13.5, "combat", 0.0144), options: { send: 0.3, group: "impact" } },
+  "twin-sword-crack": { ...take("tt-sfx-twin-sword-crack/take4.wav", -21, "combat", 0), options: { send: 0.3, group: "impact" } },
+  "twin-fire-whoosh-a": { ...take("tt-sfx-twin-fire-whoosh-a/take7.wav", -21, "combat", 0.0057), options: { send: 0.3, group: "impact" } },
+  "twin-fire-whoosh-b": { ...take("tt-sfx-twin-fire-whoosh-b/take6.wav", -21, "combat", 0), options: { send: 0.3, group: "impact" } },
+  "twin-deep-boom": { ...take("tt-sfx-twin-deep-boom/take1.wav", -22, "combat", 0), options: { send: 0.3, group: "impact" } },
+  "twin-mountain-echo": { ...take("tt-sfx-twin-mountain-echo/take1.wav", -25, "combat", 0.0171), options: { send: 0.3, group: "impact" } },
+  "twin-ember-crackle": { ...take("tt-sfx-twin-ember-crackle/take1.wav", -26, "combat", 0), options: { send: 0.3, group: "impact" } },
+  "twin-glint-shimmer": { ...take("tt-sfx-twin-glint-shimmer/take4.wav", -25, "combat", 0.1349), options: { send: 0.3, group: "impact" } },
+  "twin-sparkle-ticks": { ...take("tt-sfx-twin-sparkle-ticks/take2.wav", -28, "combat", 0.0576), options: { send: 0.3, group: "impact" } },
+  "twin-roar-rumble": { ...take("tt-sfx-twin-roar-rumble/take3.wav", -25, "combat", 0.0195), options: { send: 0.3, group: "impact" } },
+  "twin-flame-flutter": { ...take("tt-sfx-twin-flame-flutter/take4.wav", -27, "combat", 0), options: { send: 0.3, group: "impact" } },
+  "twin-sub-hit": { ...take("tt-sfx-twin-sub-hit/take1.wav", -26, "combat", 0.0127), options: { send: 0.3, group: "impact" } },
+  "twin-dragon-roar-c": { ...take("tt-sfx-twin-dragon-roar-c/take3.wav", -13.5, "combat", 0.0295), options: { send: 0.3, group: "big" } },
+  "twin-bell-giant-b": { ...take("tt-sfx-twin-bell-giant-b/take2.wav", -11.5, "combat", 0), options: { send: 0.3, group: "big" } },
+  "twin-fire-breath": { ...take("tt-sfx-twin-fire-breath/take3.wav", -25, "combat", 0.0051), options: { send: 0.3, group: "impact" } },
+  "twin-pearl-shimmer": { ...take("tt-sfx-twin-pearl-shimmer/take2.wav", -26, "combat", 0), options: { send: 0.3, group: "impact" } },
+};
 
 /** A loop playing (loopTake): its level (0–1, eased over `over` s) and its stop (faded over `over` s). */
 export interface TakeLoop {
@@ -342,7 +414,170 @@ export class LabSound {
   private keyRand = 0x2468ace;
 
   /** `variants`: element suffixes to look for beside each event when there is no manifest (the files are probed). */
-  constructor(private readonly variants: readonly string[] = []) {}
+  constructor(private readonly variants: readonly string[] = []) {
+    this.registerTakes(Object.values(SPRINT_TAKES));
+  }
+
+  /** A measured sprint layer through the existing file player, buses and voice caps. */
+  sprint(id: string, options: TakeOptions = {}): boolean {
+    const cue = SPRINT_TAKES[id];
+    return cue !== undefined && this.playTake(cue, { ...cue.options, ...options });
+  }
+
+  private twinVariant = 0;
+  private readonly swarmFrames = new Map<number, number>();
+
+  /** Existing Twin Pearl phases; alternates replace a layer rather than stacking another roar or bell. */
+  twinCue(phase: "release" | "travel" | "dive" | "burst" | "end"): void {
+    if (phase === "release") {
+      this.twinVariant += 1;
+      this.sprint("twin-bronze-bell-high");
+      this.sprint("twin-sword-crack");
+      this.sprint("twin-sub-hit");
+    } else if (phase === "travel") {
+      this.sprint("twin-fire-whoosh-a", { pan: -0.45 });
+      this.sprint("twin-fire-whoosh-b", { pan: 0.45 });
+      this.sprint("twin-flame-flutter");
+      this.sprint("twin-fire-breath");
+      this.sprint("twin-pearl-shimmer");
+    } else if (phase === "dive") {
+      this.sprint(this.twinVariant % 2 ? "twin-dragon-roar-a" : "twin-dragon-roar-c", { pan: -0.45 });
+      this.sprint("twin-dragon-roar-b", { pan: 0.45 });
+      this.sprint("twin-roar-rumble");
+    } else if (phase === "burst") {
+      this.sprint(this.twinVariant % 2 ? "twin-bell-giant" : "twin-bell-giant-b");
+      this.sprint("twin-deep-boom");
+      this.sprint("twin-mountain-echo");
+      this.sprint("twin-glint-shimmer");
+    } else {
+      this.sprint("twin-ember-crackle");
+      this.sprint("twin-sparkle-ticks");
+    }
+  }
+
+  /** Greybox sim frames, not wall time: pause and hit-stop keep the sound with its phase. */
+  twinFrame(frame: number): void {
+    if (frame === TWIN_PEARL.hold.tick) this.twinCue("release");
+    if (frame === TWIN_PEARL.heads.fromTick) this.twinCue("travel");
+    if (frame === TWIN_PEARL.roar.fromTick) this.twinCue("dive");
+    if (frame === TWIN_PEARL.lotus.fromTick) this.twinCue("burst");
+    if (frame === TWIN_PEARL.lotus.toTick + 1) this.twinCue("end");
+  }
+
+  /** The real swarm already emits cast, pearl burst and end. */
+  swarmEvent(e: SimEvent): void {
+    if (e.type !== "skill-fx") return;
+    if (e.stage === "swarm-cast") this.twinCue("release");
+    else if (e.stage === "swarm-burst") this.twinCue("burst");
+    else if (e.stage === "swarm-end") this.twinCue("end");
+  }
+
+  /** Launch and dive ticks come from the presenter's accepted packet, once per cast despite repeated draw frames. */
+  swarmFrame(slots: readonly (SwarmSlot | null)[], tick: number): void {
+    const active = new Set<number>();
+    for (const slot of slots) {
+      if (slot === null) continue;
+      const p = slot.packet, age = tick - p.castTick;
+      active.add(p.castId);
+      const before = this.swarmFrames.get(p.castId) ?? -1;
+      const launch = Math.min(...p.dragons.map((d) => d.launchTick));
+      const dive = Math.min(...p.dragons.map((d) => d.diveTick));
+      if (before < launch && age >= launch) this.twinCue("travel");
+      if (before < dive && age >= dive) this.twinCue("dive");
+      this.swarmFrames.set(p.castId, age);
+    }
+    for (const id of this.swarmFrames.keys()) if (!active.has(id)) this.swarmFrames.delete(id);
+  }
+
+  /** Supplemental layers at existing release/world events; never replace an element's current file. */
+  skill(e: LabEvent): void {
+    if (e.kind === "release" && e.slot === "k5") {
+      this.sprint("k5-release-instant");
+      this.sprint("k5-release-tail");
+      this.sprint("k5-sky-split");
+      this.sprint("ult-sword-rain");
+    } else if (e.kind === "release" && e.slot === "k7") this.sprint("ult-release-instant");
+    else if (e.kind === "world" && (e.slot === "k5" || e.slot === "k7")) {
+      if (e.phase === "open") {
+        this.sprint("world-open-punch");
+        this.sprint("ult-heaven-drone");
+        if (e.slot === "k5") this.sprint("ult-preverb-swell");
+        else this.sprint("k7-sword-river");
+      } else if (e.phase === "climax") this.sprint("ult-climax-boom");
+      else if (e.phase === "close") this.sprint("ult-close-tail");
+    }
+  }
+
+  /** The cut-in's existing wipe, shout-frame cut, seal stamp and natural exit. */
+  cutin(phase: "open" | "shout" | "stamp" | "close"): void {
+    if (phase === "open") {
+      this.sprint("cutin-ink-whoosh");
+      this.sprint("cutin-time-freeze");
+    } else if (phase === "shout") {
+      this.sprint("cutin-frame-hit");
+      this.sprint("cutin-power-burst");
+      this.sprint("cutin-sword-swarm");
+    } else if (phase === "stamp") this.sprint("cutin-seal-stamp");
+    else {
+      this.sprint("cutin-exit-whoosh");
+      this.sprint("cutin-bell-tail");
+    }
+  }
+
+  /** B's existing enemy projectile met the active sword guard. */
+  guardBlock(x: number): void {
+    this.sprint("enemy-hit-hero-shield", { pan: this.pan(x) });
+    this.sprint("guard-deflect", { pan: this.pan(x) });
+  }
+
+  /** Panel operations stay on the existing dry UI bus, outside combat reverb. */
+  uiCue(action: "confirm" | "back" | "panel-open" | "panel-close" | "cursor-move"): void {
+    this.sprint("ui-" + action);
+  }
+
+  private beastVariant = 0;
+  private sprintDeath = false;
+
+  /** Called before on(e): share its material/death bucket, including the first blow on its own frame. */
+  beast(e: LabEvent, species?: string): void {
+    if (e.kind !== "impact" && e.kind !== "death") return;
+    const family = species ?? (e.beastTier >= 4 ? "thiet-boi-lang-vuong" : e.beastTier >= 2 ? "thiet-giap-tru" : e.beastTier === 1 ? "phong-lang" : "thach-thu");
+    const pan = this.pan(e.x);
+    if (e.kind === "impact") {
+      if (this.impact[e.material].open) return;
+      this.sprint("confirm-" + e.material, { pan });
+      if (e.killed) return;
+      const id = family === "thiet-boi-lang-vuong" ? "boss-hit-heavy" : family === "thiet-giap-tru" ? "beast-boar-hurt"
+        : family === "hoa-nha" ? "beast-crow-hurt" : family === "phong-lang" ? (++this.beastVariant % 2 ? "beast-wolf-hurt" : "beast-wolf-snarl") : "";
+      if (id) this.sprint(id, { pan });
+    } else {
+      if (this.death.open) return;
+      this.sprintDeath = true;
+      this.sprint("beast-common-ink-dissolve", { pan });
+      if (family === "thiet-boi-lang-vuong") {
+        this.sprint("boss-death", { pan });
+        this.sprint("boss-death-dissolve", { pan });
+      } else if (family === "thiet-giap-tru") {
+        this.sprint("beast-boar-death", { pan });
+        this.sprint(++this.beastVariant % 2 ? "elite-death-roar" : "elite-death-bronze", { pan });
+      } else if (family === "phong-lang") this.sprint("beast-wolf-death", { pan });
+      else if (family === "hoa-nha") this.sprint("beast-crow-death", { pan });
+      else if (family === "thach-thu") this.sprint("swarm-kill-crunch", { pan });
+    }
+  }
+
+  /** The greybox and real swarm already emit these hits/deaths; read their actual species, never a guessed serial. */
+  simBeast(e: SimEvent, world: World): void {
+    if (e.type !== "hit" && e.type !== "death") return;
+    const b = world.beasts.list[e.beast.slot];
+    if (b === undefined || b.serial !== e.beast.serial) return;
+    const beastTier = b.boss ? 4 : b.species === "thiet-giap-tru" ? 2 : b.species === "thach-thu" ? 0 : 1;
+    const audio: LabEvent = e.type === "death"
+      ? { kind: "death", target: e.beast.slot, x: e.x, y: 0.7, z: e.z, dx: 0, dz: -1, rgb: 0xffd899, beastTier }
+      : { kind: "impact", slot: e.source, tier: "skill", role: "primary", target: e.beast.slot, x: e.x, y: 0.7, z: e.z, dx: 0, dz: -1, power: 0.4, killed: e.hpLeft <= 0, material: beastTier >= 2 ? "stone" : "flesh", beastTier, rgb: 0xffd899 };
+    this.beast(audio, b.species);
+    this.on(audio);
+  }
 
   /** The files `id` plays with the element: "<id>-<element>" when it has some, else `id`'s. */
   private resolve(id: string): string {
@@ -903,6 +1138,11 @@ export class LabSound {
       if (d.age >= DEATH_BUCKET_S) {
         d.open = false;
         if (d.count >= 3) this.play("death", "combat", clamp(0.4 + 0.12 * Math.sqrt(d.count), 0.4, 1), this.pan(d.x / d.count), 0.92, 0.03);
+        if (d.count >= 3 && this.sprintDeath) {
+          this.sprint("beast-common-dissolve-chain", { pan: this.pan(d.x / d.count) });
+          this.sprint(++this.beastVariant % 2 ? "mass-kill-burst" : "mass-kill-chain", { pan: this.pan(d.x / d.count) });
+        }
+        this.sprintDeath = false;
       }
     }
     // Last: the buckets closed above belong to this frame, stamped at its start like the frame's other sounds.
@@ -931,5 +1171,9 @@ export class LabSound {
     this.played = 0;
     for (const b of Object.values(this.impact)) b.open = false;
     this.death.open = false;
+    this.sprintDeath = false;
+    this.beastVariant = 0;
+    this.swarmFrames.clear();
+    this.twinVariant = 0;
   }
 }

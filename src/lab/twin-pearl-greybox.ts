@@ -87,7 +87,7 @@ export class TwinPearlGreybox {
   private readonly stats: HTMLDivElement;
   private readonly lastLive = new Map<THREE.Object3D, number>();
 
-  constructor(private readonly camera: THREE.Camera, private readonly sword: () => { x: number; y: number; z: number }) {
+  constructor(private readonly camera: THREE.Camera, private readonly sword: () => { x: number; y: number; z: number }, private readonly soundFrame: (frame: number) => void = () => {}, private readonly soundEvent: (event: SimEvent, world: World) => void = () => {}) {
     this.group.name = "twin-pearl-greybox";
     this.beasts = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ fog: false, toneMapped: false }), 80);
     this.beasts.setColorAt(0, new THREE.Color(COLOURS.beast[0]));
@@ -270,6 +270,7 @@ export class TwinPearlGreybox {
     for (const e of this.world.events.drain()) this.onEvent(e);
     const live = this.current?.geometry ?? this.liveCast(), r = this.report, cur = this.current;
     if (live === null || r === null || live.castId !== r.castId) return;
+    this.soundFrame(this.world.tick - live.startTick - 1);
     Object.assign(r, { victims: live.victims, dealt: live.dealt, boss: live.bossDealt, poolSide0: live.pool.slice(0, POOL_PARTS).reduce((s, v) => s + v, 0), poolSide1: live.pool.slice(POOL_PARTS).reduce((s, v) => s + v, 0), poolStart: live.poolStart.reduce((s, v) => s + v, 0) });
     let hits = 0, touch = 0, corridor = 0, lotus = 0, most = 0, crows = 0;
     for (const v of live.book) {
@@ -281,6 +282,7 @@ export class TwinPearlGreybox {
   }
 
   private onEvent(e: SimEvent): void {
+    this.soundEvent(e, this.world);
     const r = this.report;
     if (e.type === "hit" && e.source === "slot2") {
       this.flash.set(e.beast.slot * 100_000 + e.beast.serial, this.labTime);
