@@ -66,7 +66,7 @@ import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
 import { VictimDirector } from "./victims";
 import { CutIn, CUTIN_ART, CUTIN_SHOUT_CANDIDATES } from "./cutin";
-import { LabSound, type SoundTake } from "./sound";
+import { LAB_TAKES, LabSound, type SoundTake, type TakeLoop } from "./sound";
 import { createSkillNumbers } from "../view/hitfx";
 import { DamageCompiler } from "../view/damage-compile";
 import { Rand } from "../view/skills/fxkit";
@@ -84,7 +84,7 @@ import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
-import { ChannelSkill, type ChannelReport } from "./channel-skill";
+import { ChannelSkill, COLLAPSE_S, WORD_S, type ChannelReport } from "./channel-skill";
 import { StreakCounter } from "./streak-counter";
 import type { Grade } from "../content/types";
 import { ClipSkillRunner, describeClipSkill, KEY8_NAV, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipCastReport, type ClipSkill, type ClipSkillHost } from "./clip-skills";
@@ -376,7 +376,15 @@ bus.on((e) => {
 // Sound hooks (canon D58 (6), sound.ts): files under art-src/lab/audio/<event-id>/, silent when absent; the same
 // events as the body, VFX, camera and hit-stop, on the same frame. Audio starts on the first key or click.
 const sound = new LabSound(elementKits().map((k) => k.sound));
-bus.on((e) => sound.on(e));
+// The Firefly takes of the streak counter, the channel and the meteor rain (sound.ts LAB_TAKES) load with the context.
+sound.registerTakes(Object.values(LAB_TAKES));
+bus.on((e) => {
+  // The channel (key C) has its own start and pulse sounds (updateChannelSound): its release and its ticks stay out of
+  // the shared release and hit sounds (a pulse keeps its hit, its kills their death).
+  if (e.kind === "release" && e.slot === "kc") return;
+  if (e.kind === "impact" && e.slot === "kc" && e.role === "secondary") return;
+  sound.on(e);
+});
 // ?key2=twin-pearl measures key-to-first-hit, and the first unlock creates the AudioContext (60–120 ms on the main
 // thread, measured 04/11): there it waits until the key's frame is drawn (Chrome keeps the page's user activation;
 // Safari may start the context suspended until the next key resumes it). Every other lab session unlocks on the key.
@@ -976,7 +984,83 @@ const streak = new StreakCounter(document.body, "/art-src/lab/ui/streak-counter/
 /** A word typed (its grade): it feeds the channel and counts on the streak. */
 function wordTyped(grade: Grade): void {
   channel.feed(grade);
+  streakWord(grade);
+}
+/**
+ * A word on the streak counter and its UI sound (dry, light): a clean word's jade tick, a FLASH word's gold ping, a
+ * tier's rise its chime (in place of the tick), a broken streak its ink brush; FAIR holds, silent.
+ */
+function streakWord(grade: Grade): void {
+  const count = streak.count;
+  const tier = streak.tier;
   streak.word(grade);
+  if (grade === "sloppy") {
+    if (count > 0) sound.playTake(LAB_TAKES.streakBreak, { bus: "ui" });
+    return;
+  }
+  if (streak.count === count) return;
+  if (streak.tier > tier) sound.playTake(LAB_TAKES.streakTierUp, { bus: "ui" });
+  else if (grade === "flash") sound.playTake(LAB_TAKES.streakFlash, { bus: "ui" });
+  else sound.playTake(LAB_TAKES.streakCount, { bus: "ui", gain: grade === "good" ? 0.8 : 1 });
+}
+/** The channel's sounds as it was last seen: running, its pulses, its stream full until (lab s), its loop. */
+const channelSound = { active: false, pulses: 0, fullUntil: 0, turn: 0, loop: null as TakeLoop | null };
+/**
+ * The channel's Firefly sounds, after its update each frame: its ignition and roaring loop when it opens, a surge per
+ * word's pulse (two takes in turn, a little brighter for higher grades), the loop easing down to a thread between words,
+ * and its collapse (the loop fading with its erosion) when it breaks.
+ */
+function updateChannelSound(): void {
+  const r = channel.report;
+  const s = channelSound;
+  if (r.active && !s.active) {
+    sound.playTake(LAB_TAKES.channelStart, { send: 0.25 });
+    s.fullUntil = labTime + WORD_S;
+  } else if (r.active && r.pulses > s.pulses) {
+    const b = s.turn++ % 2 === 1;
+    sound.playTake(b ? LAB_TAKES.channelPulseB : LAB_TAKES.channelPulse, { send: 0.1, rate: 0.98 + 0.04 * ((s.turn * 0.618) % 1) });
+    s.fullUntil = labTime + WORD_S;
+  }
+  // The loop starts once its file is in (the first key loads it).
+  if (r.active && s.loop === null) s.loop = sound.loopTake(LAB_TAKES.channelLoop, 1, { send: 0.1, fadeIn: 0.15 });
+  if (!r.active && s.active) {
+    sound.playTake(LAB_TAKES.channelCollapse, { send: 0.25 });
+    s.loop?.stop(COLLAPSE_S);
+    s.loop = null;
+  }
+  s.loop?.level(labTime < s.fullUntil ? 1 : 0.55);
+  s.active = r.active;
+  s.pulses = r.pulses;
+}
+/** Sounds waiting on world time (the meteor's second fall): when (world s), the take, from where in its file. */
+const worldSounds: { at: number; take: (typeof LAB_TAKES)["meteor"] | (typeof LAB_TAKES)["meteorB"]; from: number }[] = [];
+let worldClock = 0;
+/**
+ * M: the meteor rain and its Firefly falls (whoosh, impact, rumbling tail), timed on world time so each impact lands
+ * with a meteor: one on the first meteor (joined late: its whoosh's last part before the hit), one whole on the last
+ * (when the rain has three or more); the meteors between keep the lab's hit sounds. Two voices at most (heavy: 2–3).
+ */
+function castMeteor(dry = false): void {
+  // A dry rain (measurement: its light alone) plays no sound either.
+  if (meteor.cast(dry) === 0 || dry) return;
+  const at = meteor.last?.impactAt ?? [];
+  const a = LAB_TAKES.meteor;
+  const first = at[0] ?? 0;
+  sound.playTake(a, { send: 0.4, from: Math.max(a.onset, a.peak - first) });
+  if (at.length >= 3) {
+    const b = LAB_TAKES.meteorB;
+    const last = at[at.length - 1]!;
+    worldSounds.push({ at: worldClock + Math.max(0, last - b.peak), take: b, from: Math.max(b.onset, b.peak - last) });
+  }
+}
+function updateWorldSounds(world: number): void {
+  worldClock += world;
+  for (let i = worldSounds.length - 1; i >= 0; i -= 1) {
+    const w = worldSounds[i]!;
+    if (w.at > worldClock) continue;
+    sound.playTake(w.take, { send: 0.4, from: w.from });
+    worldSounds.splice(i, 1);
+  }
 }
 const streakAt = new THREE.Vector3();
 /** Whether a live beast stands within `px` of `r` on screen (its head: where its word tag floats). */
@@ -1308,6 +1392,10 @@ function reset(): void {
   clipSkills9.clear();
   meteor.reset();
   channel.reset();
+  channelSound.loop?.stop(0.05);
+  channelSound.loop = null;
+  channelSound.active = false;
+  worldSounds.length = 0;
   streak.reset();
   auraSolo.stop();
   swordAura.hide();
@@ -1337,14 +1425,14 @@ window.addEventListener("keydown", (e) => {
   // 9 casts the selected new skill (SKILLS_EXPANSION; a design without its row yet plays as its video), Shift+9 selects the next ("(" on most layouts).
   else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? clipSkills9.selectNext() : clipSkills9.cast());
   // M the slanted meteor rain in the element on (E).
-  else if (e.key === "m" || e.key === "M") meteor.cast();
+  else if (e.key === "m" || e.key === "M") castMeteor();
   // C the channel: opens it (or feeds it a word); Shift+C feeds it a SLOPPY word, which breaks it (and the streak).
   else if (e.key === "c" || e.key === "C") {
     if (e.shiftKey) wordTyped("sloppy");
     else {
       const opening = !channel.active;
       channel.start();
-      streak.word("perfect");
+      streakWord("perfect");
       if (!opening) return;
     }
   }
@@ -1581,6 +1669,8 @@ function frame(dt: number): void {
   clipSkills9.update(world);
   meteor.update(world);
   channel.update(world);
+  updateChannelSound();
+  updateWorldSounds(world);
   // The streak counter is UI: real time.
   streak.update(dt, streakLeft(), beastNear);
   auraSolo.update(world, view.camera, swordAura, fx.element.trail.flame !== undefined);
@@ -2134,7 +2224,7 @@ void (async () => {
       return { played: clipSkills.cast(id), ids: showcase.ids() };
     },
     streak(grade, n = 1) {
-      if (grade !== undefined) for (let k = 0; k < n; k += 1) streak.word(grade);
+      if (grade !== undefined) for (let k = 0; k < n; k += 1) streakWord(grade);
       const r = streak.rect();
       return { count: streak.count, best: streak.best, tier: streak.tier, grades: { ...streak.grades }, rect: { left: r.left, top: r.top, width: r.width, height: r.height } };
     },
@@ -2145,7 +2235,7 @@ void (async () => {
       return { ...channel.report, active: channel.active };
     },
     meteor(cast = false, dry = false) {
-      if (cast) meteor.cast(dry);
+      if (cast) castMeteor(dry);
       const r = meteor.last;
       return r === null ? null : { ...r, impactAt: [...r.impactAt], markAt: [...r.markAt], points: r.points.map((p) => ({ ...p })), active: meteor.active };
     },

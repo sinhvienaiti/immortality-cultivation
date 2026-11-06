@@ -65,7 +65,7 @@ export interface ClipSkill {
   readonly angle?: number;
   /** A ring that closes from its edge onto its centre (thorns from the field's rim). */
   readonly inward?: boolean;
-  /** Its Firefly sound and take ("tt-sfx-x-<id>/take2.wav"; none: its showcase item's). */
+  /** Its Firefly sound and take ("tt-sfx-x-<id>/take2.wav", "#t=0.8" skips a quiet lead-in; none: its showcase item's). */
   readonly sfx?: string;
   /**
    * Where its shape centres when that is not where its clip stands: the field's middle, the densest group, the caster,
@@ -286,21 +286,21 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
   },
   // D6 Taiji Void-Reflecting Mirror · Thái Cực Chiếu Hư Kính
   {
-    id: "yin-yang-void-mirror", element: "light", shape: "sweep", radius: 22, count: 1, damage: "heavy", mark: false, linger: 1.6, centre: "north", arc: 140,
+    id: "yin-yang-void-mirror", element: "light", shape: "sweep", radius: 22, count: 1, damage: "heavy", mark: false, linger: 1.6, centre: "north", arc: 140, sfx: "tt-sfx-x-yin-yang-void-mirror/take3.wav#t=0.35",
     strikes: [{ frame: "peak", power: 0.3 }, { after: 0.5, power: 1 }, { after: 1, power: 0.25, kind: "tick" }, { after: 1.6, power: 0.25, kind: "tick" }],
-    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.15 s to the clip peak; the mirror sweeps from the far edge (its clip), 140°; no Firefly sound: its first element's ultimate stands in",
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.15 s to the clip peak; the mirror sweeps from the far edge (its clip), 140°; sound: Firefly take 3 from 0.35 s (its lead-in skipped; measured 06/11)",
   },
   // D7 Immortal Binding Aurora Ribbon · Hỗn Thiên Khốn Tiên Lăng
   {
-    id: "five-element-heavenly-silk", element: "wind", shape: "field", radius: 16, count: 1, damage: "heavy", status: { kind: "bind", seconds: 1.8 }, mark: false, linger: 1.7,
+    id: "five-element-heavenly-silk", element: "wind", shape: "field", radius: 16, count: 1, damage: "heavy", status: { kind: "bind", seconds: 1.8 }, mark: false, linger: 1.7, sfx: "tt-sfx-x-five-element-heavenly-silk/take2.wav#t=0.8",
     strikes: [{ frame: "peak", power: 0.4 }, { after: 0.35, power: 1 }],
-    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak; element any: its design's first, wind; no Firefly sound: its first element's ultimate stands in",
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak; element any: its design's first, wind; sound: Firefly take 2 from 0.8 s (its lead-in skipped; measured 06/11)",
   },
   // D8 Twelve-Metropolis Array Banners · Thập Nhị Đô Thiên Trận Kỳ
   {
-    id: "twelve-stem-nether-banners", element: "dark", shape: "field", radius: 20, count: 12, damage: "heavy", mark: 0.15, linger: 1.8,
+    id: "twelve-stem-nether-banners", element: "dark", shape: "field", radius: 20, count: 12, damage: "heavy", mark: 0.15, linger: 1.8, sfx: "tt-sfx-x-twelve-stem-nether-banners/take7.wav#t=0.08",
     strikes: [{ frame: "peak", power: 1 }, { after: 0.5, power: 0.3, kind: "tick" }, { after: 1, power: 0.3, kind: "tick" }, { after: 1.5, power: 0.3, kind: "tick" }],
-    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.62 s to the clip peak; no Firefly sound: its first element's ultimate stands in",
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.62 s to the clip peak; sound: Firefly take 7 from 0.08 s (measured 06/11)",
   },
   // B1 Three-Faced Six-Armed War Sovereign · Tam Đầu Lục Tí Chiến Tôn Pháp Tướng
   {

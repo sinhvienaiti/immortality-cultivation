@@ -56,6 +56,67 @@ export const SOUND_IDS = [
 export type SoundId = (typeof SOUND_IDS)[number];
 
 type Bus = SoundBus;
+
+/** The Firefly sprint's sounds (art-src/lab/firefly-sprint-2026-11-05/sound/<job>/takeN.wav). */
+export const FIREFLY_SOUND = "/art-src/lab/firefly-sprint-2026-11-05/sound/";
+
+/**
+ * A Firefly take the lab plays as it is (no event folder): its file, the gain that brings its momentary maximum (400 ms,
+ * measured) to its tier's playback target with the bus and master gains, where its sound starts (s: the quiet lead-in
+ * Firefly leaves before it is skipped, so it sounds on its event's frame), where its main hit lands (s, from the file's
+ * start: a sound timed to a landing puts it there) and an optional fade-out [from s, over s] for a take whose file
+ * ends while it still sounds.
+ */
+export interface FireflyTake {
+  readonly file: string;
+  readonly gain: number;
+  readonly onset: number;
+  readonly peak?: number;
+  readonly fade?: readonly [number, number];
+}
+
+/**
+ * The takes chosen by measurement on 06/11 (game-art-pipeline references/audio.md §5.4; numbers in
+ * typing-game-review/captures/tu-tien/lab-sounds/measure-2026-11-06.md): UI sounds on their own dry level (T1: the
+ * streak's tick −30, its Flash ping −25, its tier rise −22, its break −28 LUFS momentary max), combat on the lab's tier
+ * targets (sound-tiers.ts TIER_TARGET: the channel's start T4 −13.5, its loop, pulse and collapse T3/T2 −18, the meteor
+ * T5 −11.5). Picks: the quickest clean onset and no clipped samples first; then the densest body and longest tail for
+ * combat, the shortest clean tail for UI; a loop the steadiest level (its seam is crossfaded on load).
+ */
+export const LAB_TAKES = {
+  streakCount: { file: "tt-sfx-streak-count/take4.wav", gain: 1.19, onset: 0 },
+  streakFlash: { file: "tt-sfx-streak-flash/take3.wav", gain: 0.37, onset: 0 },
+  streakTierUp: { file: "tt-sfx-streak-tier-up/take3.wav", gain: 0.44, onset: 0 },
+  streakBreak: { file: "tt-sfx-streak-break/take4.wav", gain: 0.92, onset: 0.053, fade: [1.2, 0.45] },
+  channelStart: { file: "tt-sfx-channel-start/take2.wav", gain: 0.4, onset: 0.142 },
+  channelLoop: { file: "tt-sfx-channel-loop/take8.wav", gain: 0.27, onset: 0 },
+  channelPulse: { file: "tt-sfx-channel-pulse/take3.wav", gain: 0.16, onset: 0.214 },
+  channelPulseB: { file: "tt-sfx-channel-pulse/take6.wav", gain: 0.24, onset: 0.546 },
+  channelCollapse: { file: "tt-sfx-channel-collapse/take1.wav", gain: 0.54, onset: 0.508 },
+  meteor: { file: "tt-sfx-meteor-slant-fall/take2.wav", gain: 0.37, onset: 0.268, peak: 1.13 },
+  meteorB: { file: "tt-sfx-meteor-slant-fall/take7.wav", gain: 0.34, onset: 0.244, peak: 1.14 },
+} as const satisfies Record<string, FireflyTake>;
+
+/** Options of one take's playback: its bus ("ui": dry, straight to the master), gain × its own, pan, rate, reverb send, a delay (s). */
+export interface TakeOptions {
+  readonly bus?: Bus | "ui";
+  readonly gain?: number;
+  readonly pan?: number;
+  readonly rate?: number;
+  readonly send?: number;
+  readonly delay?: number;
+  /** Starts this far into the file (s) instead of its onset (a whoosh joined late, so its hit still lands on time). */
+  readonly from?: number;
+}
+
+/** A loop playing (loopTake): its level (0–1, eased over `over` s) and its stop (faded over `over` s). */
+export interface TakeLoop {
+  level(k: number, over?: number): void;
+  stop(over: number): void;
+}
+
+/** A loop's seam is crossfaded over this much of its end (s) when it loads. */
+const LOOP_XF_S = 0.25;
 /** Impacts merge into one sound per bucket per material (s); deaths too. */
 const IMPACT_BUCKET_S = 0.04;
 const DEATH_BUCKET_S = 0.05;
@@ -91,6 +152,23 @@ export interface SoundTake {
   readonly stopVoices?: boolean;
 }
 
+/** `raw` with its last `xf` s crossfaded into its first (equal power), `xf` shorter: it loops without a seam. */
+function seamless(context: BaseAudioContext, raw: AudioBuffer, xf: number): AudioBuffer {
+  const n = raw.length;
+  const x = Math.min(Math.floor(xf * raw.sampleRate), Math.floor(n / 3));
+  const out = context.createBuffer(raw.numberOfChannels, n - x, raw.sampleRate);
+  for (let ch = 0; ch < raw.numberOfChannels; ch += 1) {
+    const a = raw.getChannelData(ch);
+    const b = out.getChannelData(ch);
+    b.set(a.subarray(0, n - x));
+    for (let i = 0; i < x; i += 1) {
+      const w = i / x;
+      b[i] = a[i]! * Math.sqrt(w) + a[n - x + i]! * Math.sqrt(1 - w);
+    }
+  }
+  return out;
+}
+
 export class LabSound {
   enabled = true;
   /** The element's sound suffix (canon D59; "" none): "<event>-<element>" plays first when it has files. */
@@ -122,6 +200,9 @@ export class LabSound {
   private clock = 0;
   private recording: SoundTake[] | null = null;
   private readonly lastRecorded = new Map<string, number>();
+  /** Firefly takes to load with the context (playTake, loopTake) and their loop versions (seam crossfaded). */
+  private readonly takeUrls = new Set<string>();
+  private readonly loops = new Map<string, AudioBuffer>();
 
   /** `variants`: element suffixes to look for beside each event when there is no manifest (the files are probed). */
   constructor(private readonly variants: readonly string[] = []) {}
@@ -195,6 +276,131 @@ export class LabSound {
     // An unloaded convolver is silent; the dry buses can play while the IR loads.
     void this.buffer(BASE + "ir/hall-a.wav").then((buffer) => { if (buffer !== null) convolver.buffer = buffer; });
     this.discovered ??= this.discover();
+    for (const url of this.takeUrls) void this.buffer(url);
+  }
+
+  /** Firefly takes the lab will play: they load with the audio context (now, if it runs). */
+  registerTakes(takes: readonly FireflyTake[]): void {
+    for (const t of takes) {
+      const url = FIREFLY_SOUND + t.file;
+      this.takeUrls.add(url);
+      if (this.context !== null) void this.buffer(url);
+    }
+  }
+
+  /**
+   * Plays Firefly take `t` from its onset (or `o.from`) at its measured gain × `o.gain`, on `o.bus` (combat by default;
+   * "ui" dry to the master), `o.delay` s from now. While recording (captures) it is logged on the lab clock, shifted back
+   * by the skipped lead-in. False: silent (no context, not loaded yet, or the lab's sound is off).
+   */
+  playTake(t: FireflyTake, o: TakeOptions = {}): boolean {
+    const url = FIREFLY_SOUND + t.file;
+    this.takeUrls.add(url);
+    const id = "take:" + t.file;
+    this.asked[id] = (this.asked[id] ?? 0) + 1;
+    const bus = o.bus ?? "combat";
+    const busGain = bus === "ui" ? 1 : BUS_GAIN[bus];
+    const gain = t.gain * (o.gain ?? 1);
+    const from = o.from ?? t.onset;
+    const send = bus === "ui" ? 0 : o.send ?? 0;
+    const rate = o.rate ?? 1;
+    if (!this.enabled) return false;
+    if (this.recording !== null) {
+      this.recording.push({ at: Math.max(0, this.clock + (o.delay ?? 0) - from / rate), url, gain: gain * busGain, send: send / busGain, pan: clamp(o.pan ?? 0, -1, 1), rate });
+      this.played += 1;
+      return true;
+    }
+    const context = this.context;
+    if (context === null) return false;
+    const buffer = this.buffers.get(url);
+    if (buffer === undefined) {
+      void this.buffer(url);
+      return false;
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = rate;
+    const volume = context.createGain();
+    const when = context.currentTime + Math.max(0, o.delay ?? 0);
+    volume.gain.value = gain;
+    if (t.fade !== undefined && t.fade[0] > from) {
+      // A file that ends while it still sounds fades out instead of cutting off.
+      const at = when + (t.fade[0] - from) / rate;
+      volume.gain.setValueAtTime(gain, at);
+      volume.gain.linearRampToValueAtTime(0, at + t.fade[1] / rate);
+    }
+    const panner = context.createStereoPanner();
+    panner.pan.value = clamp(o.pan ?? 0, -1, 1);
+    source.connect(volume).connect(panner).connect(bus === "ui" ? this.master! : this.buses.get(bus) ?? this.master!);
+    const sendNode = context.createGain();
+    sendNode.gain.value = send;
+    if (send > 0 && this.verb !== null) panner.connect(sendNode).connect(this.verb);
+    source.start(when, Math.min(buffer.duration - 0.01, Math.max(0, from)));
+    source.onended = () => {
+      source.disconnect();
+      volume.disconnect();
+      panner.disconnect();
+      sendNode.disconnect();
+    };
+    this.played += 1;
+    return true;
+  }
+
+  /**
+   * Starts take `t` as a seamless loop (its last LOOP_XF_S crossfaded into its start, equal power, once on load) at
+   * level `k`, faded in over `fadeIn` s; null while it is not loaded (or recording: captures keep no loops).
+   */
+  loopTake(t: FireflyTake, k: number, o: { bus?: Bus; send?: number; fadeIn?: number } = {}): TakeLoop | null {
+    const url = FIREFLY_SOUND + t.file;
+    this.takeUrls.add(url);
+    this.asked["loop:" + t.file] = (this.asked["loop:" + t.file] ?? 0) + 1;
+    const context = this.context;
+    if (!this.enabled || this.recording !== null || context === null) return null;
+    const raw = this.buffers.get(url);
+    if (raw === undefined) {
+      void this.buffer(url);
+      return null;
+    }
+    let buffer = this.loops.get(url);
+    if (buffer === undefined) {
+      buffer = seamless(context, raw, LOOP_XF_S);
+      this.loops.set(url, buffer);
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const volume = context.createGain();
+    const now = context.currentTime;
+    volume.gain.setValueAtTime(0, now);
+    volume.gain.setTargetAtTime(t.gain * k, now, Math.max(0.005, (o.fadeIn ?? 0.08) / 3));
+    const bus = o.bus ?? "combat";
+    source.connect(volume).connect(this.buses.get(bus) ?? this.master!);
+    const sendNode = context.createGain();
+    sendNode.gain.value = o.send ?? 0;
+    if ((o.send ?? 0) > 0 && this.verb !== null) volume.connect(sendNode).connect(this.verb);
+    source.start();
+    this.played += 1;
+    let stopped = false;
+    return {
+      level: (level, over = 0.12) => {
+        if (stopped) return;
+        volume.gain.setTargetAtTime(t.gain * level, context.currentTime, Math.max(0.005, over / 3));
+      },
+      stop: (over) => {
+        if (stopped) return;
+        stopped = true;
+        const at = context.currentTime;
+        volume.gain.cancelScheduledValues(at);
+        volume.gain.setValueAtTime(volume.gain.value, at);
+        volume.gain.linearRampToValueAtTime(0, at + Math.max(0.01, over));
+        source.stop(at + Math.max(0.01, over) + 0.05);
+        source.onended = () => {
+          source.disconnect();
+          volume.disconnect();
+          sendNode.disconnect();
+        };
+      },
+    };
   }
 
   /** Finds the files: the manifest, else 01–03 .ogg/.wav per folder. */
