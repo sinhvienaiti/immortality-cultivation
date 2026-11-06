@@ -231,6 +231,9 @@ interface VideoSlot {
   duration: number;
   /** Real time it started (ms), what draws instead if it never shows a frame (its atlas card). */
   startedAt: number;
+  /** The video's time last seen changing and when (ms): its clock runs on between changes. */
+  seenCt: number;
+  seenAt: number;
   fallback: (() => void) | null;
 }
 
@@ -288,7 +291,7 @@ class VideoBank {
     const pool = new FlipbookPool("video", "fire", 1, 15, this.blank);
     pool.vignette = 0.35;
     this.player.group.add(pool.mesh);
-    const s: VideoSlot = { el, texture, pool, id: "", gen: 0, left: 0, clock: 0, duration: 0, startedAt: 0, fallback: null };
+    const s: VideoSlot = { el, texture, pool, id: "", gen: 0, left: 0, clock: 0, duration: 0, startedAt: 0, seenCt: -1, seenAt: 0, fallback: null };
     this.slots.push(s);
     return s;
   }
@@ -314,7 +317,17 @@ class VideoBank {
         if (failed) return VIDEO_FAILED;
         if (s.gen !== gen || s.left <= 0) return Infinity;
         if (this.driven) return s.clock;
-        return s.el.readyState >= 2 && (!s.el.paused || s.el.ended) ? s.el.currentTime : -1;
+        if (s.el.readyState < 2 || (s.el.paused && !s.el.ended)) return -1;
+        // currentTime can sit still for a few frames while the video plays (a busy decoder): carried on from its last
+        // change at the playback rate, so a strike never waits on a stale clock.
+        const now = performance.now();
+        const ct = s.el.currentTime;
+        if (ct !== s.seenCt) {
+          s.seenCt = ct;
+          s.seenAt = now;
+        }
+        if (s.el.ended) return ct;
+        return Math.min(s.duration, ct + Math.min(0.25, (now - s.seenAt) / 1000) * s.el.playbackRate);
       },
     };
   }
