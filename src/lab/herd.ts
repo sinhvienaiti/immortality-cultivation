@@ -40,6 +40,7 @@
  * longer launches every small beast by itself. Allocates nothing per frame.
  */
 import * as THREE from "three";
+import { TAG_MASK_GLSL, TAG_UNIFORMS } from "../view/skills/tag-mask";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { FoeStatusKind } from "../view/skills/element-kit";
 import type { TargetField } from "../view/skills/targets";
@@ -366,8 +367,11 @@ export class LabHerd implements TargetField {
       shader.uniforms.uLabBurnMid = HERD_LOOK.burnMid;
       shader.uniforms.uLabBurnDeep = HERD_LOOK.burnDeep;
       shader.uniforms.uLabChar = HERD_LOOK.burnChar;
+      shader.uniforms.uTagMask = TAG_UNIFORMS.uTagMask;
+      shader.uniforms.uTagK = TAG_UNIFORMS.uTagK;
       shader.vertexShader = DISSOLVE_VERT_PARS + shader.vertexShader.replace("#include <begin_vertex>", DISSOLVE_VERT);
       shader.fragmentShader =
+        TAG_MASK_GLSL +
         DISSOLVE_FRAG_PARS +
         shader.fragmentShader
           .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\n" + DISSOLVE_DISCARD)
@@ -377,7 +381,9 @@ export class LabHerd implements TargetField {
               // The hit rim: fresnel in the blow's colour (HDR on the silhouette, a faint fill inside so it reads at 30 px).
               "\n\tfloat labRim = 1.0 - clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );\n\ttotalEmissiveRadiance += vRim * ( 0.12 + 1.6 * labRim * labRim );" +
               // A hero victim's one-frame silhouette: the whole body white-cyan light (round 3a, P6).
-              "\n\tdiffuseColor.rgb *= 1.0 - vWhite;\n\ttotalEmissiveRadiance = mix( totalEmissiveRadiance, uLabWhite, vWhite );",
+              "\n\tdiffuseColor.rgb *= 1.0 - vWhite;\n\ttotalEmissiveRadiance = mix( totalEmissiveRadiance, uLabWhite, vWhite );" +
+              // Its glow (hit rim, status, silhouette, burn) keeps only the tag mask's share behind a word tag (tag-mask.ts).
+              "\n\ttotalEmissiveRadiance *= vxTagKeep();",
           );
     };
     material.customProgramCacheKey = () => "lab-herd-dissolve";

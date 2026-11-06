@@ -10,6 +10,10 @@ light behind the letters. Against it:
 A skill makes tags hard to read when, on its peak frame, at least 10 % of the tags need a plate of 0.6 or more (bare or
 lightly backed letters fail 7:1 there).
 
+A run of lab-tag-readability.mjs (lab-readability, 06/11) gives the lab's real stand-in tag boxes instead
+(?tags=1, word-tags.ts): each is scored against its own 90th-percentile pixel with plates of 0.6 (the lab's tag)
+and 0.9 (Dragonhold's).
+
   ~/AudioLab/.venv/bin/python -I scripts/visual/tag-contrast.py <contrast.json> [<out.json>]
 """
 import json
@@ -59,7 +63,8 @@ def score_tag(img, x, y):
     x1, y1 = min(w, x + BOX_W // 2), min(h, y)
     if x1 - x0 < BOX_W // 2 or y1 - y0 < BOX_H // 2:
         return None
-    px = list(img.crop((x0, y0, x1, y1)).getdata())
+    crop = img.crop((x0, y0, x1, y1))
+    px = list(crop.get_flattened_data() if hasattr(crop, "get_flattened_data") else crop.getdata())
     px.sort(key=lum)
     bg = px[min(len(px) - 1, int(0.9 * len(px)))]
     lb = lum(bg)
@@ -67,13 +72,56 @@ def score_tag(img, x, y):
     return {"l90": lb, "bare": contrast(L_TEXT, lb), "plate": plate_need(bg), "dh": contrast(L_TEXT, lum(dh))}
 
 
+def score_box(img, b, plates):
+    """A real tag box (lab-tag-readability.mjs): its 90th-percentile pixel behind it, the contrast with each plate."""
+    w, h = img.size
+    x0, y0, x1, y1 = max(0, b["x"]), max(0, b["y"]), min(w, b["x"] + b["w"]), min(h, b["y"] + b["h"])
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return None
+    crop = img.crop((x0, y0, x1, y1))
+    px = sorted(crop.get_flattened_data() if hasattr(crop, "get_flattened_data") else crop.getdata(), key=lum)
+    bg = px[min(len(px) - 1, int(0.9 * len(px)))]
+    out = {"l90": lum(bg), "need": plate_need(bg)}
+    for a in plates:
+        comp = tuple(a * p + (1 - a) * c for p, c in zip(PLATE, bg))
+        out[a] = contrast(L_TEXT, lum(comp))
+    return out
+
+
 def pct(values, p):
     s = sorted(values)
     return s[min(len(s) - 1, int(p * (len(s) - 1) + 0.5))] if s else None
 
 
+def main_boxes(data, out_path, plates=(0.6, 0.9)):
+    rows = []
+    for shot in data["shots"]:
+        img = Image.open(shot["file"]).convert("RGB")
+        tags = [t for t in (score_box(img, b, plates) for b in shot["boxes"]) if t is not None]
+        row = {"key": shot["key"], "id": shot["id"], "tags": len(tags)}
+        if tags:
+            for a in plates:
+                cs = [t[a] for t in tags]
+                row[f"min{a}"] = round(min(cs), 2)
+                row[f"fail{a}"] = sum(1 for c in cs if c < NEED)
+            row["l90Max"] = round(max(t["l90"] for t in tags), 3)
+            row["needMax"] = round(max(t["need"] for t in tags), 2)
+        rows.append(row)
+    out = {"rule": f"text #FFF4D6 on plate #231C17 at {plates}, against the 90th-percentile pixel behind each tag; {NEED}:1", "keep": data["shots"][0].get("keep"), "rows": rows}
+    if out_path:
+        open(out_path, "w").write(json.dumps(out, indent=1))
+    for r in rows:
+        if r["tags"] == 0:
+            print(f'k{r["key"]} {r["id"]:<36} no tags')
+            continue
+        print(f'k{r["key"]} {r["id"]:<36} n={r["tags"]:<3} min0.6={r["min0.6"]:<6} fail0.6={r["fail0.6"]:<3} min0.9={r["min0.9"]:<6} fail0.9={r["fail0.9"]:<3} L90max={r["l90Max"]:<6} needMax={r["needMax"]}')
+
+
 def main():
     data = json.load(open(sys.argv[1]))
+    if data["shots"] and "boxes" in data["shots"][0]:
+        main_boxes(data, sys.argv[2] if len(sys.argv) > 2 else None)
+        return
     rows = []
     for shot in data["shots"]:
         img = Image.open(shot["file"]).convert("RGB")

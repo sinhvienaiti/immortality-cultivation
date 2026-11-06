@@ -39,6 +39,7 @@
  * flame along a flight), analytic soft particles against the ground, and an exact depth lift.
  */
 import * as THREE from "three";
+import { TAG_UNIFORMS, withTagMask } from "./tag-mask";
 
 export type FlipbookMode = "rgba" | "fire" | "smoke" | "heat";
 export type FlipbookLoopMode = "none" | "stepped" | "holderode";
@@ -843,6 +844,9 @@ uniform vec3 uRamp2;
   "void main() {\n", FB_COMPOSE_GLSL + "void main() {\n"),
   PICK_V1, FB_PICK_GLSL),
   "  if (uMode < 0.5) {\n", "  if (uMode < 0.5) {\n" + FB_MASKED_GLSL);
+/** As drawn: both keep only vxTagKeep() of their light behind a word tag (tag-mask.ts). */
+const FRAGMENT_TAGGED = withTagMask(FRAGMENT);
+const FRAGMENT_V2_TAGGED = withTagMask(FRAGMENT_V2);
 
 export interface FlipOptions {
   /** Seconds it lives (default: one pass of the clip at `rate`; a loop: one second). ONE_FRAME: drawn this frame only. */
@@ -1183,6 +1187,7 @@ export class FlipbookPool {
     geometry.instanceCount = 0;
     const material = new THREE.ShaderMaterial({
       uniforms: {
+        ...TAG_UNIFORMS,
         uMap: { value: blank },
         uGrid: { value: new THREE.Vector2(1, 1) },
         uFrames: { value: 1 },
@@ -1218,7 +1223,7 @@ export class FlipbookPool {
         uRamp2: { value: new THREE.Vector3(...FLIPBOOK_MASKED_LOOK.ramp[2]) },
       },
       vertexShader: VERTEX,
-      fragmentShader: FRAGMENT,
+      fragmentShader: FRAGMENT_TAGGED,
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -1259,7 +1264,7 @@ export class FlipbookPool {
     if (!isFlipbookV2(meta)) {
       if (this.v2Key !== null) {
         material.vertexShader = VERTEX;
-        material.fragmentShader = FRAGMENT;
+        material.fragmentShader = FRAGMENT_TAGGED;
         material.defines = {};
         geometry.deleteAttribute("iCtl");
         geometry.deleteAttribute("iVar");
@@ -1282,7 +1287,7 @@ export class FlipbookPool {
     const key = loop + "|" + this.masked + "|" + reveal;
     if (key !== this.v2Key) {
       material.vertexShader = VERTEX_V2;
-      material.fragmentShader = FRAGMENT_V2;
+      material.fragmentShader = FRAGMENT_V2_TAGGED;
       material.defines = { FB_LOOP: loop === "none" ? 0 : loop === "stepped" ? 1 : 2 };
       if (this.masked) material.defines.FB_CTRL_A = 1;
       if (reveal) material.defines.FB_CTRL_B = 1;

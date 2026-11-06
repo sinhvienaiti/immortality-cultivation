@@ -43,6 +43,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { FullScreenQuad, Pass } from "three/examples/jsm/postprocessing/Pass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import type { Overlay } from "./renderer";
+import { TAG_UNIFORMS } from "./skills/tag-mask";
 
 export type ScreenTier = "basic" | "skill" | "ultimate";
 /** A blow's place in its skill: the main hit, a secondary hit of an area (no global stop), or the finisher. */
@@ -259,6 +260,8 @@ class ScreenPass extends ShaderPass {
  */
 const IMPACT_FRAGMENT = /* glsl */ `
 uniform sampler2D tDiffuse;
+uniform sampler2D uTagMask;
+uniform vec3 uTagK;
 uniform sampler2D tMask;
 uniform sampler2D tShapeA;
 uniform sampler2D tShapeB;
@@ -454,6 +457,9 @@ void main() {
     g = mix(g, uInk, max(core, sb));
 #endif
   }
+  // A word tag keeps its backdrop: the frames that turn the field bright (the local burst, the inverted high key) stay
+  // off it; the dark frame only helps the letters (tag-mask.ts).
+  if (uTagK.x < 0.999 && (uLocal.w > 0.0 || uMode > 1.5)) a *= mix(1.0, uTagK.x, texture2D(uTagMask, vUv).r);
   gl_FragColor = vec4(mix(src.rgb, g, a), 1.0);
 }`;
 
@@ -473,6 +479,8 @@ class ImpactPass extends Pass {
     uMix: { value: 1 },
     uLocal: { value: new THREE.Vector4(0.5, 0.5, 0.1, 0) },
     uRot: { value: 0 },
+    uTagMask: TAG_UNIFORMS.uTagMask,
+    uTagK: TAG_UNIFORMS.uTagK,
     uTexel: { value: new THREE.Vector2(1 / 1920, 1 / 1080) },
     uMaskTexel: { value: new THREE.Vector2(1 / 960, 1 / 540) },
     uAspect: { value: 16 / 9 },

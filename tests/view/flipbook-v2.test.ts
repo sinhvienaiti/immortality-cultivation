@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { unwrapTagMask, withTagMask } from "../../src/view/skills/tag-mask";
 import {
   FB_COMPOSE_GLSL, FB_MASKED_GLSL, FB_PICK_GLSL, FLIPBOOK_ERODE_WIDTH, FLIPBOOK_MASKED_LOOK, FLIPBOOK_TIMING,
   FlipbookLibrary, FlipbookPlayer, FlipbookPool, blendPremultiplied, composeFlipbookMasked, composeLayers,
@@ -63,7 +64,9 @@ function attribute(p: FlipbookPool, name: string): ArrayLike<number> {
 function oldShader(p: FlipbookPool): void {
   const m = p.mesh.material;
   expect(createHash("sha256").update(m.vertexShader).digest("hex")).toBe(VERTEX_SHA);
-  expect(createHash("sha256").update(m.fragmentShader).digest("hex")).toBe(FRAGMENT_SHA);
+  // The legacy body byte for byte inside the word-tag wrapper (tag-mask.ts, lab-readability 06/11).
+  expect(createHash("sha256").update(unwrapTagMask(m.fragmentShader)).digest("hex")).toBe(FRAGMENT_SHA);
+  expect(m.fragmentShader).toBe(withTagMask(unwrapTagMask(m.fragmentShader)));
   expect(Object.keys(m.defines)).toEqual([]);
   expect(p.mesh.geometry.hasAttribute("iCtl")).toBe(false);
   expect(p.mesh.geometry.hasAttribute("iVar")).toBe(false);
@@ -85,7 +88,7 @@ describe("1. legacy shader and manifest compatibility", () => {
     const p = pool(undefined, mode);
     oldShader(p);
     expect(p.mesh.material.vertexShader.length).toBe(1823);
-    expect(p.mesh.material.fragmentShader.length).toBe(7272);
+    expect(unwrapTagMask(p.mesh.material.fragmentShader).length).toBe(7272);
     for (const loop of [true, false]) {
       const m = parse({ loop, md5: "0123456789abcdef0123456789abcdef", blend: "normal", alphaKind: "straight", modesAllowed: ["rgba"] });
       expect(Object.keys(m)).toEqual(OLD_KEYS);

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TAG_UNIFORMS } from "../../src/view/skills/tag-mask";
 import { BRUSH, FIRE, FIRE_LAB, firePrewarmStatus, prewarmFire, resetFireAudit } from "../../src/view/skills/element-fire";
 import { ElementStage } from "../../src/view/skills/element-stage";
 import type { FlipbookMeta } from "../../src/view/skills/flipbook";
@@ -127,7 +128,9 @@ describe("Fire texture upload and scene prewarm (ticket 280)", () => {
       expect(firePrewarmStatus(stage, renderer)).toEqual({ prewarmed: false, textureIds: [] });
       await prewarmFire(stage, renderer, camera, scene);
       for (const t of [...f.expected, ground]) expect(initTexture.mock.calls.filter(([value]) => value === t)).toHaveLength(1);
-      expect(initTexture).toHaveBeenCalledTimes(f.expected.length + 2); // Ground map and the shared blank sampler.
+      // Ground map, the shared blank sampler and the word-tag mask every flipbook and sprite reads (tag-mask.ts).
+      expect(initTexture.mock.calls.filter(([value]) => value === TAG_UNIFORMS.uTagMask.value)).toHaveLength(1);
+      expect(initTexture).toHaveBeenCalledTimes(f.expected.length + 3);
       expect(initTexture.mock.calls.some(([t]) => t === unused)).toBe(false);
       expect(new Set(initTexture.mock.calls.map(([t]) => t)).size).toBe(initTexture.mock.calls.length);
       expect(compile).toHaveBeenCalledExactlyOnceWith(scene, camera);

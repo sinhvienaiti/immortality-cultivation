@@ -46,6 +46,9 @@
  * L cycles layouts, N restores the tide, V brings the boss in; __lab.twinPearl reads each cast's numbers (key-to-first-hit too).
  * ?readable=1 dims the key 8 and 9 skills whose light buries the word tags' spots (showcase.ts READABLE_LIGHT), to
  * compare; ?atlases=all keeps every key 8 and 9 atlas on the GPU from the start (before 06/11: 1.9 GB); __lab.memory() and __lab.tagSpots() serve the perf and readability checks (lab-perf-memory.mjs).
+ * ?tags=1 (or T) floats stand-in word tags over the herd, the skills keeping only TAG_KEEP of their light behind them
+ * (?tagMask=0 off, ?tagKeep=<0–1> the light kept behind them, ?tagPlate=<0–1> the plate's opacity; word-tags.ts,
+ * view/skills/tag-mask.ts).
  */
 import * as THREE from "three";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
@@ -88,6 +91,8 @@ import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from ".
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { ChannelSkill, COLLAPSE_S, WORD_S, type ChannelReport } from "./channel-skill";
 import { StreakCounter } from "./streak-counter";
+import { LabWordTags, PLATE } from "./word-tags";
+import { TAG_KEEP, TagMask } from "../view/skills/tag-mask";
 import type { Grade } from "../content/types";
 import { ClipSkillRunner, describeClipSkill, KEY8_NAV, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipCastReport, type ClipSkill, type ClipSkillHost } from "./clip-skills";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
@@ -987,6 +992,47 @@ const channel = new ChannelSkill({
 });
 // The word-streak counter (canon D60, streak-counter.ts) in the top-left zone (right of the lab's panel while it shows).
 const streak = new StreakCounter(document.body, "/art-src/lab/ui/streak-counter/");
+// Stand-in word tags over the herd (word-tags.ts; ?tags=1 or T): the skills keep only TAG_KEEP of their light behind
+// them (the tag mask, view/skills/tag-mask.ts; ?tagMask=0 off, to compare); ?tagPlate= the plate's opacity.
+let tagsOn = params.get("tags") === "1";
+const wordTags = new LabWordTags(document.getElementById("ic-lab") ?? document.body, Math.min(1, Math.max(0, Number(params.get("tagPlate") ?? PLATE) || 0)), tagsOn);
+const tagMask = new TagMask();
+const tagMaskOn = params.get("tagMask") !== "0";
+const tagKeepBase = Math.min(1, Math.max(0, Number(params.get("tagKeep") ?? TAG_KEEP)));
+/** Key M's light kept behind a word tag while it falls (its Wind and Light landings drowned a tag at 0.3; lab-readability). */
+const METEOR_TAG_KEEP = 0.12;
+const tagBuf = new THREE.Vector2();
+const tagV = new THREE.Vector3();
+const tagHost = {
+  count: 0,
+  spot(i: number, out: { x: number; y: number }): boolean {
+    if (!herd.alive(i)) return false;
+    tagV.set(herd.x(i), 2 * herd.midY(i) + herd.airY(i) + 0.3, herd.z(i)).project(view.camera);
+    if (tagV.z > 1 || Math.abs(tagV.x) > 1 || Math.abs(tagV.y) > 1) return false;
+    out.x = (tagV.x * 0.5 + 0.5) * innerWidth;
+    out.y = (-tagV.y * 0.5 + 0.5) * innerHeight;
+    return true;
+  },
+  tier: (i: number) => herd.tier(i),
+};
+/** The tags over this frame's beasts and their mask (after the camera moved, before the draw). */
+function placeTags(): void {
+  if (!tagsOn) {
+    tagMask.off();
+    numbers.setWordTags(NO_TAGS);
+    return;
+  }
+  // The mask's share: the lab's, or less while a skill whose peak still drowns a tag plays (ClipSkill.tagKeep, key M).
+  tagMask.keep = tagMaskOn ? Math.min(tagKeepBase, clipSkills.tagKeep(), clipSkills9.tagKeep(), meteor.active ? METEOR_TAG_KEEP : 1) : 1;
+  view.camera.updateMatrixWorld();
+  tagHost.count = herd.size;
+  const boxes = wordTags.update(tagHost, innerWidth, innerHeight);
+  view.stage.renderer.getDrawingBufferSize(tagBuf);
+  tagMask.paint(boxes, innerWidth, innerHeight, tagBuf.x, tagBuf.y);
+  // The damage numbers keep off the tags (their own rule, hitfx.ts), as they will off the game's.
+  numbers.setWordTags(boxes);
+}
+const NO_TAGS: readonly { x: number; y: number; w: number; h: number }[] = [];
 /** A word typed (its grade): it feeds the channel and counts on the streak. */
 function wordTyped(grade: Grade): void {
   channel.feed(grade);
@@ -1456,6 +1502,10 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "z" || e.key === "Z") zoom.toggle();
   else if (e.key === "o" || e.key === "O") freeOrbit.toggle();
   else if (e.key === "a" || e.key === "A") setAura(swordAura.direction === "off" ? "a" : "off");
+  else if (e.key === "t" || e.key === "T") {
+    tagsOn = !tagsOn;
+    wordTags.show(tagsOn);
+  }
 });
 window.addEventListener(
   "wheel",
@@ -1494,6 +1544,7 @@ if (params.get("ui") !== "0") {
     ["Z", "Zoom: close view / whole field (wheel, = and - too)"],
     ["O", "Orbit: drag to turn the view all round (O again: play camera)"],
     ["A", "Sword aura on / off"],
+    ["T", "Word tags over the herd on / off (readability check; skills dim only behind them)"],
   ];
   if (greybox !== null) {
     names[2] = ["2", "Twin Dragons, One Burning Pearl · grey box (sim volumes)"];
@@ -1716,6 +1767,7 @@ function frame(dt: number): void {
   screen.applyCamera(view.camera);
   // The grey box steps its sim world on real time (through a hit-stop) and places its volumes for this frame.
   greybox?.update(dt);
+  placeTags();
   view.render(dt);
   greybox?.afterRender();
   // After the draw: world matrices are fresh and the probe reads what was shown.
@@ -1939,6 +1991,8 @@ declare global {
       memory(): { gl: { textures: number; geometries: number }; uploaded: number; uploadedMB: number; videoTextures: number; videos: ReturnType<Showcase["videoSlots"]>; heapMB: number; byFolder: Record<string, { n: number; mb: number }>; atlasesLeased: number };
       /** Perf checks: where a word tag would float over each live beast (CSS px, the point 0.3 m above its head). */
       tagSpots(): { x: number; y: number }[];
+      /** The stand-in word tags (word-tags.ts): on (computed, masked) and shown; `show` hides or shows only their DOM. */
+      tags(on?: boolean, show?: boolean): { on: boolean; shown: boolean; keep: number; boxes: { x: number; y: number; w: number; h: number; word: string }[] };
       /** Key 7's (Myriad Swords) state: its clock (s, −1 idle), swords drawn, strikes so far. The short name stays for the capture scenarios. */
       van():{ clock: number; shown: number; strikes: number; dives: number };
       /** The cut-in's time (s), −1 when none runs. */
@@ -2572,6 +2626,15 @@ void (async () => {
       // Keys 8 and 9 share one video bank (showcase.ts bankOf).
       const videos = showcase.videoSlots();
       return { gl: { textures: r.info.memory.textures, geometries: r.info.memory.geometries }, uploaded, uploadedMB: Math.round(bytes / 1e5) / 10, videoTextures, videos, heapMB: Math.round(heap / 1e5) / 10, byFolder, atlasesLeased: showcase.atlasesLeased };
+    },
+    tags(on, show) {
+      if (on !== undefined) {
+        tagsOn = on;
+        wordTags.show(on);
+        placeTags();
+      }
+      if (show !== undefined) wordTags.show(show);
+      return { on: tagsOn, shown: wordTags.shown, keep: tagMask.keep, boxes: wordTags.boxes.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, word: LabWordTags.word(b.i) })) };
     },
     tagSpots() {
       const out: { x: number; y: number }[] = [];
