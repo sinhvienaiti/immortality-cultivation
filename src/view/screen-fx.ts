@@ -878,6 +878,18 @@ export class ScreenFx {
     if (rollDeg > this.rollPeak || this.trauma - add <= 0.01) this.rollPeak = rollDeg;
   }
 
+  /**
+   * A jolt of `px` (1080p) dying in `seconds` that never stacks: it raises the shake to its own level and no further (a
+   * shower of blows reads as one jolt each, not one long shake).
+   */
+  jolt(px: number, seconds: number, rollDeg = 0): void {
+    const lv = Math.sqrt(Math.max(0, Math.min(MAX_PX, px)) / MAX_PX);
+    if (lv <= this.trauma) return;
+    if (rollDeg > this.rollPeak || this.trauma <= 0.01) this.rollPeak = rollDeg;
+    this.trauma = lv;
+    this.traumaRate = lv / Math.max(seconds, 1e-3);
+  }
+
   /** Holds the shake at least at `px` (1080p) for `seconds` (a rumble under many small blows; never stacks). */
   rumble(px: number, seconds: number): void {
     const lv = Math.sqrt(Math.max(0, Math.min(MAX_PX, px)) / MAX_PX);

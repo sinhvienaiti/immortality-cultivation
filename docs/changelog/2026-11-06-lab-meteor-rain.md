@@ -56,3 +56,8 @@ Việc: `docs/work/tasks/slanted-meteor.md` (repo cha). Anh duyệt 05/11 22:20;
   - **Lấp lánh ở đuôi:** clip `sparkle` của hệ, không có thì lõi nhỏ của chính đầu. Đuôi của cả 14 hệ là `ribbon` của hệ (Kim: vệt sáng kiếm `metal-sword-light-streak-w2`, vai `ribbon`); Kim, Huyết, Không gian, Tinh tú chưa có `sparkle` nên rắc lõi nhỏ.
   - **Cú chạm của hệ không có `impact` hay `burst`:** lõi đầu bùng lên ở đích, sáng hết ngay khung đầu, nở to và tan dần.
 - **Rà các đòn từ trời khác:** bảng phím 8 và 9 không có mục nào dùng `slash` (mỗi mục phát clip riêng). Chỗ duy nhất còn dùng là ấn đất dự phòng của Ám, nay đổi sang `groundImpact` nằm phẳng (vòng nứt đỏ thẫm), không có thì `burst`.
+
+## Vòng 4: mưa thiên thạch (anh 06/11 12:50, 12:52)
+- Phím M thành mưa thiên thạch khoảng 6,5 s: 18–24 quả to nhỏ khác nhau, rơi khắp sân. Mỗi quả có vụ nổ, vòng sóng và hất văng; đất cháy tích dần.
+- Chi tiết và số đo ở `2026-11-06-five-phase-samples.md` (mục Vòng 2).
+- Hệ không có mẫu 5 pha: cú chạm vẫn là `impact` của bộ chất, phóng to theo cỡ quả; dư âm của bộ chất cũng to theo cỡ.

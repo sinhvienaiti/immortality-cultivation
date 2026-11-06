@@ -12,12 +12,33 @@ import { FlipbookPool, ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type 
 
 /** The card's height (m): the comet's head about 0.9 m across, its own tail ~7 m behind it at the play camera. */
 export const COMET_M = 6;
+/**
+ * The head's second draw (`draw`'s boost): a disc round the head (its pivot, the white-hot front of the ball) out to
+ * HEAD_R of the card's height, so the ball reads as a solid, bright mass (owner 06/11 12:52: "đầu thiên thạch phải là
+ * khối rõ, đặc, sáng"); it darkens the ground behind it more (occlusion) than the light tail does.
+ */
+const HEAD_R = 0.22;
+const HEAD_OCCLUDE = 0.85;
 /** A paused video waits this long after its last card (world s) before it lets its file go. */
 const IDLE_S = 1.5;
 
 /** The clip's travel heading in its cell (rad, y up): the reverse of its tail direction (frame pixels, y down). */
 export function cometHeading(tail: readonly [number, number]): number {
   return Math.atan2(tail[1], -tail[0]);
+}
+
+/** A card faded to a disc round its pivot (the comet's head): the ball alone, no tail, no cell edge. */
+function headDisc(pool: FlipbookPool): void {
+  const material = pool.mesh.material;
+  material.customProgramCacheKey = () => "comet-head-disc";
+  material.onBeforeCompile = (shader) => {
+    const line = "  border *= 1.0 - uVignette * smoothstep(0.6, 0.98, length(vUv - 0.5) * 2.0);";
+    if (!shader.fragmentShader.includes(line)) throw new Error("[comet] head-disc anchor missing");
+    shader.fragmentShader = shader.fragmentShader
+      .replace(line, `  border *= 1.0 - smoothstep(${(HEAD_R * 0.45).toFixed(3)}, ${HEAD_R.toFixed(3)}, length(vec2((vUv.x - uPivot.x) * uAspect, vUv.y - uPivot.y)));`)
+      // Declared at the top: the tag mask (tag-mask.ts) renames the body's main and appends its own.
+      .replace(/^/, "uniform vec2 uPivot;\nuniform float uAspect;\n");
+  };
 }
 
 interface Layer {
@@ -30,6 +51,9 @@ export class CometHead {
   private rim: Layer | null = null;
   private body: Layer | null = null;
   private videoPool: FlipbookPool;
+  /** The head's second draw, from the video and from the atlas. */
+  private readonly headVideo: FlipbookPool;
+  private readonly headAtlas: FlipbookPool;
   private el: HTMLVideoElement | null = null;
   private texture: THREE.VideoTexture | null = null;
   private duration = 0;
@@ -44,6 +68,10 @@ export class CometHead {
 
   constructor(private readonly layer: THREE.Object3D, private readonly blank: THREE.Texture) {
     this.videoPool = this.newPool("comet-video", "fire", 13);
+    this.headVideo = this.newPool("comet-head-video", "fire", 14);
+    this.headAtlas = this.newPool("comet-head-atlas", "fire", 14);
+    headDisc(this.headVideo);
+    headDisc(this.headAtlas);
   }
 
   private newPool(id: string, mode: FlipbookMeta["mode"], order: number): FlipbookPool {
@@ -76,6 +104,7 @@ export class CometHead {
           const pool = this.newPool(id, e.meta.mode, 13);
           pool.attach(meta, e.texture);
           this.rim = { pool, meta };
+          this.headAtlas.attach(meta, e.texture);
         }
       }
       if (this.rim !== null) this.load();
@@ -102,8 +131,10 @@ export class CometHead {
     this.el = el;
     this.texture = texture;
     this.duration = v.frames / v.fps;
-    this.videoPool.attach({ ...rim.meta, id: rim.meta.id + "#video", cols: 1, rows: 1, frames: 1, fps: v.fps, start: 0, loop: false, aspect: v.w / v.h,
-      pivot: rim.meta.comet!.head, peak: undefined, holdEnd: undefined, video: undefined }, texture);
+    const cell: FlipbookMeta = { ...rim.meta, id: rim.meta.id + "#video", cols: 1, rows: 1, frames: 1, fps: v.fps, start: 0, loop: false, aspect: v.w / v.h,
+      pivot: rim.meta.comet!.head, peak: undefined, holdEnd: undefined, video: undefined };
+    this.videoPool.attach(cell, texture);
+    this.headVideo.attach(cell, texture);
   }
 
   /** Whether the video shows frames now (else the atlas draws). */
@@ -113,9 +144,10 @@ export class CometHead {
 
   /**
    * One comet this frame: its head at `at`, falling along `fall` (world, unit), `size` m tall (the card), `alpha`
-   * shown; `phase` (s) offsets the atlas loop so two comets in the air are not twins.
+   * shown; `phase` (s) offsets the atlas loop so two comets in the air are not twins; `boost` (0–1) draws its head's
+   * ball a second time, that much light, solid against the ground.
    */
-  draw(at: THREE.Vector3, fall: THREE.Vector3, size = COMET_M, alpha = 1, phase = 0): boolean {
+  draw(at: THREE.Vector3, fall: THREE.Vector3, size = COMET_M, alpha = 1, phase = 0, boost = 0): boolean {
     const rim = this.rim;
     if (rim === null) return false;
     this.drawn = true;
@@ -128,12 +160,20 @@ export class CometHead {
       o.frame = ((this.clock + phase) * m.fps) % m.frames;
       this.body.pool.spawn(at, size, o);
     }
-    if (this.showing) {
+    const showing = this.showing;
+    if (showing) {
       o.frame = 0;
       this.videoPool.spawn(at, size, o);
     } else {
       o.frame = ((this.clock + phase) * rim.meta.fps) % rim.meta.frames;
       rim.pool.spawn(at, size, o);
+    }
+    if (boost > 0) {
+      o.intensity = boost;
+      o.occlude = HEAD_OCCLUDE;
+      (showing ? this.headVideo : this.headAtlas).spawn(at, size, o);
+      o.intensity = undefined;
+      o.occlude = 0.3;
     }
     return true;
   }
@@ -155,6 +195,8 @@ export class CometHead {
       } else if (!el.paused) el.pause();
     }
     this.videoPool.update(dt);
+    this.headVideo.update(dt);
+    this.headAtlas.update(dt);
     this.rim?.pool.update(dt);
     this.body?.pool.update(dt);
     // Long idle: the decoder and its texture go; the next comet loads it again.
@@ -187,10 +229,14 @@ export class CometHead {
     }
     this.rim = this.body = null;
     this.videoPool.clear();
+    this.headVideo.clear();
+    this.headAtlas.clear();
   }
 
   clear(): void {
     this.videoPool.clear();
+    this.headVideo.clear();
+    this.headAtlas.clear();
     this.rim?.pool.clear();
     this.body?.pool.clear();
   }

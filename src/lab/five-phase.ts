@@ -19,6 +19,11 @@
  *   ring on the ground, small flames on its body for 1.6 s (its rim burning, the host), the hit's flash, knockback,
  *   numbers and stop through the host's hit path; a kill burns away into the ember burst and rising embers;
  * - aftermath: the painted burn mark on the ground eroding over ~2.4 s, rising embers, thin dark smoke.
+ * Round 2 (owner 06/11 12:45: "tôi muốn chiêu rộng hơn, mạnh mẽ hơn, hiệu ứng mạnh hơn khi va chạm"): a meteor's
+ * landing is a blast as big as its class (`blast`: the halo flash, the flame lotus erupting 3.5–10 m across, the spark
+ * spray, the shockwave ring spreading to 5–12 m in 0.4 s, the ember burst and spark streaks flung out, embers thrown
+ * 3.5–8 m), the ground burning after it (`groundFire`); the crescent is wider, each beast it passes bursts 3–4 m and its
+ * end bursts 6 m, flinging the beasts there.
  */
 import * as THREE from "three";
 import { CrescentTrail, type TrailMatter } from "../view/skills/crescent-trail";
@@ -58,6 +63,10 @@ export interface FiveRecipe {
   readonly smoke: string;
   /** The sword's charge: the flame strip along its blade (a loop). */
   readonly sheath: string;
+  /** A blast's burning ground (a loop seen from above, laid flat) and its spark streaks (white, tinted `sparkTint`). */
+  readonly groundFire: string;
+  readonly sparks: string;
+  readonly sparkTint: number;
   /** The struck beast's flash and burning rim (0xRRGGBB), the flash light (CSS hex), its status. */
   readonly rim: number;
   readonly light: string;
@@ -89,6 +98,9 @@ export const FIRE_FIVE: FiveRecipe = {
   mark: "fire-ground-mark",
   smoke: "fire-smoke-roll-white-w2",
   sheath: "strip-fire-sheath-flow-w2",
+  groundFire: "fire-ground-burn-loop-w2",
+  sparks: "fire-sparks",
+  sparkTint: 0xffb060,
   rim: 0xffa030,
   light: "#ffa030",
   status: "burn",
@@ -124,6 +136,18 @@ export interface FiveHost {
   /** The hand (world) and the sword's blade, start and tip (false: no sword in the hand). */
   hand(out: THREE.Vector3): void;
   blade(a: THREE.Vector3, b: THREE.Vector3): boolean;
+  /** Live beasts within `r` of (x, z) into `out` (their count). */
+  inCircle(x: number, z: number, r: number, out: Int32Array): number;
+  /** Flings a small beast up along (dx, dz), 2–3 m in one flip (herd.launch). */
+  launch(i: number, dx: number, dz: number): void;
+}
+
+/** A blast's size (m): its eruption across, its shockwave ring's end diameter, embers and sparks flung (count, reach). */
+export interface BlastSize {
+  readonly blastM: number;
+  readonly ringM: number;
+  readonly flung: number;
+  readonly flingM: number;
 }
 
 const v = new THREE.Vector3();
@@ -131,6 +155,7 @@ const w = new THREE.Vector3();
 const mid = new THREE.Vector3();
 const along = new THREE.Vector3();
 const tipV = new THREE.Vector3();
+const sparkTint = new THREE.Color();
 const opts: FlipOptions = {};
 /** Resets the shared options (no allocation per spawn). */
 function flip(): FlipOptions {
@@ -239,6 +264,8 @@ export class FivePhase {
   private readonly mark: Card;
   private readonly smoke: Card;
   private readonly sheath: Card;
+  private readonly groundFlame: Card;
+  private readonly sparks: Card;
   private readonly cards: Card[];
   private readonly burning: Burning[] = [];
   private readonly streaks: Streak[] = [];
@@ -259,21 +286,23 @@ export class FivePhase {
     this.charge = new Card(s, L, f, recipe.charge, "fire", 4, 14, { vignette: 0.3 });
     this.seal = new Card(s, L, f, recipe.seal, "fire", 4, 6, { flat: true });
     this.sealFlat = new Card(s, L, f, recipe.seal, "fire", 24, 6, { flat: true });
-    this.flash = new Card(s, L, f, recipe.flash, "fire", 12, 15);
+    this.flash = new Card(s, L, f, recipe.flash, "fire", 24, 15);
     // The twinkle set: 8 rows of 16 frames, one twinkle a row (element-fire.ts attaches it the same way).
     this.glint = new Card(s, L, f, recipe.glint, "fire", 192, 15, { adapt: (m) => ({ ...m, frames: 16, variants: 8, loop: false, loopMode: "none" }) });
-    this.lotus = new Card(s, L, f, recipe.lotus, "rgba", 24, 12);
-    this.impact = new Card(s, L, f, recipe.impact, "fire", 24, 14, { vignette: 0.35 });
-    this.ring = new Card(s, L, f, recipe.ring, "fire", 24, 7, { flat: true, vignette: 0.3 });
+    this.lotus = new Card(s, L, f, recipe.lotus, "rgba", 32, 12);
+    this.impact = new Card(s, L, f, recipe.impact, "fire", 48, 14, { vignette: 0.35 });
+    this.ring = new Card(s, L, f, recipe.ring, "fire", 32, 7, { flat: true, vignette: 0.3 });
     this.body = new Card(s, L, f, recipe.body, "rgba", 32, 12);
     this.embers = new Card(s, L, f, recipe.embers, "fire", 48, 13, { vignette: 0.25 });
-    this.emberBurst = new Card(s, L, f, recipe.emberBurst, "fire", 24, 14, { vignette: 0.3 });
+    this.emberBurst = new Card(s, L, f, recipe.emberBurst, "fire", 32, 14, { vignette: 0.3 });
     this.mark = new Card(s, L, f, recipe.mark, "fire", 24, 4, { flat: true, vignette: 0.25 });
     // The smoke filmed on white as straight-alpha matter, its thin haze cut away (no grey veil, no cell edge).
     this.smoke = new Card(s, L, f, recipe.smoke, "rgba", 24, 10, { vignette: 0.55 });
     this.smoke.pool.setSharpen(0.22, 0.6);
     this.sheath = new Card(s, L, f, recipe.sheath, "fire", 4, 14, { vignette: 0.2 });
-    this.cards = [this.charge, this.seal, this.sealFlat, this.flash, this.glint, this.lotus, this.impact, this.ring, this.body, this.embers, this.emberBurst, this.mark, this.smoke, this.sheath];
+    this.groundFlame = new Card(s, L, f, recipe.groundFire, "fire", 72, 5, { flat: true, vignette: 0.35 });
+    this.sparks = new Card(s, L, f, recipe.sparks, "fire", 24, 14, { vignette: 0.3 });
+    this.cards = [this.charge, this.seal, this.sealFlat, this.flash, this.glint, this.lotus, this.impact, this.ring, this.body, this.embers, this.emberBurst, this.mark, this.smoke, this.sheath, this.groundFlame, this.sparks];
     for (let k = 0; k < 2; k += 1) {
       const trail = new CrescentTrail(this.ribbonMatter(), 13, 9, { fadeS: 0.35 });
       L.add(trail.mesh);
@@ -466,8 +495,8 @@ export class FivePhase {
     this.audit.streaks += 1;
   }
 
-  /** A meteor's mark under beast-free ground or a beast: the seal laid flat, coming in over `lead` s, gone with its blow. */
-  markAt(x: number, z: number, lead: number, delay: number): void {
+  /** A meteor's mark under beast-free ground or a beast: the seal laid flat, `size` m, coming in over `lead` s, gone with its blow. */
+  markAt(x: number, z: number, lead: number, delay: number, size = 2.6): void {
     this.audit.marks += 1;
     const o = flip();
     o.delay = delay;
@@ -481,15 +510,16 @@ export class FivePhase {
     o.intensity = 0.9;
     o.occlude = 0;
     o.lift = 0.15;
-    this.sealFlat.spawn(v.set(x, 0.04, z), 2.6, o);
+    this.sealFlat.spawn(v.set(x, 0.04, z), size, o);
   }
 
   /**
-   * I: a blow lands on beast `i` (alive) from (dx, dz): the spark spray on its body with a twinkle heart, the lotus and
-   * the turning ring on the ground (`ground`: false keeps them off, the crescent's pierce on its later beasts), its body
-   * burning; the hit path (host.blow) gives its flash, knockback, numbers and sound. True: it killed.
+   * I: a blow lands on beast `i` (alive) from (dx, dz): the spark spray on its body with a twinkle heart (`spray`: false
+   * keeps it off, a crowd under one blast), the lotus and the turning ring on the ground (`ground`: false keeps them off,
+   * a blast draws its own), its body burning; the hit path (host.blow) gives its flash, knockback, numbers and sound.
+   * True: it killed.
    */
-  hit(slot: string, i: number, dx: number, dz: number, role: ImpactRole, power = 1, ground = true): boolean {
+  hit(slot: string, i: number, dx: number, dz: number, role: ImpactRole, power = 1, ground = true, spray = true): boolean {
     const H = this.host;
     if (!H.alive(i)) return false;
     this.audit.hits += 1;
@@ -497,18 +527,20 @@ export class FivePhase {
     const z = H.z(i);
     const my = H.midY(i);
     const r = Math.max(0.4, H.radius(i));
-    // The spark spray on the body from a bright, wide frame (fast attack), then slow to its end.
     let o = flip();
-    o.frame = 11;
-    o.rate = (17 - 11) / (12 * 0.08);
-    o.slowFrom = 17;
-    o.slowRate = 0.85;
-    o.intensity = 1.05;
-    o.occlude = 0;
-    o.lift = 0.9;
-    o.ground = 0;
-    this.impact.spawn(v.set(x, my, z), 2.0 + 1.6 * r, o);
-    this.twinkle(v, 1.3 + r, 0.4, 2.0);
+    if (spray) {
+      // The spark spray on the body from a bright, wide frame (fast attack), then slow to its end.
+      o.frame = 11;
+      o.rate = (17 - 11) / (12 * 0.08);
+      o.slowFrom = 17;
+      o.slowRate = 0.85;
+      o.intensity = 1.05;
+      o.occlude = 0;
+      o.lift = 0.9;
+      o.ground = 0;
+      this.impact.spawn(v.set(x, my, z), 2.0 + 1.6 * r, o);
+      this.twinkle(v, 1.3 + r, 0.4, 2.0);
+    }
     if (ground) {
       // The flame lotus from the ground under it, its root on the stone.
       o = flip();
@@ -543,6 +575,115 @@ export class FivePhase {
       this.audit.burning += 1;
     }
     return killed;
+  }
+
+  /**
+   * A blast at (x, z), `size` across, its additive layers lasting about `life` s (fast attack: whole on its first frame,
+   * holding its peak, burning down by erosion): the halo ring's flash at its heart with a twinkle core, the flame lotus
+   * erupting from the ground, the spark spray, the shockwave (the qi-burst ring laid flat, out to `ringM` in 0.4 s), the
+   * ember burst, spark streaks and embers flung out to `flingM`. Lights ≤ 0.9 a channel; only the twinkles' cores bloom.
+   */
+  blast(x: number, z: number, size: BlastSize, life: number): void {
+    const B = size.blastM;
+    // The flash at its heart: the halo ring at its brightest frame on the landing frame, then burning down.
+    let o = flip();
+    o.frame = this.recipe.flashPeak;
+    o.life = Math.min(0.45, life * 0.3);
+    o.rate = (24 - this.recipe.flashPeak) / (24 * o.life);
+    o.grow = 0.6;
+    o.intensity = 0.9;
+    o.occlude = 0;
+    o.fadeOut = 0.15;
+    o.lift = 1.2;
+    this.flash.spawn(v.set(x, 0.25 * B, z), 0.6 * B, o);
+    this.twinkle(v, 0.35 * B, 0.45, 2.2);
+    // The flame lotus erupting from the ground (root on the stone, about B across): from a frame next to its peak (the
+    // landing frame is whole: ≥ 95 % of the blast's light), then holding and burning down over the rest of its life.
+    const lm = this.lotus.meta;
+    o = flip();
+    o.frame = this.recipe.lotusPeak - 1;
+    o.rate = 1 / ((lm?.fps ?? 18) * 0.03);
+    o.slowFrom = this.recipe.lotusPeak;
+    o.slowRate = ((lm?.frames ?? 16) - this.recipe.lotusPeak) / ((lm?.fps ?? 18) * Math.max(0.5, life - 0.06));
+    o.life = life;
+    o.cool = 0.5;
+    o.lift = 0.6;
+    o.ground = 0;
+    this.lotus.spawn(v.set(x, 0, z), B / ((lm?.aspect ?? 1.73) * 0.85), o);
+    // The spark spray over it, from next to its peak.
+    o = flip();
+    o.frame = 19;
+    o.rate = (21 - 19) / (12 * 0.04);
+    o.slowFrom = 21;
+    o.slowRate = (32 - 21) / (12 * Math.max(0.4, life * 0.6));
+    o.intensity = 1.0;
+    o.occlude = 0;
+    o.lift = 1.0;
+    o.ground = 0;
+    this.impact.spawn(v.set(x, 0.3 * B, z), 0.9 * B, o);
+    // The shockwave: the qi-burst ring laid flat from a bright frame, out to ringM (the ring is ~0.8 of its card) in
+    // 0.4 s, turning, burning out.
+    o = flip();
+    o.frame = 5;
+    o.rate = (20 - 5) / (12 * 0.2);
+    o.slowFrom = 20;
+    o.slowRate = 0.6;
+    o.life = 0.6;
+    o.grow = 1 / 0.3 - 1;
+    o.spin = 1.4;
+    o.cool = 0.45;
+    o.intensity = 0.9;
+    o.occlude = 0;
+    o.lift = 0.25;
+    this.ring.spawn(v.set(x, 0.06, z), (0.3 * size.ringM) / 0.8, o);
+    // The ember burst and the spark streaks flung out from its heart.
+    o = flip();
+    o.frame = 9;
+    o.rate = (12 - 9) / (12 * 0.05);
+    o.slowFrom = 12;
+    o.slowRate = 0.55;
+    o.intensity = 0.95;
+    o.occlude = 0;
+    o.lift = 0.9;
+    this.emberBurst.spawn(v.set(x, 0.35 * B, z), 0.8 * B, o);
+    o = flip();
+    o.frame = 3;
+    o.rate = (14 - 3) / (24 * 0.35);
+    o.grow = 0.5;
+    o.intensity = 0.85;
+    o.tint = sparkTint.setHex(this.recipe.sparkTint);
+    o.occlude = 0;
+    o.lift = 1.0;
+    this.sparks.spawn(v.set(x, 0.3 * B, z), 0.7 * size.flingM * 2, o);
+    // Embers thrown out in arcs, landing about flingM away: speed × time under drag, up and back down.
+    for (let k = 0; k < size.flung; k += 1) {
+      const a = (k / size.flung) * Math.PI * 2 + this.rand.next() * 0.6;
+      const reach = size.flingM * (0.7 + 0.4 * this.rand.next());
+      const t = 0.7;
+      this.twinkle(w.set(x, 0.4, z), 0.3 + 0.25 * this.rand.next() + 0.03 * B, t, 1.4, 0, (Math.cos(a) * reach * 1.6) / t, 5 + 3 * this.rand.next(), (Math.sin(a) * reach * 1.6) / t);
+    }
+  }
+
+  /** The ground burning where a blast was: flame patches laid flat across `across` m, burning `life` s, then eroding. */
+  groundFire(x: number, z: number, across: number, life: number): void {
+    const n = Math.max(1, Math.round(across / 2.2));
+    for (let k = 0; k < n; k += 1) {
+      const a = this.rand.next() * Math.PI * 2;
+      const d = k === 0 ? 0 : across * 0.32 * Math.sqrt(this.rand.next());
+      const o = flip();
+      o.delay = 0.04 * k;
+      o.frame = this.rand.next() * 48;
+      o.rate = 1;
+      o.life = life * (0.8 + 0.3 * this.rand.next());
+      o.fadeIn = 0.15;
+      o.cool = 0.6;
+      o.fadeOut = 0.4;
+      o.rot = this.rand.next() * 6.28;
+      o.intensity = 0.85;
+      o.occlude = 0.3;
+      o.lift = 0.1;
+      this.groundFlame.spawn(v.set(x + Math.cos(a) * d, 0.05, z + Math.sin(a) * d), (k === 0 ? 0.55 : 0.32) * across, o);
+    }
   }
 
   /** A kill: the body burns away (the herd's dissolve) into the ember burst and a column of rising embers. */
@@ -696,15 +837,27 @@ export class FivePhase {
 export const CRESCENT = {
   lengthM: 16,
   speed: 30,
-  /** K2_CRESCENT × CUT.scale (sword-skills.ts): the size key 2's crescent has always flown at. */
-  size: 3.6,
-  /** A beast within this of the crescent's line (m, plus its radius) is struck once as it passes. */
-  halfW: 1.5,
+  /**
+   * Round 2 (owner 06/11 12:45: "rộng hơn, mạnh mẽ hơn"): 4.2, its horns ~7.5 m apart (the clip's crescent spans ~0.85 of
+   * its 16:9 card); key 2's crescent flew at 3.6 (K2_CRESCENT × CUT.scale, sword-skills.ts).
+   */
+  size: 4.2,
+  /** A beast within this of the crescent's line (m, plus its radius) is struck once as it passes: under its span. */
+  halfW: 3.0,
   /** A struck beast's imprint: the crescent cut across its body. */
-  imprint: 1.9,
+  imprint: 2.4,
   /** The height it flies at (m). */
   y: 1.0,
 } as const;
+
+/** Each beast the crescent passes bursts this big (3–4 m), one burst at most every HIT_BLAST_GAP_S; its end bursts 6 m. */
+const HIT_BLAST: BlastSize = { blastM: 3.6, ringM: 4.5, flung: 4, flingM: 3 };
+const HIT_BLAST_S = 0.9;
+const HIT_BLAST_GAP_S = 0.05;
+const END_BLAST: BlastSize = { blastM: 6, ringM: 8, flung: 10, flingM: 5 };
+const END_BLAST_S = 1.6;
+/** Beasts within this of its end are struck by the end's burst and flung (m). */
+const END_R = 3.2;
 
 /**
  * Key 2's sample (Nhất Tuyến Xuyên Vân in Fire): the crescent leaves the sword's tip on the last key and flies straight
@@ -728,6 +881,8 @@ export class CrescentSample {
   private readonly rand = new Rand(20611);
   private readonly struck = new Set<number>();
   private readonly found = new Int32Array(128);
+  /** When the last pierce burst went off (s into the flight). */
+  private burstAt = -1;
   last: { hits: number; kills: number; struck: number[]; landedAt: number; releaseFrame: number } | null = null;
 
   constructor(private readonly host: FiveHost, private readonly five: FivePhase) {}
@@ -761,6 +916,7 @@ export class CrescentSample {
     this.side = 0;
     this.horn = 0;
     this.landed = false;
+    this.burstAt = -1;
     this.struck.clear();
     this.last = { hits: 0, kills: 0, struck: [], landedAt: -1, releaseFrame: 0 };
   }
@@ -805,6 +961,11 @@ export class CrescentSample {
         // Its imprint: the crescent cut across its body, smaller.
         crescentOf(H.stage, this.five.recipe.folder, this.five.recipe.ramp).cut(w.set(H.x(i), Math.max(0.5, H.midY(i)), H.z(i)), rot, CRESCENT.imprint, null);
         const killed = this.five.hit("k2", i, this.dx, this.dz, first ? "primary" : "secondary", 0.95, true);
+        // Its burst, 3–4 m (not two in the same few frames: a row of beasts bursts one after another).
+        if (this.t - this.burstAt >= HIT_BLAST_GAP_S || first) {
+          this.burstAt = this.t;
+          this.five.blast(H.x(i), H.z(i), HIT_BLAST, HIT_BLAST_S);
+        }
         if (first) H.strike("k2", w.set(H.x(i), H.midY(i), H.z(i)), "primary", this.dx, this.dz);
         if (this.last !== null) {
           this.last.hits += 1;
@@ -819,6 +980,25 @@ export class CrescentSample {
         crescentOf(H.stage, this.five.recipe.folder, this.five.recipe.ramp).cut(v.set(cx, y, cz), rot, CRESCENT.size, null);
         this.five.twinkle(v, 2.0, 0.5, 2.0);
         H.strike("k2", v, "finisher", this.dx, this.dz);
+        // Its end bursts 6 m: every beast there struck once more and flung away from it.
+        this.five.blast(cx, cz, END_BLAST, END_BLAST_S);
+        const n = H.inCircle(cx, cz, END_R, this.found);
+        for (let k = 0; k < n; k += 1) {
+          const i = this.found[k]!;
+          if (!H.alive(i)) continue;
+          let ex = H.x(i) - cx;
+          let ez = H.z(i) - cz;
+          const l = Math.hypot(ex, ez);
+          ex = l > 0.2 ? ex / l : this.dx;
+          ez = l > 0.2 ? ez / l : this.dz;
+          const killed = this.five.hit("k2", i, ex, ez, "finisher", 1, false, k < 3);
+          if (!killed) H.launch(i, ex, ez);
+          if (this.last !== null) {
+            this.last.hits += 1;
+            if (killed) this.last.kills += 1;
+            this.last.struck.push(i);
+          }
+        }
         const mx = this.ax + this.dx * CRESCENT.lengthM * 0.5;
         const mz = this.az + this.dz * CRESCENT.lengthM * 0.5;
         this.five.aftermath(mx, mz, 2.6, 0.02, this.dx, this.dz, CRESCENT.lengthM * 0.95);

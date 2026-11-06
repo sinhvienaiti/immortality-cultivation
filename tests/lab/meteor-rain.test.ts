@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { FALL_S, FIRST_S, GAP_S, MARK_S, METEORS, MeteorRain } from "../../src/lab/meteor-rain";
+import { FALL_S, FIRST_S, MARK_S, MAX_BURNS, MeteorRain } from "../../src/lab/meteor-rain";
+import { MAX_BLASTS, METEOR_SIZES, SHOWER, type MeteorSize } from "../../src/lab/meteor-plan";
 import { cometHeading } from "../../src/lab/comet-head";
 import { parseFlipbookManifest } from "../../src/view/skills/flipbook";
 import { ElementStage } from "../../src/view/skills/element-stage";
@@ -46,50 +47,64 @@ function field(pts: readonly (readonly [number, number])[]): TargetField & { hp:
   };
 }
 
-describe("the lab's slanted meteor rain (key M, canon D62)", () => {
-  it("marks up to eight beasts and drops a meteor on each, 0.2 s after its mark, the first FIRST_S after the key, GAP_S apart, all within 2.5 s", () => {
+describe("the lab's meteor shower (key M, canon D62; owner 06/11 12:50)", () => {
+  it("drops 18–24 meteors over about 6.5 s, each on time, marked MARK_S before it, the first big and the last the king", () => {
     const cam = new THREE.PerspectiveCamera(28, 16 / 9, 0.1, 300);
     cam.position.set(0, 26, 14);
     cam.lookAt(0, 0, -6);
     cam.updateMatrixWorld(true);
     const stage = new ElementStage({ layer: new THREE.Group(), camera: cam, quality: "high", textures: {} as never, texture: () => new THREE.Texture(), vfxBase: "/v/" });
-    // Twelve beasts spread wide (one meteor each, at most eight).
+    // Twelve beasts spread wide.
     const herd = field(Array.from({ length: 12 }, (_, k) => [(k % 6) * 5 - 12, Math.floor(k / 6) * 6 - 12] as const));
-    const blows: { t: number; i: number }[] = [];
-    const strikes: { t: number; role: string }[] = [];
-    const marks: { delay: number; life: number }[] = [];
+    const blows: { t: number; i: number; dx: number; dz: number }[] = [];
+    const strikes: { t: number; at: THREE.Vector3; size: MeteorSize; first: boolean }[] = [];
+    const marks: { t: number; delay: number }[] = [];
     let t = 0;
     const rain = new MeteorRain({
       targets: herd, stage, camera: cam, layer: new THREE.Group(),
       kit: () => elementById("water")!, pal: () => elementById("water")!.palette as never,
       caster: (out) => out.set(0, 0, 3),
       prepareMark: () => {},
-      mark: (_f, _x, _z, _s, delay, life) => (marks.push({ delay, life }), true),
+      mark: (_f, _x, _z, _s, delay) => (marks.push({ t, delay }), true),
       release: () => {},
-      blow: (i) => (blows.push({ t, i }), herd.hit(i, 0, 1, 1, 0)),
-      strike: (_at, role) => strikes.push({ t, role }),
+      blow: (i, dx, dz) => (blows.push({ t, i, dx, dz }), herd.hit(i, 0, 1, 1, 0)),
+      strike: (at, _role, size, first) => strikes.push({ t, at: at.clone(), size, first }),
       status: () => {},
     });
-    expect(rain.cast()).toBe(METEORS);
+    const n = rain.cast();
+    expect(n).toBeGreaterThanOrEqual(SHOWER.min);
+    expect(n).toBeLessThanOrEqual(SHOWER.max);
     const r = rain.last!;
     expect(r.impactAt[0]).toBeCloseTo(FIRST_S, 6);
-    expect(FIRST_S).toBeGreaterThanOrEqual(MARK_S);
-    for (let k = 1; k < r.impactAt.length; k += 1) expect(r.impactAt[k]! - r.impactAt[k - 1]!).toBeCloseTo(GAP_S, 6);
-    expect(r.impactAt.at(-1)!).toBeLessThanOrEqual(2.5);
-    for (let k = 0; k < marks.length; k += 1) expect(r.impactAt[k]! - marks[k]!.delay).toBeCloseTo(MARK_S, 6);
-    for (let f = 0; f < 180; f += 1) {
+    expect(FIRST_S - FALL_S).toBeGreaterThan(0);
+    for (let k = 1; k < n; k += 1) {
+      const gap = r.impactAt[k]! - r.impactAt[k - 1]!;
+      expect(gap).toBeGreaterThanOrEqual(SHOWER.gapMin - 1e-9);
+      expect(gap).toBeLessThanOrEqual(SHOWER.gapMax + 1e-9);
+    }
+    // The whole shower lands inside 5–8 s of the key.
+    expect(r.impactAt.at(-1)!).toBeGreaterThanOrEqual(5);
+    expect(r.impactAt.at(-1)!).toBeLessThanOrEqual(8);
+    expect(r.classes[0]).toBe("big");
+    expect(r.classes.at(-1)).toBe("king");
+    expect(r.maxBlasts).toBeLessThanOrEqual(MAX_BLASTS);
+    for (let f = 0; f < 9 * 60; f += 1) {
       t += 1 / 60;
       rain.update(1 / 60);
     }
-    // Every meteor lands within a frame of its time, each on its own beast; the first is the primary blow.
-    expect(strikes.length).toBe(METEORS);
-    strikes.forEach((s, k) => expect(Math.abs(s.t - r.impactAt[k]!)).toBeLessThanOrEqual(1 / 60 + 1e-9));
-    expect(strikes[0]!.role).toBe("primary");
-    expect(new Set(blows.map((b) => b.i)).size).toBe(blows.length);
-    expect(blows.length).toBe(METEORS);
-    // Long enough for the comet to read on its way down, its first fall starting after the key.
-    expect(FALL_S).toBeLessThanOrEqual(0.35);
-    expect(FIRST_S - FALL_S).toBeGreaterThan(0);
+    // Every meteor lands within a frame of its time, as big as its class; its mark came MARK_S before it.
+    expect(strikes.length).toBe(n);
+    strikes.forEach((s, k) => {
+      expect(Math.abs(s.t - r.impactAt[k]!)).toBeLessThanOrEqual(1 / 60 + 1e-9);
+      expect(s.size).toBe(METEOR_SIZES[r.classes[k]!]);
+      expect(s.first).toBe(k === 0);
+    });
+    expect(marks.length).toBe(n);
+    marks.forEach((m, k) => expect(m.t + m.delay).toBeCloseTo(r.impactAt[k]! - MARK_S, 1));
+    // Each blow drives its beast away from the meteor's heart (a unit direction).
+    for (const b of blows) expect(Math.hypot(b.dx, b.dz)).toBeCloseTo(1, 6);
+    expect(r.points.length).toBe(n);
+    expect(r.maxBurns).toBeLessThanOrEqual(MAX_BURNS);
     expect(rain.active).toBe(false);
   });
 

@@ -13,7 +13,7 @@ function lab(pts: readonly (readonly [number, number])[]) {
   const stage = new ElementStage({ layer: new THREE.Group(), camera: cam, quality: "high", textures: {} as never, texture: () => new THREE.Texture(), vfxBase: "/v/" });
   const hp = pts.map(() => 3);
   const log = { blows: [] as { slot: string; i: number; role: ImpactRole; dx: number; dz: number }[], strikes: [] as { slot: string; role: ImpactRole }[],
-    status: [] as { i: number; seconds: number }[], glow: [] as number[], kicks: 0, lights: 0 };
+    status: [] as { i: number; seconds: number }[], glow: [] as number[], kicks: 0, lights: 0, launched: [] as number[] };
   const host: FiveHost = {
     stage, layer: new THREE.Group(), camera: cam,
     alive: (i) => hp[i]! > 0,
@@ -33,6 +33,14 @@ function lab(pts: readonly (readonly [number, number])[]) {
       });
       return n;
     },
+    inCircle(x, z, r, out) {
+      let n = 0;
+      pts.forEach(([px, pz], i) => {
+        if (hp[i]! > 0 && Math.hypot(px - x, pz - z) <= r + 0.4) out[n++] = i;
+      });
+      return n;
+    },
+    launch: (i) => log.launched.push(i),
     status: (i, _k, seconds) => log.status.push({ i, seconds }),
     blow(slot, i, dx, dz, _power, role) {
       log.blows.push({ slot, i, role, dx, dz });
@@ -75,6 +83,26 @@ describe("the five-phase samples (skill-five-phase-samples.md)", () => {
     // The line's burn and the landing's: two aftermaths.
     expect(five.audit.aftermath).toBe(2);
     expect(crescent.active).toBe(false);
+  });
+
+  it("key 2's crescent (round 2) is wider, and its end bursts: the beasts there struck as the finisher and flung away", () => {
+    expect(CRESCENT.size).toBeGreaterThan(3.6);
+    // One beast 2.5 m off the line (struck now: under the wider crescent), two at its end (the tip at z 1.6, 16 m on).
+    const { host, log } = lab([[2.5, -5], [0.3, -13.6], [1.8, -15.2]]);
+    const five = new FivePhase(host, FIRE_FIVE);
+    const crescent = new CrescentSample(host, five);
+    crescent.cast(0, 3, 0, -8);
+    for (let f = 0; f < 60; f += 1) {
+      crescent.update(1 / 60);
+      five.update(1 / 60);
+    }
+    // The pierce strikes all three as it passes; its end strikes the two there again, as the finisher, and flings them.
+    expect(log.blows.filter((b) => b.role !== "finisher").map((b) => b.i).sort()).toEqual([0, 1, 2]);
+    const fin = log.blows.filter((b) => b.role === "finisher");
+    expect(fin.map((b) => b.i).sort()).toEqual([1, 2]);
+    // Flung away from the end: the one beyond it outward along +x.
+    expect(fin.find((b) => b.i === 2)!.dx).toBeGreaterThan(0.5);
+    expect(log.launched.sort()).toEqual([1, 2]);
   });
 
   it("the charge glows the caster while a word is typed and puts it out at the release", () => {

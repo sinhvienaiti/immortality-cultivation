@@ -93,6 +93,7 @@ import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
+import { SHOWER } from "./meteor-plan";
 import { CrescentSample, FIVE, FIVE_RECIPES, FivePhase, type FiveHost } from "./five-phase";
 import { ChannelSkill, COLLAPSE_S, WORD_S, type ChannelReport } from "./channel-skill";
 import { StreakCounter } from "./streak-counter";
@@ -1050,6 +1051,12 @@ const tagMaskOn = params.get("tagMask") !== "0";
 const tagKeepBase = Math.min(1, Math.max(0, Number(params.get("tagKeep") ?? TAG_KEEP)));
 /** Key M's light kept behind a word tag while it falls (its Wind and Light landings drowned a tag at 0.3; lab-readability). */
 const METEOR_TAG_KEEP = 0.12;
+/**
+ * Key 2's five-phase sample keeps as little while its bursts show (round 2's lotus bursts drowned a tag at 0.3: 5.8:1):
+ * from its release to its end burst's tail (s, world time).
+ */
+const CRESCENT_TAG_S = 2.4;
+let crescentTagLeft = 0;
 const tagBuf = new THREE.Vector2();
 const tagV = new THREE.Vector3();
 const tagHost = {
@@ -1072,7 +1079,7 @@ function placeTags(): void {
     return;
   }
   // The mask's share: the lab's, or less while a skill whose peak still drowns a tag plays (ClipSkill.tagKeep, key M).
-  tagMask.keep = tagMaskOn ? Math.min(tagKeepBase, clipSkills.tagKeep(), clipSkills9.tagKeep(), meteor.active ? METEOR_TAG_KEEP : 1) : 1;
+  tagMask.keep = tagMaskOn ? Math.min(tagKeepBase, clipSkills.tagKeep(), clipSkills9.tagKeep(), meteor.active || crescentTagLeft > 0 ? METEOR_TAG_KEEP : 1) : 1;
   view.camera.updateMatrixWorld();
   tagHost.count = herd.size;
   const boxes = wordTags.update(tagHost, innerWidth, innerHeight);
@@ -1204,11 +1211,19 @@ const meteor = new MeteorRain({
   },
   five: () => fiveOf(),
   hand: (out) => caster.hand(out),
-  strike(at, role) {
-    // Each landing a skill-tier blow (the first its stop and shake, the rest a lighter shake), the kick, the light.
-    screen.impact("skill", role);
-    if (role === "primary") kick.impulse(3 * KICK_M_PER_PX, 0.34, -0.94);
-    lights.flash(meteorAt.set(at.x, 1.2, at.z), view.camera.position, fx.paletteOf("k1").flashHex, 5, true);
+  strike(at, _role, size, first) {
+    // Each landing by its class (meteor-plan.ts): a stop for the first, the big ones and the king; its own jolt (never
+    // stacking into one long shake); the camera kicked down; the light (its warm flash came just before: flash).
+    const stop = first ? SHOWER.firstStopMs : size.stopMs;
+    if (stop > 0) screen.hitStop(stop);
+    screen.jolt(size.shakePx, size.shakeS, size.stopMs > 0 ? SCREEN_TIERS.ultimate.rollDeg : 0);
+    if (size.kickPx > 0) kick.impulse(size.kickPx * KICK_M_PER_PX, 0.34, -0.94);
+    lights.flash(meteorAt.set(at.x, 1.2, at.z), view.camera.position, fiveOf()?.recipe.light ?? fx.paletteOf("k1").flashHex, size.light, true);
+  },
+  launch: (i, dx, dz) => herd.launch(i, dx, dz),
+  // The big ones' warm full-screen flash for two frames, whole on the landing frame.
+  flash(size) {
+    if (size.warm > 0) screen.warm(size.warm, 0.06);
   },
   status(i) {
     const f = fx.element.foe;
@@ -1228,6 +1243,8 @@ const fiveHost: FiveHost = {
   midY: (i) => herd.midY(i),
   radius: (i) => herd.radius(i),
   inCapsule: (ax, az, bx, bz, halfW, out) => herd.inCapsule(ax, az, bx, bz, halfW, out),
+  inCircle: (x, z, r, out) => herd.inCircle(x, z, r, out),
+  launch: (i, dx, dz) => herd.launch(i, dx, dz),
   status: (i, kind, seconds, rgb) => herd.status(i, kind, seconds, rgb),
   blow(slot, i, dx, dz, power, role) {
     // The struck beast's flash in the element's colour for about 0.1 s, its knockback, numbers and sound.
@@ -1280,6 +1297,7 @@ function castCrescentSample(): void {
   caster.release("k2", tx, tz);
   emitRelease("k2", tx, tz);
   pendingCrescent = true;
+  crescentTagLeft = CRESCENT_TAG_S;
 }
 /** The crescent leaves on the frame after the caster's update (the tip where the body put it). */
 let pendingCrescent = false;
@@ -1900,6 +1918,7 @@ function frame(dt: number): void {
   } else if (ultDark) screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
   updateTyping(world);
   updateBolt(world);
+  crescentTagLeft = Math.max(0, crescentTagLeft - world);
   herd.update(world);
   caster.update(world);
   flushTyping();
