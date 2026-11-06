@@ -382,6 +382,19 @@ const sound = new LabSound(elementKits().map((k) => k.sound));
 sound.registerTakes(Object.values(LAB_TAKES));
 // ?music=<url>: a track on the music bus (the lab has none of its own), to hear the pre-ducks before big hits.
 if (params.get("music") !== null) sound.setMusic(params.get("music"));
+// Typed keys: the shared Typing Feel pack (read only; docs/games/TYPING_FEEL_SERVICE.md), the catalogue's default set or
+// ?keys=<profile id>, ?keys=off for none. The pack comes from ?feel=<origin>, else VITE_TYPING_FEEL_ORIGIN, else this
+// machine's parent repo through the dev server (the lab's servers allow /@fs/ there).
+const KEY_SET = params.get("keys");
+if (KEY_SET !== "off") {
+  const origins = [params.get("feel"), import.meta.env.VITE_TYPING_FEEL_ORIGIN as string | undefined, "/@fs/Volumes/SS990TPRO/htdocs/typing-game/typing-feel/public"];
+  void (async () => {
+    for (const origin of origins) {
+      if (origin && (await sound.loadKeys(origin.replace(/\/$/, "") + "/v1/keys/keys-manifest.json", KEY_SET ?? undefined)) !== "") return;
+    }
+    console.warn("[lab] Typing Feel keys not found: no key sounds (?feel=<origin>)");
+  })();
+}
 bus.on((e) => {
   // The channel (key C) has its own start and pulse sounds (updateChannelSound): its release and its ticks stay out of
   // the shared release and hit sounds (a pulse keeps its hit, its kills their death).
@@ -1372,6 +1385,8 @@ function updateTyping(dt: number): void {
   const perLetter = 60 / (wpm * 5);
   while (typing && typing.next <= 0) {
     typing.typed += 1;
+    // A typed charge's simulated letter clicks like a key.
+    sound.key("key");
     typing.next += perLetter;
     const p = typing.typed / typing.letters;
     if (typing.typed >= typing.letters && typing.slot === "k5") {
@@ -1449,6 +1464,8 @@ window.addEventListener("keydown", (e) => {
   // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   lastKeyStamp = e.timeStamp;
+  // Every typed key clicks (Typing Feel), on its own bus: no skill, hush or pre-duck ever takes it down.
+  if (e.key.length === 1 && !e.repeat && !e.ctrlKey && !e.metaKey) sound.key(e.key === " " ? "space" : "key");
   const slot = KEYS[e.key];
   if (slot) type(slot);
   // 8 casts the selected pillar or ultimate on the herd, Shift+8 selects the next (Shift+8 types "*" on most layouts).
@@ -1972,7 +1989,7 @@ declare global {
       bladePx(): Record<string, number>;
       /** Sound hooks: files found per event id, what was asked since reset (heard or silent), sounds started. */
       /** What the lab's sound asked for and played; `music`: the music bus's gain now (1, or under a pre-duck). */
-      sound(): { found: Record<string, number>; asked: Record<string, number>; played: number; music: number };
+      sound(): { found: Record<string, number>; asked: Record<string, number>; played: number; music: number; keys: string };
       /**
        * Sound for fixed-step videos: from now the lab logs what it would play on its own clock instead of playing it;
        * resolves when the files are known. Mix the log with scripts/visual/mix-lab-sound.mjs.
@@ -2651,7 +2668,7 @@ void (async () => {
       stats("vanFar", byCls[2]!);
       return out;
     },
-    sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played, music: sound.musicLevel() }),
+    sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played, music: sound.musicLevel(), keys: sound.keySet }),
     soundRecord: () => sound.record(),
     soundTakes: () => sound.takes(),
     async swarm(mode) {

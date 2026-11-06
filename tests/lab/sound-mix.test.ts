@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LabBus } from "../../src/lab/events";
 import { LabSound, mergeDucks } from "../../src/lab/sound";
-import { BUS_GAIN, CALLOUT_TRIM_DB, FIREFLY_LEVELS, FIREFLY_TARGET, MASTER_GAIN, MUSIC, classOf, fireflyGain } from "../../src/lab/sound-tiers";
+import { BUS_GAIN, CALLOUT_TRIM_DB, FIREFLY_LEVELS, FIREFLY_TARGET, KEYS_MIX, MASTER_GAIN, MUSIC, classOf, fireflyGain } from "../../src/lab/sound-tiers";
 
 /** The lab's manifest with one file for each of `ids`, as the dev server would answer it. */
 function serve(ids: readonly string[]): void {
@@ -80,5 +80,29 @@ describe("lab sound: the mix pass (06/11)", () => {
     const merged = mergeDucks([{ start: 2, end: 2.5, low: low6 }, { start: 0, end: 1, low: low6 }, { start: 1.2, end: 1.8, low: low7 }]);
     expect(merged).toEqual([{ start: 0, end: 2.5, low: low7 }]);
     expect(mergeDucks([{ start: 0, end: 1, low: low6 }, { start: 3, end: 4, low: low6 }])).toHaveLength(2);
+  });
+
+  it("loads the Typing Feel catalogue's default key set (read only) and records each key on its own bus, never twice in a row", async () => {
+    const catalogue = { default: "bright-clack", profiles: [{ id: "deep", manifest: "sets/deep/aa/keys-manifest.json" }, { id: "bright-clack", manifest: "sets/bright-clack/bb/keys-manifest.json" }] };
+    const set = { files: [{ file: "key-01.ogg", set: "key" }, { file: "key-02.ogg", set: "key" }, { file: "space-01.ogg", set: "space" }] };
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      asked.push(url);
+      const body = url.endsWith("/v1/keys/keys-manifest.json") ? catalogue : url.includes("/sets/bright-clack/bb/") ? set : {};
+      return { ok: true, headers: { get: () => "application/json" }, json: async () => body };
+    });
+    const sound = new LabSound();
+    expect(await sound.loadKeys("/feel/v1/keys/keys-manifest.json")).toBe("bright-clack");
+    expect(asked).toContain("/feel/v1/keys/sets/bright-clack/bb/keys-manifest.json");
+    await sound.record();
+    for (let i = 0; i < 6; i += 1) sound.key("key");
+    sound.key("space");
+    const takes = sound.takes();
+    expect(takes).toHaveLength(7);
+    for (const t of takes) expect(t).toMatchObject({ key: true, send: 0 });
+    expect(takes[0]!.gain).toBeCloseTo(10 ** (KEYS_MIX.busDb / 20) / MASTER_GAIN, 9);
+    for (let i = 1; i < 6; i += 1) expect(takes[i]!.url).not.toBe(takes[i - 1]!.url);
+    expect(takes[6]!.url).toBe("/feel/v1/keys/sets/bright-clack/bb/space-01.ogg");
+    expect(await sound.loadKeys("/feel/v1/keys/keys-manifest.json", "missing")).toBe("");
   });
 });

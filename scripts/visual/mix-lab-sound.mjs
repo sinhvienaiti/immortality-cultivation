@@ -20,7 +20,7 @@ import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { LIMITER, MUSIC, SPEECH_DIP, VOICE_CAP } from "../../src/lab/sound-tiers.ts";
+import { KEYS_MIX, LIMITER, MUSIC, SPEECH_DIP, VOICE_CAP } from "../../src/lab/sound-tiers.ts";
 
 const SR = 48000;
 const args = process.argv.slice(2);
@@ -55,6 +55,8 @@ const fileOf = (url) => {
   } catch {
     // a literal "%" in a file name: use it as it is
   }
+  // Vite's /@fs/<absolute path> (the Typing Feel keys, outside the lab's root) is that file.
+  if (path.startsWith("/@fs/")) return path.slice(4);
   return join(root, path);
 };
 /** Duration (s) and channel count of each file, probed once. */
@@ -161,7 +163,8 @@ sounding.forEach((t, j) => {
     lines.push(`[w${j}]volume=${t.send}[ws${j}]`);
     wetLabels.push(`[ws${j}]`);
   }
-  (t.ui ? uiLabels : labels).push(`[t${j}]`);
+  // UI sounds and typed keys join after the headroom and the limiter (live: their own nodes to the output).
+  (t.ui || t.key ? uiLabels : labels).push(`[t${j}]`);
 });
 lines.push(`anullsrc=r=${SR}:cl=stereo,atrim=0:${duration.toFixed(4)}[base]`);
 labels.push("[base]");
@@ -196,6 +199,32 @@ if (musicFile !== "") {
   labels.push("[music]");
 }
 const fadeAt = Math.max(0, duration - 0.05).toFixed(4);
+// Under each typed key the skills' 2–8 kHz dips (KEYS_MIX.dip, live: a peaking filter on the master): the mix minus
+// k × envelope × its band (k: a peaking cut of dip.gain dB at the centre), the envelope a mono float input at SR.
+const keyAts = sounding.filter((t) => t.key).map((t) => t.at).sort((a, b) => a - b);
+let keyDipInput = null;
+if (keyAts.length > 0) {
+  const d = KEYS_MIX.dip;
+  const n = Math.round(duration * SR);
+  const env = new Float32Array(n);
+  let target = 0;
+  let level = 0;
+  let next = 0;
+  let until = -1;
+  const up = 1 - Math.exp(-1 / (d.attack * SR));
+  const down = 1 - Math.exp(-1 / (d.release * SR));
+  for (let i = 0; i < n; i += 1) {
+    const t = i / SR;
+    while (next < keyAts.length && keyAts[next] <= t) until = keyAts[next++] + d.hold;
+    target = t < until ? 1 : 0;
+    level += (target - level) * (target > level ? up : down);
+    env[i] = level;
+  }
+  keyDipInput = join(mkdtempSync(join(tmpdir(), "mix-key-dip-")), "env.f32");
+  writeFileSync(keyDipInput, Buffer.from(env.buffer));
+}
+const keyDipIndex = files.length + (hasWet ? 1 : 0) + (musicFile !== "" ? 1 : 0);
+const dipK = (1 - 10 ** (KEYS_MIX.dip.gain / 20)).toFixed(5);
 const post = [
   `amix=inputs=${labels.length}:normalize=0:duration=longest`,
   // Sample-count timestamps: the ducks and the trim land on exact samples whatever the inputs' frame sizes.
@@ -210,9 +239,22 @@ const post = [
   `atrim=end_sample=${Math.round(duration * SR)}`,
   `afade=t=out:st=${fadeAt}:d=0.05`,
 ].join(",");
-if (uiLabels.length === 0) lines.push(`${labels.join("")}${post}[out]`);
+// The key dip goes in before the master (live: the peaking filter right after it): the skills' sum split, its band
+// times the dip's envelope taken off, then the master chain.
+let mainIn = labels.join("");
+let chain = post;
+if (keyDipInput !== null) {
+  lines.push(`${mainIn}amix=inputs=${labels.length}:normalize=0:duration=longest,asetpts=N/SR/TB,asplit=2[dry][toBand]`);
+  lines.push(`[toBand]bandpass=f=${KEYS_MIX.dip.freq}:width_type=q:width=${KEYS_MIX.dip.q}:csg=0[band]`);
+  lines.push(`[${keyDipIndex}:a]aformat=sample_fmts=flt:channel_layouts=mono,pan=stereo|c0=c0|c1=c0,asetpts=N/SR/TB[env]`);
+  lines.push(`[band][env]amultiply,volume=-${dipK}[dipped]`);
+  lines.push(`[dry][dipped]amix=inputs=2:normalize=0:duration=first[premix]`);
+  mainIn = "[premix]";
+  chain = post.replace(`amix=inputs=${labels.length}:normalize=0:duration=longest`, "anull");
+}
+if (uiLabels.length === 0) lines.push(`${mainIn}${chain}[out]`);
 else {
-  lines.push(`${labels.join("")}${post}[mixed]`);
+  lines.push(`${mainIn}${chain}[mixed]`);
   lines.push(`${uiLabels.join("")}amix=inputs=${uiLabels.length}:normalize=0:duration=longest,volume=0.9,apad=whole_dur=${duration.toFixed(4)}[uiMix]`);
   lines.push(`[mixed][uiMix]amix=inputs=2:normalize=0:duration=first,asetpts=N/SR/TB[out]`);
 }
@@ -223,6 +265,7 @@ writeFileSync(script, lines.join(";\n"));
 const inputs = files.flatMap((f) => ["-i", f]);
 if (hasWet) inputs.push("-i", irFile);
 if (musicFile !== "") inputs.push("-stream_loop", "-1", "-i", resolve(musicFile));
+if (keyDipInput !== null) inputs.push("-f", "f32le", "-ar", String(SR), "-ac", "1", "-i", keyDipInput);
 // ffmpeg 7.1+ reads an option's value from a file with "-/option" (-filter_complex_script is gone).
 const ffmpegArgs = ["-y", "-hide_banner", "-loglevel", "error", ...inputs, "-/filter_complex", script, "-map", "[out]", "-c:a", raw ? "pcm_f32le" : "pcm_s16le", resolve(outPath)];
 console.log(["ffmpeg", ...ffmpegArgs].map((v) => /^[\w./:=+,-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`).join(" "));

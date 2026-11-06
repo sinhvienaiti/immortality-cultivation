@@ -209,4 +209,12 @@ export const SPEECH_DIP = { freq: 2000, q: 0.7, gain: -3 } as const;
  * automatic make-up gain at these settings, taken off before it. The offline mix applies the same headroom and its own
  * limiter. UI sounds (and keys, when they arrive) join after it: their level stays theirs.
  */
+/**
+ * Typed keys in the mix (Typing Feel's shared pack, its files untouched): a 60 WPM stream of its default set measures
+ * −32.9 LUFS-M max, the key tier in the mix is −28…−24 (AUDIO_PIPELINE §4.3.3), so the key bus is +7 dB (≈ −26). Each
+ * keystroke dips the skills' 2–8 kHz by `dip.gain` dB for `dip.hold` s (audio.md §5.4: dry hits dip at most −3 dB under
+ * the word), so no skill buries a key's click; keys themselves are never ducked or limited.
+ */
+export const KEYS_MIX = { busDb: 7, dip: { freq: 4000, q: 0.5, gain: -3, attack: 0.004, hold: 0.045, release: 0.03 } } as const;
+
 export const LIMITER = { headroomDb: -3, thresholdDb: -2, ratio: 20, attack: 0.003, release: 0.12, makeupDb: 1.1 } as const;

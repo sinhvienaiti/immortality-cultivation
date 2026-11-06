@@ -24,7 +24,7 @@
  */
 import type { LabEvent } from "./events";
 import {
-  BUS_GAIN, CALLOUT_TRIM_DB, FIREFLY_FADE, FIREFLY_TARGET, LIMITER, MASTER_GAIN, MUSIC, SEND_LEVEL, SPEECH_DIP, VERB_RETURN, VOICE_CAP, classOf,
+  BUS_GAIN, CALLOUT_TRIM_DB, FIREFLY_FADE, FIREFLY_TARGET, KEYS_MIX, LIMITER, MASTER_GAIN, MUSIC, SEND_LEVEL, SPEECH_DIP, VERB_RETURN, VOICE_CAP, classOf,
   fireflyGain, trimGain, type SoundBus, type VoiceGroup,
 } from "./sound-tiers";
 
@@ -161,6 +161,8 @@ export interface SoundTake {
   readonly from?: number;
   /** A UI sound: it joins after the mix's headroom and limiter (its `gain` is before the master's). */
   readonly ui?: boolean;
+  /** A typed key (Typing Feel): it joins after the mix's headroom and limiter too, outside every duck. */
+  readonly key?: boolean;
   /** Its voice group, the group's cap and the oldest's fade (the offline mix applies them as live does). */
   readonly group?: VoiceGroup;
   /** A fade-out from this many seconds after its start, over [1] s (a long file shortened to its skill). */
@@ -261,10 +263,83 @@ export class LabSound {
   private music: GainNode | null = null;
   private musicSrc: AudioBufferSourceNode | null = null;
   private musicUrl: string | null = null;
+  /**
+   * Loads a Typing Feel key set (the shared pack, read only; docs/games/TYPING_FEEL_SERVICE.md): `catalogue` is
+   * <origin>/v1/keys/keys-manifest.json, `profile` a profile id (none: the catalogue's default). Its files decode with
+   * the context. Resolves to the set's id ("" when it is not there).
+   */
+  async loadKeys(catalogue: string, profile?: string): Promise<string> {
+    try {
+      const base = catalogue.slice(0, catalogue.lastIndexOf("/") + 1);
+      const cat = (await (await fetch(catalogue)).json()) as { default?: string; profiles?: { id: string; manifest: string }[] };
+      const id = profile ?? cat.default;
+      const row = cat.profiles?.find((p) => p.id === id);
+      if (row === undefined) return "";
+      const setUrl = base + row.manifest;
+      const set = (await (await fetch(setUrl)).json()) as { files?: { file: string; set: string }[] };
+      const dir = setUrl.slice(0, setUrl.lastIndexOf("/") + 1);
+      this.keyFiles.key = [];
+      this.keyFiles.space = [];
+      for (const f of set.files ?? []) if (f.set === "key" || f.set === "space") this.keyFiles[f.set].push(dir + f.file);
+      if (this.context !== null) for (const url of [...this.keyFiles.key, ...this.keyFiles.space]) void this.buffer(url);
+      this.keySet = row.id;
+      return row.id;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * A typed key's sound from the Typing Feel set (a random file, never the last one), at unity: the pack's files carry
+   * their level. It sounds on its own bus, so no skill, hush, pre-duck or limiter ever takes it down (audio.md §5.4).
+   */
+  key(kind: "key" | "space" = "key"): boolean {
+    const list = this.keyFiles[kind].length > 0 ? this.keyFiles[kind] : this.keyFiles.key;
+    if (!this.enabled || list.length === 0) return false;
+    this.keyRand = (this.keyRand * 1103515245 + 12345) >>> 0;
+    let url = list[this.keyRand % list.length]!;
+    if (url === this.lastKeyFile && list.length > 1) url = list[(this.keyRand + 1) % list.length]!;
+    this.lastKeyFile = url;
+    this.asked["key:" + kind] = (this.asked["key:" + kind] ?? 0) + 1;
+    if (this.recording !== null) {
+      this.recording.push({ at: this.clock, url, gain: 10 ** (KEYS_MIX.busDb / 20) / MASTER_GAIN, send: 0, pan: 0, rate: 1, key: true });
+      return true;
+    }
+    const context = this.context;
+    const buffer = this.buffers.get(url);
+    if (context === null || this.keysBus === null || buffer === undefined) return false;
+    // The skills give the click room: their 2–8 kHz dips for a moment (never the key itself).
+    if (this.keyDip !== null) {
+      const g = this.keyDip.gain;
+      const now = context.currentTime;
+      const d = KEYS_MIX.dip;
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(d.gain, now, d.attack);
+      g.setTargetAtTime(0, now + d.hold, d.release);
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.keysBus);
+    source.start();
+    source.onended = () => source.disconnect();
+    this.played += 1;
+    return true;
+  }
+
   /** The music's pre-ducks in force (context s): each from `start` down to `low` until `end`. */
   private ducks: { start: number; end: number; low: number }[] = [];
   /** The 1–4 kHz cut on loops (SPEECH_DIP). */
   private loopDip: BiquadFilterNode | null = null;
+  /** Typed keys: their own bus to the output, outside the master, the hush, the pre-ducks and the limiter. */
+  private keysBus: GainNode | null = null;
+  /** The skills' 2–8 kHz dip under each keystroke (KEYS_MIX.dip), on the master before the headroom. */
+  private keyDip: BiquadFilterNode | null = null;
+  /** The Typing Feel set's files by kind (loaded with the context) and the last one played (never twice in a row). */
+  private readonly keyFiles: Record<"key" | "space", string[]> = { key: [], space: [] };
+  private lastKeyFile = "";
+  /** The key set in use ("" none): its profile id and name. */
+  keySet = "";
+  private keyRand = 0x2468ace;
 
   /** `variants`: element suffixes to look for beside each event when there is no manifest (the files are probed). */
   constructor(private readonly variants: readonly string[] = []) {}
@@ -320,10 +395,20 @@ export class LabSound {
     limiter.ratio.value = LIMITER.ratio;
     limiter.attack.value = LIMITER.attack;
     limiter.release.value = LIMITER.release;
-    this.master.connect(headroom).connect(limiter).connect(context.destination);
+    const keyDip = context.createBiquadFilter();
+    keyDip.type = "peaking";
+    keyDip.frequency.value = KEYS_MIX.dip.freq;
+    keyDip.Q.value = KEYS_MIX.dip.q;
+    keyDip.gain.value = 0;
+    this.keyDip = keyDip;
+    this.master.connect(keyDip).connect(headroom).connect(limiter).connect(context.destination);
     this.ui = context.createGain();
     this.ui.gain.value = MASTER_GAIN;
     this.ui.connect(context.destination);
+    this.keysBus = context.createGain();
+    this.keysBus.gain.value = 10 ** (KEYS_MIX.busDb / 20);
+    this.keysBus.connect(context.destination);
+    for (const url of [...this.keyFiles.key, ...this.keyFiles.space]) void this.buffer(url);
     for (const bus of Object.keys(BUS_GAIN) as Bus[]) {
       const node = context.createGain();
       node.gain.value = BUS_GAIN[bus];
