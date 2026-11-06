@@ -75,6 +75,10 @@ import { CameraKick, FlashLights, smooth01 } from "./feel";
 import { SCREEN_TIERS, ScreenFx, ULT_CLIMAX_FRAMES, type ImpactRole, type ScreenTier } from "../view/screen-fx";
 import { LabBus, type Material } from "./events";
 import { DeathFx } from "./death-fx";
+import { FoeFlipbookFx, type FoePose } from "./foe-flipbook-fx";
+import { speciesDef } from "../sim/targeting";
+import { uToM } from "../sim/fixed";
+import type { SimEvent, World } from "../content/types";
 import { VictimDirector } from "./victims";
 import { CutIn, CUTIN_ART, CUTIN_SHOUT_CANDIDATES } from "./cutin";
 import { LAB_TAKES, LabSound, type SoundTake, type TakeLoop } from "./sound";
@@ -256,7 +260,7 @@ if (qiPresenter) {
   // Observe failures immediately while the rest of the lab's assets load.
   void qiPresenter.ready.catch((error: unknown) => console.error("swarm lab assets", error));
 }
-const greybox = params.get("key2") === "twin-pearl" ? new TwinPearlGreybox(view.camera, () => ({ x: caster.x, y: 1.2, z: caster.z }), (frame) => sound.twinFrame(frame), (event, world) => sound.simBeast(event, world)) : null;
+const greybox = params.get("key2") === "twin-pearl" ? new TwinPearlGreybox(view.camera, () => ({ x: caster.x, y: 1.2, z: caster.z }), (frame) => sound.twinFrame(frame), (event, world) => { sound.simBeast(event, world); simFoeEvent(event, world, GREY_FOE_BASE); }) : null;
 if (greybox !== null) {
   view.layers.fx.add(greybox.group);
   herd.group.visible = false;
@@ -515,6 +519,9 @@ function emitImpact(slot: string, target: number, dx: number, dz: number, power:
   e.dx = dx;
   e.dz = dz;
   e.power = power;
+  e.damage = slot === "k8" || slot === "k9" ? clipSkillNow?.damage ?? "heavy" : e.tier === "ultimate" ? "ult" : power >= 0.8 || role === "finisher" ? "heavy" : "light";
+  e.directional = slot === "auto" || slot === "k1" || slot === "k2" || slot === "k3" || slot === "k4" || slot === "k7"
+    || ((slot === "k8" || slot === "k9") && (clipSkillNow?.shape === "sweep" || clipSkillNow?.shape === "line"));
   e.killed = killed;
   e.beastTier = herd.tier(target);
   e.material = materialOf(e.beastTier);
@@ -533,6 +540,7 @@ function emitImpact(slot: string, target: number, dx: number, dz: number, power:
     d.dz = dz;
     d.rgb = rgb;
     d.beastTier = e.beastTier;
+    d.ink = inkDeath;
     bus.emit(d);
   }
 }
@@ -686,6 +694,93 @@ bus.on((e) => {
 /** Set while key 7 lands a blow: its deaths dissolve into ink and qi motes. */
 let inkDeath = false;
 const deathFx = new DeathFx(view.layers.fx, { flare: textures.flare, shock: textures.shock, splash: textures.splash, glow: textures.glow, scorch: textures.scorch }, quality === "low");
+const GREY_FOE_BASE = 1_000_000;
+const SWARM_FOE_BASE = 2_000_000;
+// LabHerd has no species accessor. Read its actual species index (herd.ts SPECIES order), never its tier.
+const HERD_SPECIES = ["phong-lang", "thiet-giap-tru", "thach-thu", "thiet-boi-lang-vuong"] as const;
+const foePose: FoePose = { target: -1, x: 0, y: 0, z: 0, radius: 0.5, beastTier: 0 };
+const foeScreen = new THREE.Vector3();
+const greyBody = new THREE.Vector3();
+const simFoeEvents = new LabBus();
+const swarmFoeTargets = new Int16Array(1024).fill(-1);
+function herdFoePose(i: number, p: FoePose): void {
+  p.target = i;
+  p.x = herd.x(i); p.y = herd.midY(i) + herd.airY(i); p.z = herd.z(i);
+  p.radius = herd.radius(i); p.beastTier = herd.tier(i);
+  p.species = HERD_SPECIES[herd["sp"][i]!];
+  p.serial = undefined; p.elite = p.beastTier >= 2;
+}
+function simFoePose(world: World, slot: number, base: number, p: FoePose): void {
+  const b = world.beasts.list[slot]!;
+  const shape = speciesDef(b.species).placeholder;
+  p.target = base + slot; p.species = b.species; p.serial = b.serial;
+  p.elite = b.elite !== null || b.general || b.boss;
+  p.beastTier = b.boss ? 4 : b.elite !== null || b.general ? 3 : b.tier === "medium" ? 2 : b.tier === "swarm" ? 0 : 1;
+  p.x = uToM(b.x); p.z = uToM(b.z); p.y = uToM(b.y) + shape.heightMm / 2000;
+  p.radius = shape.widthMm / 2000;
+  if (base === GREY_FOE_BASE && greybox !== null) {
+    // Same dimensions as the greybox's visible body, including its flyer and king.
+    greybox["beastSize"](b, greyBody);
+    p.radius = greyBody.x * 0.5; p.y = uToM(b.y) + greyBody.y * 0.5;
+  } else if (base === SWARM_FOE_BASE) {
+    const i = swarmFoeTargets[slot] ?? -1;
+    if (i >= 0) { p.x = herd.x(i); p.y = herd.midY(i) + herd.airY(i); p.z = herd.z(i); p.radius = herd.radius(i); }
+  }
+}
+const foeFx = new FoeFlipbookFx(view.layers.fx, "/art-src/lab/vfx/", {
+  alive(i) {
+    if (i < GREY_FOE_BASE) return herd.alive(i);
+    const world = i >= SWARM_FOE_BASE ? qiSwarm?.world : greybox?.world;
+    return world?.beasts.list[i % GREY_FOE_BASE]?.alive === true;
+  },
+  pose(i, p) {
+    if (i < GREY_FOE_BASE) herdFoePose(i, p);
+    else {
+      const base = i >= SWARM_FOE_BASE ? SWARM_FOE_BASE : GREY_FOE_BASE;
+      const world = base === SWARM_FOE_BASE ? qiSwarm?.world : greybox?.world;
+      if (world) simFoePose(world, i - base, base, p);
+    }
+  },
+}, location.search, {
+  priority(p) { foeScreen.set(p.x, p.y, p.z).project(view.camera); return foeScreen.x * foeScreen.x + foeScreen.y * foeScreen.y; },
+  legacy(e, painted) {
+    if (e.ink) deathFx.dissolve(e.x, e.y, e.z, e.dx, e.dz, e.beastTier, painted);
+    else deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier, painted);
+  },
+});
+function simFoeEvent(event: SimEvent, world: World, base: number, herdTarget = -1): void {
+  if (event.type !== "hit" && event.type !== "death") return;
+  const b = world.beasts.list[event.beast.slot];
+  if (!b || b.serial !== event.beast.serial) return;
+  if (base === SWARM_FOE_BASE && herdTarget >= 0) swarmFoeTargets[b.slot] = herdTarget;
+  simFoePose(world, b.slot, base, foePose);
+  if (event.type === "death") {
+    const d = simFoeEvents.death;
+    d.target = foePose.target; d.x = foePose.x; d.y = foePose.y; d.z = foePose.z;
+    d.dx = 0; d.dz = -1; d.rgb = 0xffd899; d.beastTier = foePose.beastTier; d.ink = false;
+    foeFx.queueDeath(d, foePose);
+  } else {
+    const e = simFoeEvents.impact;
+    e.target = foePose.target; e.x = foePose.x; e.y = foePose.y; e.z = foePose.z;
+    e.damage = event.phase === "burst" ? "heavy" : "light"; e.directional = true;
+    const dx = foePose.x - caster.x, dz = foePose.z - caster.z, length = Math.hypot(dx, dz) || 1;
+    e.dx = dx / length; e.dz = dz / length; e.beastTier = foePose.beastTier;
+    foeFx.queueImpact(e, foePose);
+  }
+}
+function simFoeStatuses(world: World | undefined, base: number): void {
+  if (!world || foeFx.old) return;
+  for (const b of world.beasts.list) {
+    const id = base + b.slot;
+    if (!b.alive) { foeFx.stop(id); continue; }
+    const broken = b.posture?.brokenUntil ?? -1;
+    const stun = b.mode === "stunned" || b.mode === "downed" || broken > world.tick;
+    const left = (Math.max(b.hardUntil, broken) - world.tick) / 60;
+    foeFx.status(id, "stun", stun ? left : 0);
+    foeFx.status(id, "bind", !stun && b.hardUntil > world.tick ? left : 0);
+  }
+}
+
 // Victim tiers (round 3a, P6): per cast of key 7 or K5, a few hero victims launched and pinned by a planted sword,
 // a shared hop for the secondary ones, the rim flash and dissolve for the rest; a hero's kill bursts after its pin.
 const victims = new VictimDirector(
@@ -699,6 +794,15 @@ const victims = new VictimDirector(
     if (!elementDeath(x, y, z, dx, dz, beastTier >= 2 ? 0.8 : 0.45, true)) deathFx.spawn(x, y, z, dx, dz, rgb, beastTier);
   },
 );
+const oldHeldDeath = herd.onDie;
+herd.onDie = (i) => {
+  if (foeFx.old) { oldHeldDeath?.(i); return; }
+  herdFoePose(i, foePose);
+  const d = simFoeEvents.death;
+  d.target = i; d.x = foePose.x; d.y = foePose.y; d.z = foePose.z;
+  d.dx = 0; d.dz = -1; d.rgb = victims["deathRgb"][i] ?? 0xffffff; d.beastTier = foePose.beastTier; d.ink = false;
+  foeFx.queueDeath(d, foePose);
+};
 const deathArgs: DeathArgs = { slot: "k1", at: new THREE.Vector3(), dx: 0, dz: -1, radius: 0.5, pal: weaponById(DEFAULT_WEAPON)!.glow };
 /**
  * A death in the element's material (canon D59: replace, never stack): with a kit whose death hook draws, the lab's
@@ -721,6 +825,11 @@ bus.on((e) => {
   if (e.kind === "release") victims.cast(e.slot);
   else if (e.kind === "impact") victims.impact(e, frameNo);
   else if (e.kind === "death" && !herd.isHero(e.target)) {
+    if (!foeFx.old) {
+      herdFoePose(e.target, foePose);
+      foeFx.queueDeath(e, foePose);
+      return;
+    }
     // A five-phase sample's kill: it burns away (the herd's dissolve) into the element's ember burst and rising embers.
     if (fiveKill !== null) {
       fiveKill.death(e.x, e.y, e.z);
@@ -740,6 +849,13 @@ bus.on((e) => {
     // Key 7's deaths dissolve into ink and qi motes (round 3b, item 4); the other skills keep their light burst.
     if (inkDeath) deathFx.dissolve(e.x, e.y, e.z, e.dx, e.dz, e.beastTier);
     else deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier);
+  }
+});
+bus.on((e) => {
+  if (e.kind === "impact") {
+    herdFoePose(e.target, foePose);
+    foeFx.queueImpact(e, foePose);
+    if (e.killed) foeFx.stop(e.target);
   }
 });
 // Key 7, Vạn Kiếm Triều Tông (canon D58 (2), POWER_RESEARCH): the field-wide prototype on the skill tier with an
@@ -1033,7 +1149,7 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
     },
     status(i, kind, seconds, rim, colour) {
       herd.status(i, rim, seconds, tmpColour.set(colour).getHex(THREE.SRGBColorSpace));
-      if (kind === "stun" || kind === "bind") herd.holdBeast(i, seconds);
+      if (kind === "stun" || kind === "bind") { herd.holdBeast(i, seconds); foeFx.status(i, kind, seconds); }
       else if (kind === "slow") herd.slow(i, seconds, 0.35);
     },
   };
@@ -1656,6 +1772,8 @@ function reset(): void {
   kick.reset();
   presence.reset();
   deathFx.reset();
+  foeFx.clear();
+  swarmFoeTargets.fill(-1);
   victims.reset();
   compiler.reset();
   numbers.clear();
@@ -2104,7 +2222,6 @@ function frame(dt: number): void {
   handSword?.update(world, dt, fx, view.camera);
   updateFive(world);
   presence.update(world, dt, caster.x, caster.z, fx);
-  deathFx.update(world);
   victims.update(world);
   // Numbers are UI: they compile and float on real time (through a hit-stop or the cut-in).
   compiler.update(dt);
@@ -2131,6 +2248,10 @@ function frame(dt: number): void {
   screen.applyCamera(view.camera);
   // The grey box steps its sim world on real time (through a hit-stop) and places its volumes for this frame.
   greybox?.update(dt);
+  simFoeStatuses(qiSwarm?.world, SWARM_FOE_BASE);
+  simFoeStatuses(greybox?.world, GREY_FOE_BASE);
+  foeFx.update(greybox !== null ? dt : world);
+  deathFx.update(world);
   qiSwarm?.draw(world);
   placeTags();
   view.render(dt);
@@ -2420,6 +2541,7 @@ void (async () => {
     qiSwarm = new QiSwarmLab(herd, qiPresenter, () => ({ x: caster.x, z: caster.z }), (event, target) => {
       sound.swarmEvent(event);
       sound.simBeast(event, qiSwarm!.world);
+      simFoeEvent(event, qiSwarm!.world, SWARM_FOE_BASE, target);
       if (event.type === "skill-fx" && event.stage === "swarm-cast") compiler.headline(1_000_000 + event.castId!);
       if (event.type === "hit" && event.castId !== undefined && target >= 0) compiler.add(1_000_000 + event.castId, target, event.amount, false, event.x, herd.midY(target), event.z, 0xffd899, herd.tier(target), 0.125, event.phase === "burst", true);
     });

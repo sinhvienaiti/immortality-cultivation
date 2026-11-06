@@ -53,8 +53,9 @@ export class DeathFx {
     parent.add(this.scorch.mesh, this.pool.mesh, this.ink.mesh, this.ring.mesh, this.threads.mesh, this.shards.mesh, this.sparks.mesh, this.burst.mesh);
   }
 
+  /** Painted deaths retain the flash, shock ring, ground scorch/light; the atlas replaces debris/ink/threads. */
   /** A beast died at (x, y, z), struck along (dx, dz), by a blow of colour `rgb` (0xRRGGBB); `beastTier` 0–4. */
-  spawn(x: number, y: number, z: number, dx: number, dz: number, rgb: number, beastTier: number): void {
+  spawn(x: number, y: number, z: number, dx: number, dz: number, rgb: number, beastTier: number, painted = false): void {
     this.c.setHex(rgb, THREE.SRGBColorSpace);
     // The blow's colour is a pale flash (45 % white): take the white out (a power on the unit colour), so the
     // threads and the burst read as jade or cyan, not as white bloom.
@@ -94,30 +95,32 @@ export class DeathFx {
     r.a = 0.6;
     this.ring.emit();
     // The body shatters into spirit sparks: from all over it, outward, rising, in the killer's colour.
-    const nSparks = Math.max(6, Math.round((big ? 26 : 12) * this.dens));
-    for (let i = 0; i < nSparks; i += 1) {
-      const a = this.rand.range(0, Math.PI * 2);
-      const r = this.rand.range(0.1, 0.45) * k;
-      const s = this.sparks.spec.reset();
-      s.x = x + Math.cos(a) * r;
-      s.y = y + this.rand.range(-0.3, 0.35) * k;
-      s.z = z + Math.sin(a) * r;
-      const sp = this.rand.range(1.8, 4.6) * (k > 2 ? 1.3 : 1);
-      s.vx = Math.cos(a) * sp + dx * 1.6;
-      s.vz = Math.sin(a) * sp + dz * 1.6;
-      s.vy = this.rand.range(1.4, 3.4);
-      s.drag = 2.6;
-      s.gravity = 0.8;
-      // Thin streaks, not round blobs (a field of soft discs read as "bubbles").
-      s.stretch = 0.055;
-      s.life = this.rand.range(0.45, 0.8);
-      s.size0 = this.rand.range(0.1, 0.18) * (k > 2 ? 1.4 : 1);
-      s.size1 = 0.04;
-      const hot = i % 4 === 0 ? 1.6 : 1;
-      s.r = (ur * 2.4 + (hot - 1)) * hot;
-      s.g = (ug * 2.4 + (hot - 1)) * hot;
-      s.b = (ub * 2.4 + (hot - 1)) * hot;
-      this.sparks.emit();
+    if (!painted) {
+      const nSparks = Math.max(6, Math.round((big ? 26 : 12) * this.dens));
+      for (let i = 0; i < nSparks; i += 1) {
+        const a = this.rand.range(0, Math.PI * 2);
+        const r = this.rand.range(0.1, 0.45) * k;
+        const s = this.sparks.spec.reset();
+        s.x = x + Math.cos(a) * r;
+        s.y = y + this.rand.range(-0.3, 0.35) * k;
+        s.z = z + Math.sin(a) * r;
+        const sp = this.rand.range(1.8, 4.6) * (k > 2 ? 1.3 : 1);
+        s.vx = Math.cos(a) * sp + dx * 1.6;
+        s.vz = Math.sin(a) * sp + dz * 1.6;
+        s.vy = this.rand.range(1.4, 3.4);
+        s.drag = 2.6;
+        s.gravity = 0.8;
+        // Thin streaks, not round blobs (a field of soft discs read as "bubbles").
+        s.stretch = 0.055;
+        s.life = this.rand.range(0.45, 0.8);
+        s.size0 = this.rand.range(0.1, 0.18) * (k > 2 ? 1.4 : 1);
+        s.size1 = 0.04;
+        const hot = i % 4 === 0 ? 1.6 : 1;
+        s.r = (ur * 2.4 + (hot - 1)) * hot;
+        s.g = (ug * 2.4 + (hot - 1)) * hot;
+        s.b = (ub * 2.4 + (hot - 1)) * hot;
+        this.sparks.emit();
+      }
     }
     // A scorch on the ground where it fell and a brief pool of the killer's light.
     const g = this.scorch.spec.reset();
@@ -145,89 +148,91 @@ export class DeathFx {
     p.b = ub * 0.4;
     this.pool.emit();
     // Spirit threads unwinding upward, each leaning its own way, growing from the body over ~0.18 s.
-    const nThreads = Math.max(2, Math.round((big ? 5 : 3) * this.dens));
-    for (let i = 0; i < nThreads; i += 1) {
-      const a = (i / nThreads) * Math.PI * 2 + this.rand.range(-0.4, 0.4);
-      const lean = this.rand.range(0.08, 0.3);
-      const t = this.threads.spec.reset();
-      t.x = x + Math.cos(a) * 0.15;
-      t.y = y;
-      t.z = z + Math.sin(a) * 0.15;
-      const hx = Math.cos(a) * lean + dx * 0.25;
-      const hz = Math.sin(a) * lean + dz * 0.25;
-      const l = Math.hypot(hx, 1, hz);
-      t.dx = hx / l;
-      t.dy = 1 / l;
-      t.dz = hz / l;
-      t.vx = hx * 0.8;
-      t.vy = 1.1;
-      t.vz = hz * 0.8;
-      t.len0 = 0.25;
-      t.len1 = (1.0 + this.rand.range(0, 0.6)) * k;
-      t.grow = 0.2;
-      t.w0 = 0.2 * k;
-      t.w1 = 0.07;
-      t.life = this.rand.range(0.65, 0.9);
-      // A soft coloured wisp: a modest core (only its middle blooms) inside a strong halo.
-      t.cr = ur * 1.3;
-      t.cg = ug * 1.3;
-      t.cb = ub * 1.3;
-      t.hr = ur * 0.85;
-      t.hg = ug * 0.85;
-      t.hb = ub * 0.85;
-      t.fadeBase = 0.45;
-      t.fadeTip = 0.4;
-      t.rise = 0.03;
-      this.threads.emit();
-    }
-    // Ink flecks flung along the blow, falling.
-    const nInk = Math.max(2, Math.round((big ? 5 : 3) * this.dens));
-    for (let i = 0; i < nInk; i += 1) {
-      const s = this.ink.spec.reset();
-      s.x = x;
-      s.y = y;
-      s.z = z;
-      const sp = this.rand.range(2.0, 3.4);
-      const side = this.rand.range(-0.7, 0.7);
-      s.vx = (dx + -dz * side) * sp;
-      s.vz = (dz + dx * side) * sp;
-      s.vy = this.rand.range(1.2, 2.6);
-      s.gravity = -9;
-      s.drag = 1;
-      s.life = this.rand.range(0.45, 0.65);
-      s.size0 = this.rand.range(0.3, 0.45) * k;
-      s.size1 = s.size0 * 1.5;
-      s.rot = this.rand.range(0, 6.28);
-      s.rotV = this.rand.range(-3, 3);
-      s.r = INK[0];
-      s.g = INK[1];
-      s.b = INK[2];
-      s.a = 0.92;
-      this.ink.emit();
-    }
-    // Every death throws luminous spirit shards: four from a small beast, eight from an elite or the king.
-    {
-      const nShards = big ? 8 : 4;
-      for (let i = 0; i < nShards; i += 1) {
-        const a = (i / nShards) * Math.PI * 2 + this.rand.range(-0.3, 0.3);
-        const s = this.shards.spec.reset();
+    if (!painted) {
+      const nThreads = Math.max(2, Math.round((big ? 5 : 3) * this.dens));
+      for (let i = 0; i < nThreads; i += 1) {
+        const a = (i / nThreads) * Math.PI * 2 + this.rand.range(-0.4, 0.4);
+        const lean = this.rand.range(0.08, 0.3);
+        const t = this.threads.spec.reset();
+        t.x = x + Math.cos(a) * 0.15;
+        t.y = y;
+        t.z = z + Math.sin(a) * 0.15;
+        const hx = Math.cos(a) * lean + dx * 0.25;
+        const hz = Math.sin(a) * lean + dz * 0.25;
+        const l = Math.hypot(hx, 1, hz);
+        t.dx = hx / l;
+        t.dy = 1 / l;
+        t.dz = hz / l;
+        t.vx = hx * 0.8;
+        t.vy = 1.1;
+        t.vz = hz * 0.8;
+        t.len0 = 0.25;
+        t.len1 = (1.0 + this.rand.range(0, 0.6)) * k;
+        t.grow = 0.2;
+        t.w0 = 0.2 * k;
+        t.w1 = 0.07;
+        t.life = this.rand.range(0.65, 0.9);
+        // A soft coloured wisp: a modest core (only its middle blooms) inside a strong halo.
+        t.cr = ur * 1.3;
+        t.cg = ug * 1.3;
+        t.cb = ub * 1.3;
+        t.hr = ur * 0.85;
+        t.hg = ug * 0.85;
+        t.hb = ub * 0.85;
+        t.fadeBase = 0.45;
+        t.fadeTip = 0.4;
+        t.rise = 0.03;
+        this.threads.emit();
+      }
+      // Ink flecks flung along the blow, falling.
+      const nInk = Math.max(2, Math.round((big ? 5 : 3) * this.dens));
+      for (let i = 0; i < nInk; i += 1) {
+        const s = this.ink.spec.reset();
         s.x = x;
         s.y = y;
         s.z = z;
-        const sp = this.rand.range(4, 6) * (k > 2 ? 1.3 : 1);
-        s.vx = Math.cos(a) * sp;
-        s.vz = Math.sin(a) * sp;
-        s.vy = this.rand.range(1.5, 3.5);
-        s.gravity = -4;
-        s.drag = 2.2;
-        s.stretch = 0.06;
-        s.life = 0.55;
-        s.size0 = (big ? 0.42 : 0.3) * k;
-        s.size1 = 0.14 * k;
-        s.r = ur * 2.6;
-        s.g = ug * 2.6;
-        s.b = ub * 2.6;
-        this.shards.emit();
+        const sp = this.rand.range(2.0, 3.4);
+        const side = this.rand.range(-0.7, 0.7);
+        s.vx = (dx + -dz * side) * sp;
+        s.vz = (dz + dx * side) * sp;
+        s.vy = this.rand.range(1.2, 2.6);
+        s.gravity = -9;
+        s.drag = 1;
+        s.life = this.rand.range(0.45, 0.65);
+        s.size0 = this.rand.range(0.3, 0.45) * k;
+        s.size1 = s.size0 * 1.5;
+        s.rot = this.rand.range(0, 6.28);
+        s.rotV = this.rand.range(-3, 3);
+        s.r = INK[0];
+        s.g = INK[1];
+        s.b = INK[2];
+        s.a = 0.92;
+        this.ink.emit();
+      }
+      // Every death throws luminous spirit shards: four from a small beast, eight from an elite or the king.
+      {
+        const nShards = big ? 8 : 4;
+        for (let i = 0; i < nShards; i += 1) {
+          const a = (i / nShards) * Math.PI * 2 + this.rand.range(-0.3, 0.3);
+          const s = this.shards.spec.reset();
+          s.x = x;
+          s.y = y;
+          s.z = z;
+          const sp = this.rand.range(4, 6) * (k > 2 ? 1.3 : 1);
+          s.vx = Math.cos(a) * sp;
+          s.vz = Math.sin(a) * sp;
+          s.vy = this.rand.range(1.5, 3.5);
+          s.gravity = -4;
+          s.drag = 2.2;
+          s.stretch = 0.06;
+          s.life = 0.55;
+          s.size0 = (big ? 0.42 : 0.3) * k;
+          s.size1 = 0.14 * k;
+          s.r = ur * 2.6;
+          s.g = ug * 2.6;
+          s.b = ub * 2.6;
+          this.shards.emit();
+        }
       }
     }
   }
@@ -237,34 +242,36 @@ export class DeathFx {
    * breaks into ink that blooms and drifts along the blow, and dissolves into qi motes rising out of it, white and
    * cyan; a scorch stays. `beastTier` 0–4.
    */
-  dissolve(x: number, y: number, z: number, dx: number, dz: number, beastTier: number): void {
+  dissolve(x: number, y: number, z: number, dx: number, dz: number, beastTier: number, painted = false): void {
     const big = beastTier >= 2;
     const k = beastTier >= 4 ? 2.2 : big ? 1.35 : 1;
     // Ink blooming out of the body (normal blend, dark under the motes), drifting along the blow.
-    const nInk = Math.max(3, Math.round((big ? 7 : 4) * this.dens));
-    for (let i = 0; i < nInk; i += 1) {
-      const s = this.ink.spec.reset();
-      const a = this.rand.range(0, Math.PI * 2);
-      const r = this.rand.range(0.05, 0.35) * k;
-      s.x = x + Math.cos(a) * r;
-      s.y = y + this.rand.range(-0.25, 0.3) * k;
-      s.z = z + Math.sin(a) * r;
-      const sp = this.rand.range(0.8, 2.2);
-      s.vx = dx * sp + Math.cos(a) * 0.6;
-      s.vz = dz * sp + Math.sin(a) * 0.6;
-      s.vy = this.rand.range(0.3, 1.1);
-      s.drag = 2.4;
-      s.life = this.rand.range(0.6, 0.95);
-      s.fadeIn = 0.03;
-      s.size0 = this.rand.range(0.35, 0.55) * k;
-      s.size1 = s.size0 * this.rand.range(1.9, 2.5);
-      s.rot = this.rand.range(0, 6.28);
-      s.rotV = this.rand.range(-1.2, 1.2);
-      s.r = INK[0];
-      s.g = INK[1];
-      s.b = INK[2];
-      s.a = 0.82;
-      this.ink.emit();
+    if (!painted) {
+      const nInk = Math.max(3, Math.round((big ? 7 : 4) * this.dens));
+      for (let i = 0; i < nInk; i += 1) {
+        const s = this.ink.spec.reset();
+        const a = this.rand.range(0, Math.PI * 2);
+        const r = this.rand.range(0.05, 0.35) * k;
+        s.x = x + Math.cos(a) * r;
+        s.y = y + this.rand.range(-0.25, 0.3) * k;
+        s.z = z + Math.sin(a) * r;
+        const sp = this.rand.range(0.8, 2.2);
+        s.vx = dx * sp + Math.cos(a) * 0.6;
+        s.vz = dz * sp + Math.sin(a) * 0.6;
+        s.vy = this.rand.range(0.3, 1.1);
+        s.drag = 2.4;
+        s.life = this.rand.range(0.6, 0.95);
+        s.fadeIn = 0.03;
+        s.size0 = this.rand.range(0.35, 0.55) * k;
+        s.size1 = s.size0 * this.rand.range(1.9, 2.5);
+        s.rot = this.rand.range(0, 6.28);
+        s.rotV = this.rand.range(-1.2, 1.2);
+        s.r = INK[0];
+        s.g = INK[1];
+        s.b = INK[2];
+        s.a = 0.82;
+        this.ink.emit();
+      }
     }
     // Qi motes rising out of the ink: slow, small, white and cyan; a few hot ones bloom.
     const nMotes = Math.max(6, Math.round((big ? 22 : 11) * this.dens));

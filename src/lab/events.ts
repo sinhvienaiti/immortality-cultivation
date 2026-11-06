@@ -47,6 +47,9 @@ export interface ImpactEvent {
   dx: number;
   dz: number;
   power: number;
+  /** Actual damage class and attack shape, supplied by the caller. */
+  damage?: "light" | "heavy" | "ult";
+  directional?: boolean;
   killed: boolean;
   material: Material;
   /** The beast's size class (TargetField.tier): 0 swarm … 2 medium (elite in the lab), 4 king. */
@@ -56,6 +59,8 @@ export interface ImpactEvent {
 }
 
 export interface DeathEvent {
+  /** Preserve key 7's qi support layers while a bucket waits. */
+  ink?: boolean;
   kind: "death";
   target: number;
   x: number;
