@@ -380,6 +380,8 @@ bus.on((e) => {
 const sound = new LabSound(elementKits().map((k) => k.sound));
 // The Firefly takes of the streak counter, the channel and the meteor rain (sound.ts LAB_TAKES) load with the context.
 sound.registerTakes(Object.values(LAB_TAKES));
+// ?music=<url>: a track on the music bus (the lab has none of its own), to hear the pre-ducks before big hits.
+if (params.get("music") !== null) sound.setMusic(params.get("music"));
 bus.on((e) => {
   // The channel (key C) has its own start and pulse sounds (updateChannelSound): its release and its ticks stay out of
   // the shared release and hit sounds (a pulse keeps its hit, its kills their death).
@@ -403,6 +405,7 @@ window.addEventListener("keydown", unlockAudio);
 window.addEventListener("pointerdown", unlockAudio);
 /** The release event: on the key's frame, before the VFX cast (they read the hand after the caster's update). */
 function emitRelease(slot: string, tx: number, tz: number): void {
+  preDuckFor(slot);
   const r = bus.release;
   r.slot = slot;
   r.tier = tierOf(slot);
@@ -426,6 +429,21 @@ function emitRelease(slot: string, tx: number, tz: number): void {
     c.slot = slot;
     c.tier = r.tier;
     bus.emit(c);
+  }
+}
+/**
+ * The music's pre-duck before a skill's big hit (REF_VIDEO_LESSONS lesson 11; sound.ts preDuck): key 2's flying cut and
+ * key 5's first falling blades land about 0.25–0.3 s after the key, key 7's sweep at MYRIAD_SWEEP_AT, key 6's climax
+ * K5_CLIMAX_S after it fires (measured on the lab's capture, 06/11). Keys 8, 9 and M duck from their own strike times.
+ */
+const K5_CLIMAX_S = 1.55;
+function preDuckFor(slot: string): void {
+  if (slot === "k2") sound.preDuck(0.25, "heavy");
+  else if (slot === "k4") sound.preDuck(0.3, "heavy");
+  else if (slot === "k5") sound.preDuck(K5_CLIMAX_S, "ult");
+  else if (slot === "k7") {
+    sound.preDuck(0.15, "ult");
+    sound.preDuck(MYRIAD_SWEEP_AT, "ult");
   }
 }
 /** Lab time on real seconds (the key's time stamp). */
@@ -797,6 +815,8 @@ function startUltimate(tx: number, tz: number): void {
   c.tier = "ultimate";
   bus.emit(c);
   worldEvent("k5", "open");
+  // The cut-in holds the world, then the ultimate fires (about 1.7 s after the key, measured): the music dips before it.
+  sound.preDuck(1.7, "ult");
   // The world darkens under the cut-in (before the release), so the swords blaze against the dark when it fires.
   ultDark = true;
   ultDarkEnd = -1;
@@ -900,6 +920,8 @@ const showcaseHost: ShowcaseHost = {
   accent: (k) => screen.warm(k),
   shake: (px, seconds, roll) => screen.shake(px, seconds, roll),
   captionHost: document.body,
+  // Keys 8 and 9's Firefly files through the lab's mix: each at its class's level, two big voices at most.
+  sound: (file, cls) => sound.playFirefly(file, cls),
 };
 const showcase = new Showcase(stage.flipbooks, showcaseHost, ULT_SHOWCASE);
 const expansion = new Showcase(stage.flipbooks, showcaseHost, EXPANSION_SHOWCASE);
@@ -921,8 +943,9 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
     layer: view.layers.fx,
     player: stage.flipbooks,
     caster: (out) => out.set(caster.x, 0, caster.z),
-    release(skill, at) {
+    release(skill, at, firstS) {
       clipSkillNow = skill;
+      sound.preDuck(firstS, skill.damage === "ult" ? "ult" : "heavy");
       emitRelease(slot, at.x, at.z);
     },
     blow(skill, i, dx, dz, power, role) {
@@ -1052,7 +1075,9 @@ function castMeteor(dry = false): void {
   const at = meteor.last?.impactAt ?? [];
   const a = LAB_TAKES.meteor;
   const first = at[0] ?? 0;
-  sound.playTake(a, { send: 0.4, from: Math.max(a.onset, a.peak - first) });
+  sound.playTake(a, { send: 0.4, from: Math.max(a.onset, a.peak - first), group: "big" });
+  sound.preDuck(first, "heavy");
+  sound.preDuck(at[at.length - 1] ?? first, "heavy");
   if (at.length >= 3) {
     const b = LAB_TAKES.meteorB;
     const last = at[at.length - 1]!;
@@ -1064,7 +1089,7 @@ function updateWorldSounds(world: number): void {
   for (let i = worldSounds.length - 1; i >= 0; i -= 1) {
     const w = worldSounds[i]!;
     if (w.at > worldClock) continue;
-    sound.playTake(w.take, { send: 0.4, from: w.from });
+    sound.playTake(w.take, { send: 0.4, from: w.from, group: "big" });
     worldSounds.splice(i, 1);
   }
 }
@@ -1946,7 +1971,8 @@ declare global {
       /** Drawn length (CSS px) of the visible flying blades this frame, Kiếm skills and key 7: count, p10, median. */
       bladePx(): Record<string, number>;
       /** Sound hooks: files found per event id, what was asked since reset (heard or silent), sounds started. */
-      sound(): { found: Record<string, number>; asked: Record<string, number>; played: number };
+      /** What the lab's sound asked for and played; `music`: the music bus's gain now (1, or under a pre-duck). */
+      sound(): { found: Record<string, number>; asked: Record<string, number>; played: number; music: number };
       /**
        * Sound for fixed-step videos: from now the lab logs what it would play on its own clock instead of playing it;
        * resolves when the files are known. Mix the log with scripts/visual/mix-lab-sound.mjs.
@@ -2625,7 +2651,7 @@ void (async () => {
       stats("vanFar", byCls[2]!);
       return out;
     },
-    sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played }),
+    sound: () => ({ found: sound.found(), asked: { ...sound.asked }, played: sound.played, music: sound.musicLevel() }),
     soundRecord: () => sound.record(),
     soundTakes: () => sound.takes(),
     async swarm(mode) {

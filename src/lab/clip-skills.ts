@@ -334,9 +334,9 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
   },
   // B6 Taixu Sword Immortal Phantom · Thái Hư Kiếm Tiên Pháp Tướng
   {
-    id: "immortal-sword-progenitor-avatar", element: "metal", shape: "multi", radius: 1.9, count: 24, damage: "ult", mark: false, linger: 1.6, sfx: "tt-sfx-x-immortal-sword-progenitor-avatar/take4.wav",
+    id: "immortal-sword-progenitor-avatar", element: "metal", shape: "multi", radius: 1.9, count: 24, damage: "ult", mark: false, linger: 1.6, sfx: "tt-sfx-x-immortal-sword-progenitor-avatar/take3.wav",
     strikes: [{ frame: "peak", power: 1 }],
-    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak; element any: its design's first, metal",
+    guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak; element any: its design's first, metal; sound: take 3 (take 4 measured −37 LUFS, near silent; 06/11)",
   },
 ];
 
@@ -598,8 +598,8 @@ export interface ClipSkillHost {
   /** The lab's flipbooks (an element's mark clip is taken from its library when that element is loaded). */
   readonly player: FlipbookPlayer;
   caster(out: THREE.Vector3): void;
-  /** The cast, on the key's frame (the release event). */
-  release(skill: ClipSkill, at: THREE.Vector3): void;
+  /** The cast, on the key's frame (the release event); its first strike lands `firstS` s later (the music's pre-duck). */
+  release(skill: ClipSkill, at: THREE.Vector3, firstS: number): void;
   /** One blow on beast `i` through the lab's hit path (the herd's hit, the impact event, the numbers); true: it killed. */
   blow(skill: ClipSkill, i: number, dx: number, dz: number, power: number, role: ImpactRole): boolean;
   /** A strike landing at `at`: the screen's impact at the skill's tier (its hit-stop and shake), the kick, the light. */
@@ -735,7 +735,7 @@ export class ClipSkillRunner {
       skill, t: 0, clipAt: lead, times, video, handle: null, t0: 0, clipped: false, anchor: new THREE.Vector3(aim.anchor.x, 0, aim.anchor.z), aim,
       beats: [], hits: [], next: 0, colour, report,
     };
-    this.host.release(skill, run.anchor);
+    this.host.release(skill, run.anchor, lead + times[0]!);
     this.running.push(run);
     this.last = report;
     if (lead === 0) this.spawnClip(run, 0);
@@ -757,7 +757,7 @@ export class ClipSkillRunner {
       velocity: fl !== undefined ? flyV.set(fl.vx, 0, fl.vz) : undefined,
       // A flying beast, or a field scene dropped on a point (D1's seal), drawn smaller so it sits on its point.
       scale: fl !== undefined || (r.skill.shape === "point" && it.place === "field") ? FLY_SCALE : undefined,
-      feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx, video: r.video,
+      feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx, soundClass: r.skill.damage === "ult" ? "ult" : "heavy", video: r.video,
     });
     // Its video's clock (none: it fell back to its atlas, and the strikes keep the cast's clock).
     r.handle = r.video ? this.showcase.played : null;

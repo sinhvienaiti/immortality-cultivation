@@ -26,16 +26,18 @@ describe("lab sound: the Firefly takes of the streak, the channel and the meteor
     sound.update(1);
     expect(sound.playTake(LAB_TAKES.channelStart, { send: 0.25 })).toBe(true);
     expect(sound.playTake(LAB_TAKES.streakCount, { bus: "ui", gain: 0.8 })).toBe(true);
-    // A late join (the meteor's first fall): it starts further in, so its file starts earlier on the clock.
-    sound.playTake(LAB_TAKES.meteor, { from: 0.93 });
+    // A late join (the meteor's first fall): it starts further into its file.
+    sound.playTake(LAB_TAKES.meteor, { from: 0.93, group: "big" });
     const [start, tick, fall] = sound.takes();
     expect(start!.url).toBe(FIREFLY_SOUND + LAB_TAKES.channelStart.file);
-    expect(start!.at).toBeCloseTo(1 - LAB_TAKES.channelStart.onset, 5);
+    expect(start!.at).toBeCloseTo(1, 5);
+    expect(start!.from).toBeCloseTo(LAB_TAKES.channelStart.onset, 5);
     expect(start!.send).toBeGreaterThan(0);
     expect(tick!.at).toBeCloseTo(1, 5);
+    expect(tick!.from).toBeUndefined();
     expect(tick!.gain).toBeCloseTo(LAB_TAKES.streakCount.gain * 0.8, 5);
     expect(tick!.send).toBe(0);
-    expect(fall!.at).toBeCloseTo(1 - 0.93, 5);
+    expect(fall).toMatchObject({ from: 0.93, group: "big" });
     expect(sound.loopTake(LAB_TAKES.channelLoop, 1)).toBeNull();
   });
 });
