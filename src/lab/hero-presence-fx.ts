@@ -45,8 +45,10 @@ export class HeroPresenceFx {
   private worldTime = 0;
   private lastTyped = 0;
   private blockedUntil = -1;
+  private ultimateWasReady = false;
+  private goldenWasActive = false;
 
-  constructor(parent: THREE.Object3D, base: string, search = "", player?: FlipbookPlayer) {
+  constructor(parent: THREE.Object3D, base: string, search = "", player?: FlipbookPlayer, private readonly sound: (id: "ui-skill-ready" | "guard-body") => void = () => {}) {
     this.enabled = heroPresenceEnabled(search);
     this.player = player ?? new FlipbookPlayer(base);
     this.player.group.name = "fx-hero-presence";
@@ -104,9 +106,14 @@ export class HeroPresenceFx {
   /** Separate clocks: idle and atlas eviction use real seconds; the parry and clip motion use world seconds. */
   update(dt: number, realDt: number, pose: HeroPresencePose): void {
     if (!this.enabled) return;
+    if (pose.ultimateReady && !this.ultimateWasReady) this.sound("ui-skill-ready");
+    this.ultimateWasReady = pose.ultimateReady;
     const step = Math.max(0, dt), real = Math.max(0, realDt);
     this.time += real;
     this.worldTime += step;
+    const goldenActive = pose.guardActive && this.worldTime < this.blockedUntil;
+    if (goldenActive && !this.goldenWasActive) this.sound("guard-body");
+    this.goldenWasActive = goldenActive;
     for (let i = 0; i < this.layers.length; i += 1) {
       const layer = this.layers[i]!;
       layer.pool?.clear();
@@ -144,6 +151,8 @@ export class HeroPresenceFx {
   clear(): void {
     this.lastTyped = this.time;
     this.blockedUntil = -1;
+    this.ultimateWasReady = false;
+    this.goldenWasActive = false;
     for (const layer of this.layers) layer.level = 0;
     this.player.clear();
   }

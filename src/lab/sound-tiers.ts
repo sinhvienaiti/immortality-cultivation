@@ -107,6 +107,14 @@ export const FIREFLY_TARGET: Readonly<Record<"heavy" | "ult", number>> = { heavy
  * 269's audit (06/11/2026; tt-sfx-x-immortal-sword-progenitor-avatar take 4 measured −37.3, near silent: take 3 plays).
  */
 export const FIREFLY_LEVELS: Readonly<Record<string, readonly [number, number]>> = {
+  // Lane B3: ffmpeg ebur128, 07/11; .local/laneB3-sounds/measurements.json.
+  "tt-sfx-guard-body/take3.wav": [-8.0, -2.3],
+  "tt-sfx-boss-entrance-roar/take6.wav": [-5.8, -0.0],
+  "tt-sfx-boss-phase2-roar/take3.wav": [-8.1, -0.2],
+  "tt-sfx-elite-reveal-aura/take3.wav": [-11.1, -0.4],
+  "tt-sfx-ui-skill-ready/take1.wav": [-8.8, -0.0],
+  "tt-sfx-boss-phase-shockwave/take1.wav": [-5.8, 0.0],
+
   "tt-sfx-ui-confirm/take5.wav": [-22.2, -3.6],
   "tt-sfx-ui-back/take4.wav": [-19.8, -0.5],
   "tt-sfx-ui-panel-open/take1.wav": [-20.6, -1.7],

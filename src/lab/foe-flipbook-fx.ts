@@ -73,6 +73,7 @@ interface Atlas {
 interface Pending<T> { readonly event: T; readonly pose: FoePose; rank: number }
 export interface FoeFxOptions {
   readonly player?: FlipbookPlayer;
+  readonly sound?: (id: "boss-entrance-roar" | "boss-phase2-roar" | "boss-phase-shockwave" | "elite-reveal-aura", x: number) => void;
   readonly legacy?: (event: DeathEvent, painted: boolean) => void;
   /** Squared distance to the centre in screen space. */
   readonly priority?: (pose: FoePose) => number;
@@ -127,6 +128,7 @@ export class FoeFlipbookFx {
   private bossN = 0;
   private readonly legacy: (event: DeathEvent, painted: boolean) => void;
   private readonly priority: (p: FoePose) => number;
+  private readonly sound: NonNullable<FoeFxOptions["sound"]>;
   readonly old: boolean;
   readonly aurasEnabled: boolean;
 
@@ -134,6 +136,7 @@ export class FoeFlipbookFx {
     this.old = oldDeathFx(search);
     this.aurasEnabled = foeAuraEnabled(search);
     this.player = options.player ?? new FlipbookPlayer(base);
+    this.sound = options.sound ?? (() => {});
     this.legacy = options.legacy ?? (() => {});
     this.priority = options.priority ?? ((p) => p.x * p.x + p.z * p.z);
     this.player.group.name = "fx-foe-flipbooks";
@@ -350,6 +353,7 @@ export class FoeFlipbookFx {
       const hp = p.hpFraction ?? 1;
       if (!a.active) {
         a.active = true;
+        this.sound(a.boss ? "boss-entrance-roar" : "elite-reveal-aura", p.x);
         a.start = this.time;
         a.phaseAt = -1;
         a.phased = false;
@@ -359,6 +363,8 @@ export class FoeFlipbookFx {
       }
       if (a.boss && !a.phased && a.hp > 0.5 && hp <= 0.5) {
         a.phased = true;
+        this.sound("boss-phase2-roar", p.x);
+        this.sound("boss-phase-shockwave", p.x);
         a.phaseAt = this.time;
         Object.assign(a.phase, p);
       }

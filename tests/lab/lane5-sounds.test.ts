@@ -234,6 +234,8 @@ describe("lane 5: existing lab events use measured sprint files", () => {
     for (const phase of ["open", "shout", "stamp", "close"] as const) sound.cutin(phase);
     sound.guardBlock(0);
     for (const action of ["confirm", "back", "panel-open", "panel-close", "cursor-move"] as const) sound.uiCue(action);
+    // B3's activation paths and comparison switches are exercised in laneB3-sounds.test.ts.
+    for (const id of ["boss-entrance-roar", "boss-phase2-roar", "boss-phase-shockwave", "elite-reveal-aura", "ui-skill-ready", "guard-body"]) sound.sprint(id);
     expect(new Set(ids(sound))).toEqual(new Set(Object.keys(SPRINT_TAKES).map((id) => "tt-sfx-" + id)));
   });
 

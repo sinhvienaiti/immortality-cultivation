@@ -752,6 +752,7 @@ const foeFx = new FoeFlipbookFx(view.layers.fx, "/art-src/lab/vfx/", {
     }
   },
 }, location.search, {
+  sound: (id, x) => { sound.sprint(id, { pan: Math.max(-1, Math.min(1, x / 22)) }); },
   priority(p) { foeScreen.set(p.x, p.y, p.z).project(view.camera); return foeScreen.x * foeScreen.x + foeScreen.y * foeScreen.y; },
   legacy(e, painted) {
     if (e.ink) deathFx.dissolve(e.x, e.y, e.z, e.dx, e.dz, e.beastTier, painted);
@@ -958,7 +959,7 @@ function setAura(id: AuraId): AuraId {
  * closed, then cuts to the shout on the callout's "天", which starts 1.08 s into callout-k5/01.ogg (retune `shoutAt`
  * with that file); 1.7 s in all.
  */
-const cutin = new CutIn(document.body, (phase) => sound.cutin(phase));
+const cutin = new CutIn(document.body, (phase) => sound.cutin(phase), params.toString());
 const ULT_HOLD = Number(params.get("cutin") ?? "1.7") || 1.7;
 /** ?cutinArt=a|b|c picks the painting style (owner preview, 03/11 evening: he asked to try B, the anime cel). */
 /** ?cutinShout=c1..c4|b1..b3 swaps only the shout frame for an elegant-face candidate, skin matched to the gather (owner preview, 03/11 evening). */
@@ -984,7 +985,7 @@ function startUltimate(tx: number, tz: number): void {
   ultAim.x = tx;
   ultAim.z = tz;
   typing = null;
-  cutin.start(ULT_CUTIN);
+  cutin.start({ ...ULT_CUTIN, element: fx.element.id });
   // The world stops now: the callout and the world-change sound, a short flash in the skill's colour.
   const c = bus.callout;
   c.slot = "k5";
@@ -1015,7 +1016,7 @@ let pendingMyriad = false;
 let myriadFirstHit = false;
 // The caster's presence: a ground ring and a key rim that follow it, and the sparks of a blow landing on it (presence.ts).
 const presence = new CasterPresence(view.layers.fx, textures.glow, textures.shock);
-const heroPresence = new HeroPresenceFx(view.layers.fx, "/art-src/lab/vfx/", location.search);
+const heroPresence = new HeroPresenceFx(view.layers.fx, "/art-src/lab/vfx/", location.search, undefined, (id) => { sound.sprint(id); });
 const heroPresencePose: HeroPresencePose = { x: 0, y: 0, z: 0, height: caster.heightM, ultimateReady: false, guardActive: false };
 // The painted foot ring replaces the old procedural one, including the presence=0 comparison.
 presence.ringOn = false;

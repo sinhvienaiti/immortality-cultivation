@@ -32,6 +32,7 @@ import "@fontsource/cormorant-garamond/700.css";
 import "@fontsource/cormorant-garamond/700-italic.css";
 import "@fontsource/ma-shan-zheng/400.css";
 import { LAB_ASSETS } from "./look";
+import { CutInMaterials } from "./cutin-materials";
 
 /** The painting (dev server path; art-src is never built or committed). */
 const PORTRAIT = "/art-src/roster/kiem-nu.png";
@@ -178,6 +179,8 @@ const backOut = (t: number): number => {
 };
 
 export interface CutInSpec {
+  /** Material selection is captured at start, independent of later element changes. */
+  readonly element?: string;
   /** English name (what the player reads) and the hanzi of the skill. */
   readonly name: string;
   readonly hanzi: string;
@@ -205,6 +208,7 @@ const MOTES_N = 26;
 const BLOTS_N = 7;
 
 export class CutIn {
+  private readonly materials: CutInMaterials;
   private readonly root: HTMLDivElement;
   private readonly shade: HTMLDivElement;
   private readonly band: HTMLDivElement;
@@ -245,7 +249,8 @@ export class CutIn {
   private t = -1;
   private spec: CutInSpec = { name: "", hanzi: "", seconds: 0.9 };
 
-  constructor(parent: HTMLElement, private readonly sound?: (phase: "open" | "shout" | "stamp" | "close") => void) {
+  constructor(parent: HTMLElement, private readonly sound?: (phase: "open" | "shout" | "stamp" | "close") => void,
+    search = typeof location === "undefined" ? "" : location.search) {
     const div = (css: string): HTMLDivElement => {
       const d = document.createElement("div");
       d.style.cssText = css;
@@ -336,6 +341,7 @@ export class CutIn {
     }
     this.root.append(this.shade, this.band, this.edgeTop, this.edgeBot, ...this.blots);
     parent.append(this.root);
+    this.materials = new CutInMaterials(this.band, search);
   }
 
   get active(): boolean {
@@ -384,6 +390,9 @@ export class CutIn {
       this.sealText.append(c);
     }
     this.root.style.display = "block";
+    const painted = this.materials.start(spec.element ?? "metal", spec.seconds, spec.shoutAt ?? 0.45 * spec.seconds);
+    // Keep the old cut-in intact for ?cutinmat=0; painted clips replace its synthetic moving details.
+    for (const d of [this.wash, this.glint, ...this.speed, ...this.streaks, ...this.motes, ...this.blots]) d.style.display = painted ? "none" : "";
     this.measureName();
     // Measured from the fallback face if the name's own (700) is not loaded yet: measure again once it is.
     const face = '700 100px "Cormorant Garamond"';
@@ -413,6 +422,7 @@ export class CutIn {
   stop(): void {
     this.t = -1;
     this.root.style.display = "none";
+    this.materials.stop();
   }
 
   /**
@@ -519,6 +529,7 @@ export class CutIn {
     }
     /** Seconds since the shout frame first showed (negative before). */
     const since = art && this.cutT >= 0 ? t - this.cutT : -1;
+    this.materials.draw(t, W, H, this.cutT >= 0 ? this.cutT : shoutAt);
     // Open at once to its full height (the wipe reveals it); close over the last 0.14 s to its middle line.
     const close = smooth((t - (T - 0.14)) / 0.14);
     const open = 1 - close;

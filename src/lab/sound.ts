@@ -123,6 +123,14 @@ export interface TakeOptions {
 
 /** New sprint layers only; the lab's previously heard takes remain unchanged. */
 export const SPRINT_TAKES: Readonly<Record<string, FireflyTake & { readonly options: TakeOptions }>> = {
+  // Lane B3: one-shot activation accents; looping art never loops these sounds.
+  // Match the golden shell hold/fade; the existing block impacts remain dominant.
+  "guard-body": { ...take("tt-sfx-guard-body/take3.wav", -18, "ui", 0.0096), fade: [0.1696, 0.25], options: { bus: "ui", send: 0 } },
+  "boss-entrance-roar": { ...take("tt-sfx-boss-entrance-roar/take6.wav", -13.5, "world", 0.0094), options: { bus: "world", send: 0.25, group: "big" } },
+  "boss-phase2-roar": { ...take("tt-sfx-boss-phase2-roar/take3.wav", -13.5, "world", 0.0193), options: { bus: "world", send: 0.25, group: "big" } },
+  "boss-phase-shockwave": { ...take("tt-sfx-boss-phase-shockwave/take1.wav", -22, "world", 0.014), options: { bus: "world", send: 0.1, group: "impact" } },
+  "elite-reveal-aura": { ...take("tt-sfx-elite-reveal-aura/take3.wav", -18, "combat", 0), options: { send: 0.1, group: "impact" } },
+  "ui-skill-ready": { ...take("tt-sfx-ui-skill-ready/take1.wav", -18, "ui", 0), options: { bus: "ui", send: 0 } },
   "ui-confirm": { ...take("tt-sfx-ui-confirm/take5.wav", -28, "ui", 0), options: { bus: "ui", send: 0 } },
   "ui-back": { ...take("tt-sfx-ui-back/take4.wav", -28, "ui", 0.1798), options: { bus: "ui", send: 0 } },
   "ui-panel-open": { ...take("tt-sfx-ui-panel-open/take1.wav", -28, "ui", 0.121), options: { bus: "ui", send: 0 } },
