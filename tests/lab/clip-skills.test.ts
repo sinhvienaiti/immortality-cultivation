@@ -251,8 +251,8 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     for (const s of KEY9_SKILLS) {
       expect(s.strikes[0]!.frame).toBe("peak");
       for (const st of s.strikes.slice(1)) expect(st.after).toBeGreaterThan(0);
-      // Its Firefly take, or (Firefly's sound ran out: D6, D7, D8) a noted stand-in.
-      if (s.sfx !== undefined) expect(s.sfx).toMatch(/^tt-sfx-x-[a-z-]+\/take[1-4]\.wav$/);
+      // Its Firefly take (a "#t=" start skips its quiet lead-in), or a noted stand-in.
+      if (s.sfx !== undefined) expect(s.sfx).toMatch(/^tt-sfx-x-[a-z-]+\/take[1-9]\.wav(#t=\d+(\.\d+)?)?$/);
       else expect(s.guess).toMatch(/stands in/);
       expect(s.guess).toBeDefined();
     }
