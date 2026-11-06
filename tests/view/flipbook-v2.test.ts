@@ -12,7 +12,7 @@ import {
 } from "../../src/view/skills/flipbook";
 
 const VERTEX_SHA = "c2f64aa0e39d46ec17b4f60ecd3932e42178f933784a72ee8fec1d38cc25a9c7";
-const FRAGMENT_SHA = "3b5524bd2c052ed97c6261586915f9b218deb5756d0477d634e3605d05b93abd";
+const FRAGMENT_SHA = "abdd83d38bc128cbb046107dc251697115be06a42b515b943e8a11d60f5c6df7";
 const OLD_KEYS = ["id", "url", "cols", "rows", "frames", "fps", "loop", "mode", "aspect", "pivot", "start", "heading"];
 const MODES: FlipbookMode[] = ["rgba", "fire", "smoke", "heat"];
 const LOOPS: FlipbookLoopMode[] = ["none", "stepped", "holderode"];
@@ -88,7 +88,7 @@ describe("1. legacy shader and manifest compatibility", () => {
     const p = pool(undefined, mode);
     oldShader(p);
     expect(p.mesh.material.vertexShader.length).toBe(1823);
-    expect(unwrapTagMask(p.mesh.material.fragmentShader).length).toBe(7272);
+    expect(unwrapTagMask(p.mesh.material.fragmentShader).length).toBe(7902);
     for (const loop of [true, false]) {
       const m = parse({ loop, md5: "0123456789abcdef0123456789abcdef", blend: "normal", alphaKind: "straight", modesAllowed: ["rgba"] });
       expect(Object.keys(m)).toEqual(OLD_KEYS);

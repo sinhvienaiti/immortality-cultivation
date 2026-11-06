@@ -84,7 +84,11 @@ import { DEFAULT_ELEMENT, elementById, elementKits, registerElement } from "../v
 import { DARK_B } from "../view/skills/element-dark";
 import { ElementStage } from "../view/skills/element-stage";
 import type { DeathArgs } from "../view/skills/element-kit";
-import type { FlipbookMode } from "../view/skills/flipbook";
+import { FLIPBOOK_MOTION, setFlipbookKtx2, type FlipbookMode } from "../view/skills/flipbook";
+import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
+import basisWasmUrl from "three/examples/jsm/libs/basis/basis_transcoder.wasm?url";
+import basisJsUrl from "three/examples/jsm/libs/basis/basis_transcoder.js?url";
+import { HybridAB, textureGpuBytes, type AbState } from "./hybrid-ab";
 import { runFlipbookProbe, type FlipbookProbeReport } from "./flipbook-probe";
 import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
@@ -941,6 +945,15 @@ const auraSolo = new AuraSolo(view.layers.fx, textures.trace);
 // A kit's big blow asks for its screen accent (Fire: the warm flash).
 const lightAt = new THREE.Vector3();
 const stage = new ElementStage({ layer: view.layers.fx, camera: view.camera, quality, textures, texture: kitTexture, vfxBase: VFX_BASE, accent: (_x, _y, _z, k) => screen.warm(k), light: (x, y, z, colour, intensity) => lights.flash(lightAt.set(x, y, z), view.camera.position, colour, intensity, true) });
+const AB_SCENE = params.get("ab");
+const AB_ONLY = params.get("only") === "left" ? "left" : params.get("only") === "right" ? "right" : null;
+FLIPBOOK_MOTION.blend = params.get("mv") !== "0";
+const hybridLib = AB_SCENE !== null || params.get("cometFlip") === "1" || params.get("video") === "0" ? stage.flipbooks.library("hybrid", (m) => m.role !== "comet") : undefined;
+if (hybridLib !== undefined && params.get("ktx2") !== "0") {
+  const path = basisWasmUrl.slice(0, basisWasmUrl.lastIndexOf("/") + 1);
+  if (basisJsUrl.slice(0, basisJsUrl.lastIndexOf("/") + 1) !== path) console.warn("[hybrid-ab] basis JS and WASM folders differ");
+  setFlipbookKtx2({ loader: new KTX2Loader().setTranscoderPath(path).detectSupport(view.stage.renderer), variant: params.get("ktx2") === "etc1s" ? "etc1s" : "uastc" });
+}
 // Keys 8 and 9: the pillar skills and element ultimates, and the skills expansion's 30 designs, as their video layers on
 // the field (showcase.ts; not in the sim).
 const showcaseHost: ShowcaseHost = {
@@ -1192,6 +1205,7 @@ function streakLeft(): number {
 // Key M: the slanted meteor rain (canon D62, meteor-rain.ts) in the element E has on; its marks share key 8's.
 const meteorAt = new THREE.Vector3();
 const meteor = new MeteorRain({
+  upgrade: hybridLib,
   targets: herd,
   stage,
   camera: view.camera,
@@ -1303,7 +1317,13 @@ function castCrescentSample(): void {
 /** The crescent leaves on the frame after the caster's update (the tip where the body put it). */
 let pendingCrescent = false;
 meteor.comet.driven = fixed;
-meteor.comet.videoOn = params.get("video") !== "0";
+meteor.comet.mode = AB_SCENE === "meteor" ? (AB_ONLY === "left" ? "video" : AB_ONLY === "right" ? "flipbook" : "ab") : params.get("cometFlip") === "1" || params.get("video") === "0" ? "flipbook" : "video";
+const ab = AB_SCENE === null ? null : new HybridAB({
+  camera: view.camera, layer: view.layers.fx, renderer: view.stage.renderer, player: stage.flipbooks, hybrid: hybridLib!, labelHost: document.body,
+  castMeteor, prepareComet: () => meteor.hasComet(), comet: () => meteor.comet,
+}, { scene: AB_SCENE, only: AB_ONLY, left: params.get("left") === "crf23" ? "crf23" : params.get("left") === "720p" ? "720p" : "video",
+  prewarm: params.get("prewarm") !== "0", autostart: params.get("autostart") !== "0", driven: fixed });
+void ab?.load();
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
@@ -1743,7 +1763,7 @@ window.addEventListener(
 );
 
 // Panel.
-if (params.get("ui") !== "0") {
+if (params.get("ui") !== "0" && AB_SCENE === null) {
   const panel = document.createElement("div");
   panel.style.cssText = "position:fixed;left:12px;top:12px;z-index:10;display:flex;flex-direction:column;gap:6px;font:13px system-ui;color:#e6e9ef";
   panel.dataset.labPanel = "1";
@@ -1986,6 +2006,7 @@ function frame(dt: number): void {
   clipSkills.update(world);
   clipSkills9.update(world);
   meteor.update(world);
+  ab?.update(dt);
   channel.update(world);
   updateChannelSound();
   updateWorldSounds(world);
@@ -2095,6 +2116,9 @@ declare global {
   interface Window {
     __lab?: {
       ready: boolean;
+      ab(): AbState | null;
+      abStart(): void;
+      abSettle(): Promise<boolean>;
       skillBar(): SkillBarState | null;
       /** Ticket 258b: GPU checks of FlipbookPool v2 (programs, GPU vs CPU, mask decode); off-screen, no time passes. */
       flipbookProbe(): Promise<FlipbookProbeReport>;
@@ -2384,6 +2408,9 @@ void (async () => {
   caster.start();
   window.__lab = {
     ready: true,
+    ab: () => ab?.state() ?? null,
+    abStart: () => ab?.start(),
+    abSettle: async () => { const ok = (await ab?.settle()) ?? false; view.render(0); return ok; },
     skillBar: () => bar?.state() ?? null,
     flipbookProbe: () => runFlipbookProbe(view.stage.renderer),
     prewarmReport: () => structuredClone(prewarmReports),
@@ -2881,12 +2908,9 @@ void (async () => {
         seen.add(v);
         if ((r.properties.get(v) as { __webglInit?: boolean }).__webglInit !== true) return;
         const img = v.image as { width?: number; height?: number; videoWidth?: number; videoHeight?: number } | null;
-        const w = img?.videoWidth || img?.width || 0;
-        const h = img?.videoHeight || img?.height || 0;
-        const mips = v.generateMipmaps && v.minFilter !== THREE.LinearFilter && v.minFilter !== THREE.NearestFilter;
         uploaded += 1;
         if (v instanceof THREE.VideoTexture) videoTextures += 1;
-        const b = w * h * 4 * (mips ? 4 / 3 : 1);
+        const b = textureGpuBytes(v);
         bytes += b;
         // By source folder (vfx/<folder>, tex, …): which assets hold the memory.
         const src = (img as { src?: string; currentSrc?: string } | null)?.currentSrc || (img as { src?: string } | null)?.src || "";

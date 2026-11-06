@@ -8,7 +8,7 @@
  * fixed steps (captures) it is seeked along world time. No allocation per frame.
  */
 import * as THREE from "three";
-import { FlipbookPool, ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type FlipOptions } from "../view/skills/flipbook";
+import { FlipbookPool, ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type FlipbookVideo, type FlipOptions } from "../view/skills/flipbook";
 
 /** The card's height (m): the comet's head about 0.9 m across, its own tail ~7 m behind it at the play camera. */
 export const COMET_M = 6;
@@ -21,6 +21,26 @@ const HEAD_R = 0.22;
 const HEAD_OCCLUDE = 0.85;
 /** A paused video waits this long after its last card (world s) before it lets its file go. */
 const IDLE_S = 1.5;
+export type CometMode = "video" | "flipbook" | "ab";
+export function cometPhase(n: number): number { return (n * 0.6180339887498949) % 1; }
+export function cometFrame(clock: number, phase: number, fps: number, frames: number): number { return (clock * fps + phase * frames) % frames; }
+
+// Register on every seek, before settle() is called (paused capture videos also submit frames).
+const videoFrames = new WeakMap<HTMLVideoElement, { done: boolean; handle?: number }>();
+export function watchVideoFrame(el: HTMLVideoElement): void {
+  const old = videoFrames.get(el);
+  if (old?.handle !== undefined) el.cancelVideoFrameCallback(old.handle);
+  const state: { done: boolean; handle?: number } = { done: !el.requestVideoFrameCallback };
+  videoFrames.set(el, state);
+  if (el.requestVideoFrameCallback) state.handle = el.requestVideoFrameCallback(() => { state.done = true; state.handle = undefined; });
+}
+export function seekVideoFrame(el: HTMLVideoElement, t: number): void {
+  el.currentTime = t;
+  watchVideoFrame(el);
+}
+export function videoFrameReady(el: HTMLVideoElement): boolean {
+  return !el.seeking && el.readyState >= 2 && (videoFrames.get(el)?.done ?? !el.requestVideoFrameCallback);
+}
 
 /** The clip's travel heading in its cell (rad, y up): the reverse of its tail direction (frame pixels, y down). */
 export function cometHeading(tail: readonly [number, number]): number {
@@ -60,10 +80,12 @@ export class CometHead {
   private clock = 0;
   private idle = 0;
   private drawn = false;
+  private seenDraw = false;
+  private fromUpgrade = false;
+  private video: FlipbookVideo | undefined;
   /** Fixed steps (the lab's ?fixed=1): the video is seeked along world time instead of playing. */
   driven = false;
-  /** Off: the atlas (the lab's ?video=0). */
-  videoOn = true;
+  mode: CometMode = "video";
   private readonly o: FlipOptions = { life: ONE_FRAME, rate: 0, frame: 0, lift: 0.6, ground: 0, occlude: 0.3, dir: new THREE.Vector3() };
 
   constructor(private readonly layer: THREE.Object3D, private readonly blank: THREE.Texture) {
@@ -82,41 +104,49 @@ export class CometHead {
   }
 
   /** The element folder's comet from `lib` (call each frame it may be needed; cheap once set). False: it has none (yet). */
-  use(folder: string, lib: FlipbookLibrary): boolean {
-    if (folder !== this.folder) {
+  use(folder: string, lib: FlipbookLibrary, upgrade: FlipbookLibrary | null = null): boolean {
+    const candidate = this.rim && upgrade?.get(this.rim.meta.id);
+    if (folder !== this.folder || (this.mode !== "video" && !this.fromUpgrade && candidate && !upgrade!.deferred(candidate.meta.id) && candidate.meta.role === "comet" && candidate.meta.comet)) {
       this.folder = folder;
       this.drop();
     }
     if (this.rim === null) {
       for (const id of lib.ids()) {
-        const e = lib.get(id);
-        if (e === null || e.meta.role !== "comet" || e.meta.comet === undefined) continue;
-        const heading = cometHeading(e.meta.comet.tail);
-        // The atlas card is pinned on the head too (its place in the cell, when the manifest gives it).
-        const meta: FlipbookMeta = { ...e.meta, heading, pivot: e.meta.comet.cell ?? e.meta.pivot };
-        if (e.meta.layer === "body") {
+        const own = lib.get(id);
+        if (own === null || own.meta.role !== "comet" || own.meta.comet === undefined) continue;
+        const better = this.mode !== "video" ? upgrade?.get(id) : null;
+        const useUpgrade = own.meta.layer !== "body" && better != null && better.meta.role === "comet" && better.meta.comet !== undefined && !upgrade!.deferred(id);
+        const e = useUpgrade ? better! : own;
+        const heading = cometHeading(e.meta.comet!.tail);
+        const meta: FlipbookMeta = { ...e.meta, heading, pivot: e.meta.comet!.cell ?? e.meta.pivot };
+        if (meta.layer === "body") {
           if (this.body === null) {
             const pool = this.newPool(id, e.meta.mode, 12);
-            pool.attach(meta, e.texture);
+            pool.attach(meta, e.texture, e.controls);
             this.body = { pool, meta };
           }
-        } else {
+        } else if (this.rim === null) {
           const pool = this.newPool(id, e.meta.mode, 13);
-          pool.attach(meta, e.texture);
+          pool.attach(meta, e.texture, e.controls);
           this.rim = { pool, meta };
-          this.headAtlas.attach(meta, e.texture);
+          this.headAtlas.attach(meta, e.texture, e.controls);
+          this.video = own.meta.video;
+          this.fromUpgrade = useUpgrade;
         }
       }
-      if (this.rim !== null) this.load();
+      if (this.rim !== null && this.mode !== "flipbook") this.load();
     }
+    this.videoPool.clipSide = this.headVideo.clipSide = this.mode === "ab" ? -1 : 0;
+    if (this.rim) this.rim.pool.clipSide = this.mode === "ab" ? 1 : 0;
+    this.headAtlas.clipSide = this.mode === "ab" ? 1 : 0;
     return this.rim !== null;
   }
 
   /** The rim's video, when it has one and this page plays H.264. */
   private load(): void {
     const rim = this.rim!;
-    const v = rim.meta.video;
-    if (!this.videoOn || v === undefined || typeof document === "undefined") return;
+    const v = this.video;
+    if (this.mode === "flipbook" || v === undefined || typeof document === "undefined") return;
     const el = document.createElement("video");
     if (el.canPlayType('video/mp4; codecs="avc1.640028"') === "") return;
     el.muted = true;
@@ -126,6 +156,9 @@ export class CometHead {
     el.crossOrigin = "anonymous";
     el.src = v.url;
     el.load();
+    watchVideoFrame(el);
+    this.seenDraw = false;
+    this.idle = 0;
     const texture = new THREE.VideoTexture(el);
     texture.colorSpace = THREE.SRGBColorSpace;
     this.el = el;
@@ -137,6 +170,10 @@ export class CometHead {
     this.headVideo.attach(cell, texture);
   }
 
+  get upgraded(): boolean { return this.fromUpgrade; }
+  get videoEl(): HTMLVideoElement | null { return this.el; }
+  get videoReady(): boolean { return this.showing; }
+
   /** Whether the video shows frames now (else the atlas draws). */
   private get showing(): boolean {
     return this.el !== null && this.el.readyState >= 2 && this.el.error === null;
@@ -144,36 +181,44 @@ export class CometHead {
 
   /**
    * One comet this frame: its head at `at`, falling along `fall` (world, unit), `size` m tall (the card), `alpha`
-   * shown; `phase` (s) offsets the atlas loop so two comets in the air are not twins; `boost` (0–1) draws its head's
+   * shown; `phase` (0–1 of a loop) offsets the atlas loop so two comets in the air are not twins; `boost` (0–1) draws its head's
    * ball a second time, that much light, solid against the ground.
    */
   draw(at: THREE.Vector3, fall: THREE.Vector3, size = COMET_M, alpha = 1, phase = 0, boost = 0): boolean {
     const rim = this.rim;
     if (rim === null) return false;
     this.drawn = true;
+    this.seenDraw = true;
     const o = this.o;
     (o.dir as THREE.Vector3).copy(fall);
     o.alpha = alpha;
     if (this.body !== null) {
       // The body under the light (Dark's black smoke), its atlas on the same clock.
       const m = this.body.meta;
-      o.frame = ((this.clock + phase) * m.fps) % m.frames;
+      o.frame = cometFrame(this.clock, phase, m.fps, m.frames);
       this.body.pool.spawn(at, size, o);
     }
-    const showing = this.showing;
+    const showing = this.mode !== "flipbook" && this.showing;
+    const atlas = !showing || this.mode === "ab";
     if (showing) {
       o.frame = 0;
       this.videoPool.spawn(at, size, o);
-    } else {
-      o.frame = ((this.clock + phase) * rim.meta.fps) % rim.meta.frames;
-      rim.pool.spawn(at, size, o);
+      if (boost > 0) {
+        o.intensity = boost; o.occlude = HEAD_OCCLUDE;
+        this.headVideo.spawn(at, size, o);
+        o.intensity = undefined; o.occlude = 0.3;
+      }
     }
-    if (boost > 0) {
-      o.intensity = boost;
-      o.occlude = HEAD_OCCLUDE;
-      (showing ? this.headVideo : this.headAtlas).spawn(at, size, o);
-      o.intensity = undefined;
-      o.occlude = 0.3;
+    if (atlas) {
+      o.frame = cometFrame(this.clock, phase, rim.meta.fps, rim.meta.frames);
+      const rect = rim.meta.sourceRect;
+      const scale = this.upgraded && rect ? rect.crop[3] / rect.frame[1] : 1;
+      rim.pool.spawn(at, size * scale, o);
+      if (boost > 0) {
+        o.intensity = boost; o.occlude = HEAD_OCCLUDE;
+        this.headAtlas.spawn(at, size * scale, o);
+        o.intensity = undefined; o.occlude = 0.3;
+      }
     }
     return true;
   }
@@ -183,14 +228,14 @@ export class CometHead {
     this.clock += dt;
     const el = this.el;
     if (this.drawn) this.idle = 0;
-    else this.idle += dt;
+    else if (this.seenDraw) this.idle += dt;
     this.drawn = false;
     if (el !== null) {
-      if (this.idle < 0.05) {
+      if (this.seenDraw && this.idle < 0.05) {
         if (this.driven) {
           if (!el.paused) el.pause();
-          const t = this.clock % Math.max(0.1, this.duration - 0.05);
-          if (Math.abs(el.currentTime - t) > 0.5 / 24) el.currentTime = t;
+          const t = (this.clock - dt) % Math.max(0.1, this.duration - 0.05);
+          if (Math.abs(el.currentTime - t) > 0.5 / 24) seekVideoFrame(el, t);
         } else if (el.paused) void el.play().catch(() => undefined);
       } else if (!el.paused) el.pause();
     }
@@ -200,12 +245,13 @@ export class CometHead {
     this.rim?.pool.update(dt);
     this.body?.pool.update(dt);
     // Long idle: the decoder and its texture go; the next comet loads it again.
-    if (el !== null && this.idle > IDLE_S && el.getAttribute("src") !== null && this.idle - dt <= IDLE_S) {
+    if (this.mode !== "ab" && el !== null && this.idle > IDLE_S && el.getAttribute("src") !== null && this.idle - dt <= IDLE_S) {
       el.removeAttribute("src");
       el.load();
       this.texture?.dispose();
-    } else if (el !== null && this.idle < 0.05 && el.getAttribute("src") === null && this.rim?.meta.video !== undefined) {
-      el.src = this.rim.meta.video.url;
+    } else if (el !== null && this.idle < 0.05 && el.getAttribute("src") === null && this.video !== undefined) {
+      el.src = this.video.url;
+      watchVideoFrame(el);
       el.load();
     }
   }
@@ -221,6 +267,10 @@ export class CometHead {
     this.el?.load();
     this.texture?.dispose();
     this.el = null;
+    this.video = undefined;
+    this.fromUpgrade = false;
+    this.seenDraw = false;
+    this.idle = 0;
     this.texture = null;
     for (const l of [this.rim, this.body]) {
       if (l === null) continue;
@@ -234,6 +284,8 @@ export class CometHead {
   }
 
   clear(): void {
+    this.clock = 0;
+    if (this.el && this.el.readyState >= 2) { this.el.pause(); seekVideoFrame(this.el, 0); }
     this.videoPool.clear();
     this.headVideo.clear();
     this.headAtlas.clear();

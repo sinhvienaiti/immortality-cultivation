@@ -22,7 +22,7 @@
  * the painted burn mark, embers and smoke after.
  */
 import * as THREE from "three";
-import { CometHead } from "./comet-head";
+import { CometHead, cometPhase } from "./comet-head";
 import { blastsAt, METEOR_SIZES, planShower, SHOWER, type MeteorClass, type MeteorSize } from "./meteor-plan";
 import type { FivePhase } from "./five-phase";
 import { CrescentTrail, type TrailMatter } from "../view/skills/crescent-trail";
@@ -89,6 +89,7 @@ const IMPACT_LEAD_S = 0.05;
 
 
 export interface MeteorHost {
+  readonly upgrade?: import("../view/skills/flipbook").FlipbookLibrary;
   readonly targets: TargetField;
   readonly stage: ElementStage;
   readonly camera: THREE.Camera;
@@ -224,7 +225,7 @@ interface Meteor {
   warmed: boolean;
   /** Its fall on screen (rad): the provisional head's turn. */
   rot: number;
-  /** Its comet's loop phase. */
+  /** Its comet's phase (0–1 of a loop). */
   readonly phase: number;
 }
 
@@ -244,7 +245,7 @@ export class MeteorRain {
   private readonly group = new THREE.Group();
   private readonly blank: THREE.DataTexture;
   last: MeteorReport | null = null;
-  /** The element's comet (its video when it plays; the lab sets `driven` on fixed steps and `videoOn` from ?video). */
+  /** The element's comet (its video when it plays; the lab sets `driven` on fixed steps and `mode` from the lab flags). */
   readonly comet: CometHead;
   /** The five-phase layers of this rain (set at its cast; null: the plain rain). */
   private fiveNow: FivePhase | null = null;
@@ -270,7 +271,7 @@ export class MeteorRain {
   /** Whether the element on has its own comet in (its folder loaded). */
   hasComet(): boolean {
     const folder = this.folder();
-    return this.comet.use(folder, this.host.stage.flipbooks.library(folder));
+    return this.comet.use(folder, this.host.stage.flipbooks.library(folder), this.host.upgrade ?? null);
   }
 
   private folder(): string {
@@ -360,7 +361,7 @@ export class MeteorRain {
       this.meteors.push({
         n, cls, size: METEOR_SIZES[cls], cluster: plan.cluster[n]!, blastS: plan.blastS[n]!, fallAt: this.t0 + at - FALL_S, landAt: this.t0 + at,
         role: n === 0 ? "primary" : n === last ? "finisher" : "secondary", target: new THREE.Vector3(), start: new THREE.Vector3(), fall: new THREE.Vector3(),
-        aimed: false, trail: trails[n % Math.max(1, trails.length)] ?? null, spark: 0, landed: false, burnt: false, lit: false, warmed: false, rot: 0, phase: n * 0.37,
+        aimed: false, trail: trails[n % Math.max(1, trails.length)] ?? null, spark: 0, landed: false, burnt: false, lit: false, warmed: false, rot: 0, phase: cometPhase(n),
       });
     });
     this.last = report;

@@ -89,7 +89,17 @@ export const FLIPBOOK_MASKED_LOOK: FlipbookMaskedLook = {
   grade: [0, 0, 0, 0],
 };
 
+export interface Ktx2File { readonly url: string; readonly bytes: number }
+export interface Ktx2Set { readonly uastc?: Ktx2File; readonly etc1s?: Ktx2File }
+export interface FlipbookMotion { readonly url: string; readonly bytes: number; readonly strength: number; readonly ktx2?: Ktx2Set }
+
 export interface FlipbookMeta {
+  readonly bytes?: number;
+  readonly ktx2?: Ktx2Set;
+  readonly motion?: FlipbookMotion;
+  readonly videoVariants?: Readonly<Record<string, FlipbookVideo>>;
+  readonly compareWith?: { readonly folder: string; readonly id: string };
+  readonly sourceRect?: { readonly crop: readonly [number, number, number, number]; readonly frame: readonly [number, number] };
   readonly id: string;
   readonly url: string;
   readonly cols: number;
@@ -146,6 +156,7 @@ export interface FlipbookMeta {
 
 /** A clip's video: its file, size, rate and length, its peak (s) and its origin in the frame (from the top left). */
 export interface FlipbookVideo {
+  readonly bytes?: number;
   readonly url: string;
   readonly w: number;
   readonly h: number;
@@ -178,7 +189,50 @@ function videoOf(video: unknown, base: string): { video?: FlipbookVideo } {
   if (!(w > 0 && h > 0 && fps > 0 && frames > 0 && start >= 0 && peakTime >= 0)) return {};
   const p = video.pivot;
   const pivot: readonly [number, number] = Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === "number" && x >= 0 && x <= 1) ? [p[0] as number, p[1] as number] : [0.5, 0.5];
-  return { video: { url: base + video.file, w, h, fps, frames, start, peakTime, pivot } };
+  return { video: { url: base + video.file, w, h, fps, frames, start, peakTime, pivot, ...(typeof video.bytes === "number" && video.bytes >= 0 ? { bytes: video.bytes } : {}) } };
+}
+
+const byteCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+const versionOf = (v: unknown): string => typeof v === "string" && /^[0-9a-f]{32}$/i.test(v) ? "?v=" + v : "";
+
+function ktx2Of(value: unknown, base: string): Ktx2Set | undefined {
+  if (!record(value) || value.yFlip !== true) return undefined;
+  const out: { uastc?: Ktx2File; etc1s?: Ktx2File } = {};
+  for (const key of ["uastc", "etc1s"] as const) {
+    const f = value[key];
+    if (record(f) && typeof f.file === "string" && /^[a-z0-9][a-z0-9._-]*\.ktx2$/i.test(f.file)) {
+      out[key] = { url: base + f.file + versionOf(f.md5), bytes: byteCount(f.bytes) ? f.bytes : 0 };
+    }
+  }
+  return out.uastc || out.etc1s ? out : undefined;
+}
+
+function hybridOf(entry: Record<string, unknown>, base: string, frames: number): Partial<FlipbookMeta> {
+  const out: { -readonly [K in keyof FlipbookMeta]?: FlipbookMeta[K] } = {};
+  const ktx2 = ktx2Of(entry.ktx2, base);
+  if (ktx2) out.ktx2 = ktx2;
+  const m = entry.motion;
+  if (frames >= 2 && record(m) && typeof m.file === "string" && FILE.test(m.file) && m.layout === "x-rgb-y-a" && m.zero === 128 && m.scale === 127 && typeof m.strength === "number" && m.strength > 0 && m.strength <= 1) {
+    const ktx2 = ktx2Of(m.ktx2, base);
+    out.motion = { url: base + m.file + versionOf(m.md5), bytes: byteCount(m.bytes) ? m.bytes : 0, strength: m.strength, ...(ktx2 ? { ktx2 } : {}) };
+  }
+  if ((out.ktx2 || out.motion) && byteCount(entry.bytes)) out.bytes = entry.bytes;
+  if (record(entry.videoVariants)) {
+    const variants: Record<string, FlipbookVideo> = {};
+    for (const [id, v] of Object.entries(entry.videoVariants)) {
+      const parsed = videoOf(v, base).video;
+      if (parsed) variants[id] = parsed;
+    }
+    if (Object.keys(variants).length) out.videoVariants = variants;
+  }
+  const c = entry.compareWith;
+  if (record(c) && typeof c.folder === "string" && ID.test(c.folder) && typeof c.id === "string" && ID.test(c.id)) out.compareWith = { folder: c.folder, id: c.id };
+  const r = entry.sourceRect;
+  const finite = (v: unknown): v is number[] => Array.isArray(v) && v.every((n) => typeof n === "number" && Number.isFinite(n));
+  if (record(r) && finite(r.crop) && r.crop.length === 4 && r.crop[2]! > 0 && r.crop[3]! > 0 && finite(r.frame) && r.frame.length === 2 && r.frame.every((n) => n > 0)) {
+    out.sourceRect = { crop: r.crop as [number, number, number, number], frame: r.frame as [number, number] };
+  }
+  return out;
 }
 
 /**
@@ -299,6 +353,7 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
       ...(typeof entry.code === "string" && /^[A-Za-z0-9-]{1,12}$/.test(entry.code) ? { code: entry.code } : {}),
       ...videoOf(entry.video, base),
       ...cometOf(entry.head, entry.dir),
+      ...hybridOf(entry, base, frames),
     });
   }
   return out;
@@ -307,12 +362,14 @@ export function parseFlipbookManifest(value: unknown, base: string): Map<string,
 export interface FlipbookControls {
   readonly a?: THREE.Texture;
   readonly b?: THREE.Texture;
+  readonly mv?: THREE.Texture;
 }
 
 interface Entry {
   meta: FlipbookMeta;
   texture: THREE.Texture;
   controls: FlipbookControls | null;
+  source: "png" | "ktx2";
 }
 
 /** An atlas as the library loads one (sRGB, mipmapped, straight alpha). */
@@ -350,6 +407,75 @@ async function fetchBitmapAtlas(url: string, anisotropy: number): Promise<THREE.
   texture.needsUpdate = true;
   return texture;
 }
+
+type Ktx2Config = { loader: { loadAsync(url: string): Promise<THREE.Texture> }; variant: "uastc" | "etc1s" };
+let ktx2Config: Ktx2Config | null = null;
+export function setFlipbookKtx2(c: Ktx2Config | null): void { ktx2Config = c; }
+export const FLIPBOOK_MOTION = { blend: true };
+export function ktx2Pick(set: Ktx2Set | null | undefined, variant: "uastc" | "etc1s"): Ktx2File | null { return set?.[variant] ?? null; }
+
+/** Motion data keeps Y in alpha: decode off-thread without alpha premultiplication. */
+export async function fetchDataBitmap(url: string, anisotropy: number): Promise<THREE.Texture> {
+  if (typeof createImageBitmap !== "function") throw new Error("createImageBitmap is unavailable for motion data");
+  const loader = new THREE.ImageBitmapLoader();
+  loader.setOptions({ imageOrientation: "flipY", premultiplyAlpha: "none", colorSpaceConversion: "none" });
+  const texture = new THREE.Texture(await loader.loadAsync(url));
+  texture.flipY = false;
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.anisotropy = anisotropy;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.premultiplyAlpha = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export async function loadClip(meta: FlipbookMeta, anisotropy: number, bitmap: boolean, png: THREE.TextureLoader | null): Promise<{ texture: THREE.Texture; mv?: THREE.Texture; source: "png" | "ktx2" }> {
+  const config = ktx2Config;
+  const compressed = async (file: Ktx2File, data: boolean): Promise<THREE.Texture> => {
+    const t = await config!.loader.loadAsync(file.url);
+    t.userData.hybridVariant = config!.variant;
+    t.anisotropy = anisotropy;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    if (data) t.colorSpace = THREE.NoColorSpace;
+    return t;
+  };
+  let texture: THREE.Texture | undefined;
+  let source: "png" | "ktx2" = "png";
+  const file = config && ktx2Pick(meta.ktx2, config.variant);
+  if (file) {
+    try { texture = await compressed(file, false); source = "ktx2"; }
+    catch (e) { console.warn("[flipbook] KTX2 failed: " + file.url, e); }
+  }
+  texture ??= await (bitmap ? fetchBitmapAtlas(meta.url, anisotropy) : loadAtlas(png ?? new THREE.TextureLoader(), meta.url, anisotropy));
+  let mv: THREE.Texture | undefined;
+  if (meta.motion) {
+    const file = config && ktx2Pick(meta.motion.ktx2, config.variant);
+    if (file) {
+      try { mv = await compressed(file, true); }
+      catch (e) { console.warn("[flipbook] motion KTX2 failed: " + file.url, e); }
+    }
+    if (!mv) {
+      try { mv = await fetchDataBitmap(meta.motion.url, anisotropy); }
+      catch (e) { console.warn("[flipbook] motion unavailable: " + meta.motion.url, e); }
+    }
+  }
+  return { texture, ...(mv ? { mv } : {}), source };
+}
+
+export const MV_ZERO = 128;
+export const MV_SCALE = 127;
+export function motionDecode(byte: number, strength = 1): number { return (byte - MV_ZERO) / MV_SCALE * strength; }
+export function motionSampleUv(u: number, v: number, du: number, dv: number, w: number, out: number[] | Float32Array = []): number[] | Float32Array {
+  const clamp = (x: number): number => Math.max(0.004, Math.min(0.996, x));
+  out[0] = clamp(u - du * w); out[1] = clamp(v - dv * w);
+  out[2] = clamp(u + du * (1 - w)); out[3] = clamp(v + dv * (1 - w));
+  return out;
+}
+const SPLIT_X = { value: 0 };
+export function setFlipbookSplitX(px: number): void { SPLIT_X.value = px; }
 
 /**
  * One element folder's atlases (loaded once; pools attach as they arrive). `defer` names clips whose atlas waits until
@@ -390,11 +516,11 @@ export class FlipbookLibrary {
     let pending = this.fetching.get(id);
     if (pending === undefined) {
       const meta = this.entries.get(id)!.meta;
-      pending = fetchBitmapAtlas(meta.url, this.anisotropy)
-        .then((texture) => {
+      pending = loadClip(meta, this.anisotropy, true, null)
+        .then((r) => {
           this.fetching.delete(id);
           this.standing.delete(id);
-          this.add(meta, texture, null);
+          this.add(meta, r.texture, r.mv ? { mv: r.mv } : null, r.source);
           return true;
         })
         .catch((error: unknown) => {
@@ -412,6 +538,9 @@ export class FlipbookLibrary {
     const entry = this.entries.get(id);
     if (entry === undefined || this.standing.has(id) || this.defer === null || !this.defer(entry.meta)) return;
     entry.texture.dispose();
+    entry.controls?.mv?.dispose();
+    const mvImage: unknown = entry.controls?.mv?.image;
+    if (typeof ImageBitmap !== "undefined" && mvImage instanceof ImageBitmap) mvImage.close();
     const image: unknown = entry.texture.image;
     if (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap) image.close();
     this.standing.add(id);
@@ -460,9 +589,11 @@ export class FlipbookLibrary {
           }
           const loaded: THREE.Texture[] = [];
           try {
-            const texture = await loadAtlas(loader, meta.url, anisotropy);
+            const r = await loadClip(meta, anisotropy, false, loader);
+            const texture = r.texture;
             loaded.push(texture);
-            const controls: { a?: THREE.Texture; b?: THREE.Texture } = {};
+            if (r.mv) loaded.push(r.mv);
+            const controls: { a?: THREE.Texture; b?: THREE.Texture; mv?: THREE.Texture } = r.mv ? { mv: r.mv } : {};
             for (const [key, url] of [["a", meta.controlA], ["b", meta.controlB]] as const) {
               if (url === undefined) continue;
               const mask = await loader.loadAsync(url);
@@ -476,7 +607,7 @@ export class FlipbookLibrary {
               mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
               controls[key] = mask;
             }
-            this.add(meta, texture, meta.controlA !== undefined || meta.controlB !== undefined ? controls : null);
+            this.add(meta, texture, controls.a || controls.b || controls.mv ? controls : null, r.source);
           } catch (error) {
             console.warn("[flipbook] " + meta.url + " did not load", error);
             for (const texture of loaded) texture.dispose();
@@ -493,9 +624,11 @@ export class FlipbookLibrary {
     return [...this.declared.values()];
   }
 
-  add(meta: FlipbookMeta, texture: THREE.Texture, controls: FlipbookControls | null = null): void {
+  source(id: string): "png" | "ktx2" | null { return this.entries.get(id)?.source ?? null; }
+
+  add(meta: FlipbookMeta, texture: THREE.Texture, controls: FlipbookControls | null = null, source: "png" | "ktx2" = "png"): void {
     this.declared.set(meta.id, meta);
-    this.entries.set(meta.id, { meta, texture, controls });
+    this.entries.set(meta.id, { meta, texture, controls, source });
     for (const listener of this.listeners) listener(meta.id);
   }
 
@@ -504,6 +637,7 @@ export class FlipbookLibrary {
       entry.texture.dispose();
       entry.controls?.a?.dispose();
       entry.controls?.b?.dispose();
+      entry.controls?.mv?.dispose();
     }
     this.entries.clear();
     this.declared.clear();
@@ -599,6 +733,11 @@ uniform vec3 uHeatCore;
 uniform float uTaper;
 uniform float uBlur;
 uniform vec2 uSharpen;
+uniform sampler2D uMv;
+uniform float uMvOn;
+uniform float uMvStrength;
+uniform float uClipSide;
+uniform float uSplitX;
 uniform vec4 uGrade;
 varying vec2 vUv;
 varying float vFrame;
@@ -617,6 +756,7 @@ vec2 vxCell(float f, vec2 uv) {
 }
 void main() {
   if (vAlpha <= 0.0) discard;
+  if (uClipSide != 0.0 && (gl_FragCoord.x - uSplitX) * uClipSide < 0.0) discard;
   // Frames blend in time (uStep: held cels); a loop wraps to its first frame.
   float f = uLoop > 0.5 ? mod(vFrame, uFrames) : clamp(vFrame, 0.0, uFrames - 1.0);
   float f0 = floor(f);
@@ -624,8 +764,17 @@ void main() {
   float w = uStep > 0.5 ? 0.0 : f - f0;
   // A cell's last texel row and column never bleed into the next (mip levels): fade a thin border.
   vec2 uv = clamp(vUv, 0.004, 0.996);
-  vec4 t0 = texture2D(uMap, vxCell(f0, uv), uBlur);
-  vec4 t1 = texture2D(uMap, vxCell(f1, uv), uBlur);
+  vec2 uv0 = uv;
+  vec2 uv1 = uv;
+  if (uMvOn > 0.5 && w > 0.0) {
+    // Motion vectors (tools/vfx-flipbook upgrade): frame f0's flow to f0 + 1 in cell UV (x right, y up); R = x, A = y; 128 = 0, ±127 = ±uMvStrength.
+    vec4 m = texture2D(uMv, vxCell(f0, uv));
+    vec2 d = (vec2(m.r, m.a) * 255.0 - 128.0) / 127.0 * uMvStrength;
+    uv0 = clamp(uv - d * w, 0.004, 0.996);
+    uv1 = clamp(uv + d * (1.0 - w), 0.004, 0.996);
+  }
+  vec4 t0 = texture2D(uMap, vxCell(f0, uv0), uBlur);
+  vec4 t1 = texture2D(uMap, vxCell(f1, uv1), uBlur);
   float border = smoothstep(0.0, 0.025, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y)));
   border *= 1.0 - uVignette * smoothstep(0.6, 0.98, length(vUv - 0.5) * 2.0);
   float soft = vxSoftGround(vWorld, vGround, uSoftM) * border * vAlpha;
@@ -1167,6 +1316,8 @@ export class FlipbookPool {
   private readonly timings: (FlipbookTiming | null)[];
   private v2Key: string | null = null;
   private masked = false;
+  private hasMotion = false;
+  private blendMotion = true;
   private variantTurn = 0;
   /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode, slowFrom, slowFps */
   private readonly state: Float32Array;
@@ -1212,6 +1363,11 @@ export class FlipbookPool {
       uniforms: {
         ...TAG_UNIFORMS,
         uMap: { value: blank },
+        uMv: { value: blank },
+        uMvOn: { value: 0 },
+        uMvStrength: { value: 0 },
+        uClipSide: { value: 0 },
+        uSplitX: SPLIT_X,
         uGrid: { value: new THREE.Vector2(1, 1) },
         uFrames: { value: 1 },
         uLoop: { value: 0 },
@@ -1284,6 +1440,10 @@ export class FlipbookPool {
     u.uHeading!.value = meta.heading;
     const material = this.mesh.material;
     const geometry = this.mesh.geometry;
+    u.uMv!.value = controls?.mv ?? this.blank;
+    u.uMvStrength!.value = meta.motion?.strength ?? 0;
+    this.hasMotion = controls?.mv !== undefined && meta.motion !== undefined;
+    this.syncMotion();
     if (!isFlipbookV2(meta)) {
       if (this.v2Key !== null) {
         material.vertexShader = VERTEX;
@@ -1320,6 +1480,11 @@ export class FlipbookPool {
       this.v2Key = key;
     }
   }
+
+  private syncMotion(): void { this.mesh.material.uniforms.uMvOn!.value = this.hasMotion && FLIPBOOK_MOTION.blend && this.motionBlend ? 1 : 0; }
+  get motionBlend(): boolean { return this.blendMotion; }
+  set motionBlend(on: boolean) { this.blendMotion = on; this.syncMotion(); }
+  set clipSide(side: -1 | 0 | 1) { this.mesh.material.uniforms.uClipSide!.value = side; }
 
   setInk(r: number, g: number, b: number, alpha: number): void {
     (this.mesh.material.uniforms.uInk!.value as THREE.Vector4).set(r, g, b, alpha);
@@ -1499,6 +1664,7 @@ export class FlipbookPool {
 
   /** Draws each sprite at its age (frame 0 at age 0, full alpha unless it fades in), then ages it by `dt`. */
   update(dt: number): void {
+    this.syncMotion();
     let n = 0;
     const S = FlipbookPool.STRIDE;
     const st = this.state;
