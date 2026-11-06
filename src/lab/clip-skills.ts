@@ -693,6 +693,10 @@ export class ClipSkillRunner {
     return this.table.get(id);
   }
 
+  selectedId(): string | null {
+    return this.showcase.current() ?? this.showcase.ids()[0] ?? null;
+  }
+
   /** Shift+8: selects the next item and names it (its stats on the caption); its element's mark clip starts loading. */
   selectNext(): string | null {
     const id = this.showcase.next();

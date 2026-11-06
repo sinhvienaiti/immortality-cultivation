@@ -111,6 +111,7 @@ import { expectedTicks, gradeOf } from "../typing/grading";
 import { DEFAULT_GRIP, HandSword, type GripPose } from "./hand-sword";
 import { BodyProxy } from "./body-proxy";
 import { TwinPearlGreybox, type TwinCastReport } from "./twin-pearl-greybox";
+import { keyIcon, SkillBar, type SkillBarState } from "./skill-bar";
 
 const params = new URLSearchParams(location.search);
 // ?cut=sabre: the lopsided swept swing (kept for the Sabre school) in place of the Sword's symmetric crescent (read once).
@@ -1649,6 +1650,24 @@ function reset(): void {
   handSword?.reset();
 }
 
+let bar: SkillBar | null = null;
+let clipSlot8: string | null | undefined = undefined;
+let clipSlot9: string | null | undefined = undefined;
+
+function refreshClipSlots(): void {
+  if (bar === null) return;
+  const id8 = clipSkills.selectedId();
+  const id9 = clipSkills9.selectedId();
+  if (id8 !== clipSlot8) {
+    bar.setSlot("8", id8, id8 ?? "");
+    clipSlot8 = id8;
+  }
+  if (id9 !== clipSlot9) {
+    bar.setSlot("9", id9, id9 ?? "");
+    clipSlot9 = id9;
+  }
+}
+
 const KEYS: Record<string, LabSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5", "7": "k7" };
 window.addEventListener("keydown", (e) => {
   // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
@@ -1657,11 +1676,29 @@ window.addEventListener("keydown", (e) => {
   // Every typed key clicks (Typing Feel), on its own bus: no skill, hush or pre-duck ever takes it down.
   if (e.key.length === 1 && !e.repeat && !e.ctrlKey && !e.metaKey) sound.key(e.key === " " ? "space" : "key");
   const slot = KEYS[e.key];
-  if (slot) type(slot);
+  if (slot) {
+    const held = cutin.active;
+    type(slot);
+    if (!held) bar?.flash(e.key);
+  }
   // 8 casts the selected pillar or ultimate on the herd, Shift+8 selects the next (Shift+8 types "*" on most layouts).
-  else if (e.code === "Digit8" || e.key === "8" || e.key === "*") void (e.shiftKey || e.key === "*" ? clipSkills.selectNext() : clipSkills.cast());
+  else if (e.code === "Digit8" || e.key === "8" || e.key === "*") {
+    if (e.shiftKey || e.key === "*") clipSkills.selectNext();
+    else {
+      clipSkills.cast();
+      bar?.flash("8");
+    }
+    refreshClipSlots();
+  }
   // 9 casts the selected new skill (SKILLS_EXPANSION; a design without its row yet plays as its video), Shift+9 selects the next ("(" on most layouts).
-  else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? clipSkills9.selectNext() : clipSkills9.cast());
+  else if (e.code === "Digit9" || e.key === "9" || e.key === "(") {
+    if (e.shiftKey || e.key === "(") clipSkills9.selectNext();
+    else {
+      clipSkills9.cast();
+      bar?.flash("9");
+    }
+    refreshClipSlots();
+  }
   // M the slanted meteor rain in the element on (E).
   else if (e.key === "m" || e.key === "M") type("km");
   // C the channel: opens it (or feeds it a word); Shift+C feeds it a SLOPPY word, which breaks it (and the streak).
@@ -1688,6 +1725,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "z" || e.key === "Z") zoom.toggle();
   else if (e.key === "o" || e.key === "O") freeOrbit.toggle();
   else if (e.key === "a" || e.key === "A") setAura(swordAura.direction === "off" ? "a" : "off");
+  else if ((e.key === "i" || e.key === "I") && bar !== null) bar.setStyle(bar.state().style === "ink-gold" ? "jewel-crest" : "ink-gold");
   else if (e.key === "t" || e.key === "T") {
     tagsOn = !tagsOn;
     wordTags.show(tagsOn);
@@ -1731,10 +1769,21 @@ if (params.get("ui") !== "0") {
     ["O", "Orbit: drag to turn the view all round (O again: play camera)"],
     ["A", "Sword aura on / off"],
     ["T", "Word tags over the herd on / off (readability check; skills dim only behind them)"],
+    ["I", "Icon style: ink-gold / jewel-crest"],
   ];
   if (greybox !== null) {
     names[2] = ["2", "Twin Dragons, One Burning Pearl · grey box (sim volumes)"];
     names.push(["L", "Grey box: next layout"], ["N", "Grey box: restore this layout"], ["V", "Grey box: boss at gate A"]);
+  }
+  if (params.get("bar") !== "0") {
+    bar = new SkillBar(document.body, { style: params.get("icons") === "jewel" ? "jewel-crest" : "ink-gold" });
+    for (const [key, name] of names.slice(0, 8)) {
+      const tooltip = key === "2" && greybox !== null ? "Twin Dragons, One Burning Pearl" : name.split(" · ").at(-1)!;
+      bar.setSlot(key, keyIcon(key, greybox !== null), tooltip);
+    }
+    refreshClipSlots();
+    showcase.onList(refreshClipSlots);
+    expansion.onList(refreshClipSlots);
   }
   for (const [key, name] of names) {
     const b = document.createElement("button");
@@ -1846,14 +1895,20 @@ if (params.get("ui") !== "0") {
     panel.append(sl);
   };
   showcaseList("Kỹ năng (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ để tung —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" }, {
-    cast: (id) => void clipSkills.cast(id),
+    cast: (id) => {
+      clipSkills.cast(id);
+      refreshClipSlots();
+    },
     detail: (id) => {
       const sk = clipSkills.skill(id);
       return sk !== undefined ? describeClipSkill(sk) : undefined;
     },
   });
   showcaseList("Kỹ năng mới (9)", expansion, "— chọn kỹ năng mới để tung —", { area: "Diện rộng", avatar: "Pháp tướng", beast: "Thần thú", treasure: "Pháp bảo" }, {
-    cast: (id) => void clipSkills9.cast(id),
+    cast: (id) => {
+      clipSkills9.cast(id);
+      refreshClipSlots();
+    },
     detail: (id) => {
       const sk = clipSkills9.skill(id);
       return sk !== undefined ? describeClipSkill(sk) : undefined;
@@ -1877,6 +1932,7 @@ if (params.get("ui") !== "0") {
   al.append(auraSelect);
   panel.append(al);
   document.body.append(panel);
+  bar?.avoid(panel);
 }
 
 /** The five-phase samples each frame (after the hand sword: the blade where it is drawn): charge, crescent, layers. */
@@ -2039,6 +2095,7 @@ declare global {
   interface Window {
     __lab?: {
       ready: boolean;
+      skillBar(): SkillBarState | null;
       /** Ticket 258b: GPU checks of FlipbookPool v2 (programs, GPU vs CPU, mask decode); off-screen, no time passes. */
       flipbookProbe(): Promise<FlipbookProbeReport>;
       /** Load-time GPU uploads/programs for Fire and Metal; reading this does not render or emit. */
@@ -2327,6 +2384,7 @@ void (async () => {
   caster.start();
   window.__lab = {
     ready: true,
+    skillBar: () => bar?.state() ?? null,
     flipbookProbe: () => runFlipbookProbe(view.stage.renderer),
     prewarmReport: () => structuredClone(prewarmReports),
     type,
