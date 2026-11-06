@@ -673,6 +673,8 @@ describe("the flag off: world hashes pinned on 1a78a82 (before the grey box)", (
     // Computed by this same script on a clean export of 1a78a82 (04/11/2026) and on the current tree: identical.
     expect(scripted(5)).toEqual(["844c012d@22", "1cb00f08@36", "527f8f69@58", "7b865d13@35"]);
     expect(scripted(9)).toEqual(["aa8ae3cc@23", "4ba2160f@38", "753240f5@56", "29c48d76@34"]);
+    expect(scripted(5, true)).toEqual(["437bec75@15", "bc834bd0@32", "4460fd77@50", "a62359ab@26"]);
+    expect(scripted(9, true)).toEqual(["7008606f@20", "c872e613@27", "04617d12@44", "a089faa5@22"]);
     // The script does reach key 2: with the flag on, the same fight differs.
     expect(scripted(5, true)).not.toEqual(scripted(5));
   });

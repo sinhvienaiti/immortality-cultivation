@@ -299,6 +299,7 @@ export function createFx(renderer: Renderer3D, options: FxOptions = {}): FxView 
             if (event.tier >= 3) blow(event.tier);
             break;
           case "skill-fx": {
+            if (event.stage === "swarm-cast" || event.stage === "swarm-burst" || event.stage === "swarm-end") break;
             let beat = 0;
             if (event.stage === "ultimate") {
               const last = ultimateBeat[event.seat];

@@ -594,6 +594,9 @@ export type WordReleaseReason = "done" | "target-gone" | "released" | "down" | "
 
 export type LinhSaReason = "start" | "kill" | "wave-end" | "learn-ahead" | "review-card" | "build" | "upgrade" | "sell" | "buy" | "consume";
 
+/** SwarmCastV1: packed Int32 millimetres; offsets and checksum in sim/swarm.ts. */
+export type SwarmCastV1 = Int32Array;
+
 /** Every event carries its tick. Positions are metres for readers; the sim never reads events back. */
 export type SimEvent = { readonly tick: number } & (
   | { readonly type: "phase"; readonly phase: Phase; readonly wave: number; readonly endsAtTick: number }
@@ -651,7 +654,10 @@ export type SimEvent = { readonly tick: number } & (
       readonly type: "skill-fx";
       readonly seat: number;
       readonly skill: string;
-      readonly stage: "volley" | "line" | "zone-open" | "zone-close" | "ultimate" | "auto";
+      readonly stage: "volley" | "line" | "zone-open" | "zone-close" | "ultimate" | "auto" | "swarm-cast" | "swarm-burst" | "swarm-end";
+      /** Present on all swarm stages; packet only on swarm-cast. */
+      readonly castId?: number;
+      readonly swarm?: SwarmCastV1;
       readonly x: number;
       readonly z: number;
       readonly toX: number;
