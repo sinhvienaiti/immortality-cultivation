@@ -146,7 +146,8 @@ export class CrescentTrail {
   private time = 0;
   private headed = false;
 
-  constructor(matter: TrailMatter, renderOrder = 11) {
+  /** `lengthM`: how far it trails (m; a meteor's short tail: 2). */
+  constructor(matter: TrailMatter, renderOrder = 11, private readonly lengthM = TRAIL_M) {
     const g = new THREE.BufferGeometry();
     this.pos = new Float32Array(N * 2 * 3);
     const uv = new Float32Array(N * 2 * 2);
@@ -237,7 +238,7 @@ export class CrescentTrail {
     }
     const last = this.count - 1;
     const headS = this.hs[last]!;
-    const len = Math.min(TRAIL_M, headS);
+    const len = Math.min(this.lengthM, headS);
     if (len < 0.05) {
       this.mesh.visible = false;
       return;

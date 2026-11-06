@@ -823,6 +823,17 @@ export class ClipSkillRunner {
     }
   }
 
+  /** Loads `folder`'s ground-mark clip (once): the meteor rain's marks share these. */
+  prepareMark(folder: string): void {
+    this.marks.prepare(folder);
+  }
+
+  /** A ground mark of `folder` at (x, z), `size` m, shown from `delay` s for `life` s, eroding (false: not loaded yet). */
+  mark(folder: string, x: number, z: number, size: number, delay: number, life: number): boolean {
+    this.marks.prepare(folder);
+    return this.marks.spawn(folder, x, z, size, delay, life);
+  }
+
   /** An element's mark clip from memory (tests; the lab loads its atlas). */
   adoptMark(folder: string, meta: FlipbookMeta, texture: THREE.Texture): void {
     this.marks.adopt(folder, meta, texture);

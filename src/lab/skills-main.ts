@@ -83,6 +83,7 @@ import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, ty
 import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
+import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { ClipSkillRunner, describeClipSkill, KEY8_NAV, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipCastReport, type ClipSkill, type ClipSkillHost } from "./clip-skills";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
@@ -402,7 +403,7 @@ function emitRelease(slot: string, tx: number, tz: number): void {
   bus.emit(r);
   // Every skill shouts on its release (big ones a donghua line, small ones a cry); Phi Kiếm stays quiet. Thiên
   // Hà's callout comes with its cut-in instead.
-  if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9") {
+  if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9" && slot !== "km") {
     const c = bus.callout;
     c.slot = slot;
     c.tier = r.tier;
@@ -533,7 +534,7 @@ const compiler = new DamageCompiler(numbers);
 const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 0));
 const W_HP = 90 * realmG;
 /** Canon §12.1 per blow, in W (key 7 is not in the canon yet: a stand-in). */
-const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 2.0, k7: 0.35 };
+const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 2.0, k7: 0.35, km: 0.8 };
 /** Keys 8 and 9's blows by damage tier (lab stand-ins: a light blow as slot 1's, a heavy one, an ultimate's as K5's), × the strike's power. */
 const CLIP_W: Record<ClipSkill["damage"], number> = { light: 0.4, heavy: 1.2, ult: 2.0 };
 const critRand = new Rand(1503);
@@ -558,6 +559,8 @@ function skillRgb(slot: string): number {
     numberRgbWeapon = fx.weapon + "/" + fx.element.id;
   }
   if (slot === "k8" || slot === "k9") return clipRgb;
+  // The meteor rain (key M) in the element's slot-1 colour.
+  if (slot === "km") return skillRgb("k1");
   let v = numberRgb[slot];
   if (v === undefined) {
     // Key 7 takes its element's number tint (Metal: Clear Wind's jade-cyan).
@@ -576,7 +579,7 @@ bus.on((e) => {
     castHits[e.slot] = 0;
     // Field-wide, ultimate and multi-target skills show one running headline total at the top of the view (round
     // 3a: their small blows count only there).
-    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4" || e.slot === "k8" || e.slot === "k9") compiler.headline(attacks);
+    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4" || e.slot === "k8" || e.slot === "k9" || e.slot === "km") compiler.headline(attacks);
   } else if (e.kind === "impact") {
     const n = hitsOf[e.slot] ?? 0;
     hitsOf[e.slot] = n + 1;
@@ -924,6 +927,38 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
 }
 const clipSkills = new ClipSkillRunner(showcase, clipHost("k8", showcase), KEY8_SKILLS, KEY8_NAV);
 const clipSkills9 = new ClipSkillRunner(expansion, clipHost("k9", expansion), KEY9_SKILLS, KEY9_NAV, clipSkills);
+// Key M: the slanted meteor rain (canon D62, meteor-rain.ts) in the element E has on; its marks share key 8's.
+const meteorAt = new THREE.Vector3();
+const meteor = new MeteorRain({
+  targets: herd,
+  stage,
+  camera: view.camera,
+  layer: view.layers.fx,
+  kit: () => fx.element,
+  pal: () => fx.paletteOf("k1"),
+  caster: (out) => out.set(caster.x, 0, caster.z),
+  prepareMark: (folder) => clipSkills.prepareMark(folder),
+  mark: (folder, x, z, size, delay, life) => clipSkills.mark(folder, x, z, size, delay, life),
+  release: (at) => emitRelease("km", at.x, at.z),
+  blow(i, dx, dz, power, role) {
+    const rgb = fx.paletteOf("k1").flashHex;
+    const killed = herd.hit(i, dx, dz, power, rgb);
+    clipDeath = true;
+    emitImpact("km", i, dx, dz, power, role, killed, rgb);
+    clipDeath = false;
+    return killed;
+  },
+  strike(at, role) {
+    // Each landing a skill-tier blow (the first its stop and shake, the rest a lighter shake), the kick, the light.
+    screen.impact("skill", role);
+    if (role === "primary") kick.impulse(3 * KICK_M_PER_PX, 0.34, -0.94);
+    lights.flash(meteorAt.set(at.x, 1.2, at.z), view.camera.position, fx.paletteOf("k1").flashHex, 5, true);
+  },
+  status(i) {
+    const f = fx.element.foe;
+    if (f !== null) herd.status(i, f.kind, f.seconds, f.rgb);
+  },
+});
 const prewarmReports: ReturnType<ElementStage["prewarm"]>[] = [];
 const elementListeners: ((id: string) => void)[] = [];
 /** SWORD_AURA Q3: ?bladeHeat=furnace keeps Fire's old blade (hot iron over the whole face) for comparison. */
@@ -1203,6 +1238,7 @@ function reset(): void {
   myriad.reset();
   clipSkills.clear();
   clipSkills9.clear();
+  meteor.reset();
   auraSolo.stop();
   swordAura.hide();
   stage.reset();
@@ -1230,6 +1266,8 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Digit8" || e.key === "8" || e.key === "*") void (e.shiftKey || e.key === "*" ? clipSkills.selectNext() : clipSkills.cast());
   // 9 casts the selected new skill (SKILLS_EXPANSION; a design without its row yet plays as its video), Shift+9 selects the next ("(" on most layouts).
   else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? clipSkills9.selectNext() : clipSkills9.cast());
+  // M the slanted meteor rain in the element on (E).
+  else if (e.key === "m" || e.key === "M") meteor.cast();
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
@@ -1269,6 +1307,7 @@ if (params.get("ui") !== "0") {
     ["7", "Vạn Kiếm Triều Tông · Ten-Thousand Sword Convergence"],
     ["8", "Tung cột trụ hoặc tuyệt kỹ đang chọn lên bầy quái (Shift+8 chọn mục kế; không hồi chiêu) · Pillars and ultimates"],
     ["9", "Tung kỹ năng mới đang chọn (diện rộng, thần thú…; mục chưa có thông số chỉ phát video; Shift+9 chọn mục kế) · Skills expansion"],
+    ["M", "Mưa sao băng nghiêng theo hệ đang chọn (E): ấn đánh dấu, rơi chéo 20°, đất cháy sau đòn · Slanted meteor rain"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
@@ -1455,6 +1494,7 @@ function frame(dt: number): void {
   myriad.update(world);
   clipSkills.update(world);
   clipSkills9.update(world);
+  meteor.update(world);
   auraSolo.update(world, view.camera, swordAura, fx.element.trail.flame !== undefined);
   // The aura wears the swords as both modules drew them this frame (CSS viewport for its crowding count).
   swordAura.viewW = innerWidth;
@@ -1650,6 +1690,8 @@ declare global {
       showcase(id?: string): { played: string | null; ids: string[] };
       /** The last key-8 (or key-9) cast: its aim, its strikes' times (the clip's frames), its first blow, blows and kills. */
       clipSkill(key?: 8 | 9): (ClipCastReport & { active: number }) | null;
+      /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true) or reads the last one. */
+      meteor(cast?: boolean): (MeteorReport & { active: boolean }) | null;
       /** Key 9 (clip-skills.ts, SKILLS_EXPANSION): casts new skill `id` (none: the selected; one without its row plays as its video); what it cast and every id it has. */
       expansion(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
@@ -1996,6 +2038,11 @@ void (async () => {
     },
     showcase(id) {
       return { played: clipSkills.cast(id), ids: showcase.ids() };
+    },
+    meteor(cast = false) {
+      if (cast) meteor.cast();
+      const r = meteor.last;
+      return r === null ? null : { ...r, impactAt: [...r.impactAt], markAt: [...r.markAt], active: meteor.active };
     },
     clipSkill(key = 8) {
       const runner = key === 9 ? clipSkills9 : clipSkills;

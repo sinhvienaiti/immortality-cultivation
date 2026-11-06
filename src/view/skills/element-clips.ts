@@ -212,6 +212,7 @@ float vxSweep() {
  * across the centre from `half` for a sword; its vAlpha through vxSweep).
  */
 function sweepCard(pool: FlipbookPool, half: "left" | "right" | "none"): void {
+  SWEEP_CARDS.add(pool);
   const material = pool.mesh.material;
   const sword = SLASH_STYLE.style === "sword";
   const life = slashLife();
@@ -287,6 +288,17 @@ function flowFrame(p: FlipbookPool, time: number): number {
  * instead, an atlas cannot be), so its convex side is its cell's bottom like the rest.
  */
 const turnOf = (p: FlipbookPool): number => (symVideo(p) && CONVEX_UP.has(p.id.slice(0, -"-crescent-sym".length)) ? Math.PI : 0);
+
+/** The slash pools given the sweep card (sweepCard): a crescent held whole on them takes the held flag (alpha + 2). */
+const SWEEP_CARDS = new WeakSet<FlipbookPool>();
+
+/**
+ * A crescent held whole this frame on any slash pool (the lab's meteor head): its alpha with the sweep card's held flag
+ * where the pool has it, and its turn (Earth's dome video turned over).
+ */
+export function heldCrescent(pool: FlipbookPool, alpha: number): { alpha: number; turn: number } {
+  return { alpha: SWEEP_CARDS.has(pool) ? alpha + 2 : alpha, turn: turnOf(pool) };
+}
 
 /** The half a slash clip mirrors: none for a symmetric still, else its folder's (CRESCENT_HALF). */
 const halfOf = (folder: string, id: string): "left" | "right" | "none" => (id.endsWith("-crescent-sym") ? "none" : CRESCENT_HALF[folder] ?? "right");
@@ -1364,7 +1376,7 @@ function trailOf(matter: TrailMatter): CrescentTrail {
  * of its arc (arcBand), in the clip's own colours, played as the crescent is (a video's bright first frames at
  * SYM_RATE; a slash clip up to its hold's end).
  */
-function crescentMatter(meta: FlipbookMeta, texture: THREE.Texture, r: ElementRamp): TrailMatter {
+export function crescentMatter(meta: FlipbookMeta, texture: THREE.Texture, r: ElementRamp): TrailMatter {
   const video = meta.frames > 1 && meta.id.endsWith("-crescent-sym");
   const window = video ? SYM_WINDOW + 1 : Math.max(2, Math.min(meta.frames, (meta.holdEnd ?? meta.frames - 1) + 1));
   return { map: texture, cols: meta.cols, rows: meta.rows, frames: meta.frames, fps: meta.fps * (video ? SYM_RATE : 1), window, band: arcBand(texture, meta),
