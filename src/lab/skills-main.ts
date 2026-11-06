@@ -85,6 +85,7 @@ import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skil
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { ChannelSkill, type ChannelReport } from "./channel-skill";
+import { StreakCounter } from "./streak-counter";
 import type { Grade } from "../content/types";
 import { ClipSkillRunner, describeClipSkill, KEY8_NAV, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipCastReport, type ClipSkill, type ClipSkillHost } from "./clip-skills";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
@@ -405,8 +406,8 @@ function emitRelease(slot: string, tx: number, tz: number): void {
   bus.emit(r);
   // Every skill shouts on its release (big ones a donghua line, small ones a cry); Phi Kiếm stays quiet. Thiên
   // Hà's callout comes with its cut-in instead.
-  // Every typed word (keys 0–7) feeds the channel (key C) while it runs, with its grade.
-  if (slot === "auto" || slot === "k1" || slot === "k2" || slot === "guard" || slot === "dash" || slot === "k4" || slot === "k5" || slot === "k7") channel.feed(wordGrade);
+  // Every typed word (keys 0–7) feeds the channel (key C) while it runs and counts on the streak, with its grade.
+  if (slot === "auto" || slot === "k1" || slot === "k2" || slot === "guard" || slot === "dash" || slot === "k4" || slot === "k5" || slot === "k7") wordTyped(wordGrade);
   wordGrade = "perfect";
   if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9" && slot !== "km" && slot !== "kc") {
     const c = bus.callout;
@@ -964,6 +965,29 @@ const channel = new ChannelSkill({
     if (f !== null) herd.status(i, f.kind, f.seconds, f.rgb);
   },
 });
+// The word-streak counter (canon D60, streak-counter.ts) in the top-left zone (right of the lab's panel while it shows).
+const streak = new StreakCounter(document.body, "/art-src/lab/ui/streak-counter/");
+/** A word typed (its grade): it feeds the channel and counts on the streak. */
+function wordTyped(grade: Grade): void {
+  channel.feed(grade);
+  streak.word(grade);
+}
+const streakAt = new THREE.Vector3();
+/** Whether a live beast stands within `px` of `r` on screen (its head: where its word tag floats). */
+function beastNear(r: DOMRect, px: number): boolean {
+  for (let i = 0; i < herd.size; i += 1) {
+    if (!herd.alive(i)) continue;
+    streakAt.set(herd.x(i), herd.midY(i) * 2 + 0.6, herd.z(i)).project(view.camera);
+    const sx = (streakAt.x * 0.5 + 0.5) * innerWidth;
+    const sy = (-streakAt.y * 0.5 + 0.5) * innerHeight;
+    if (sx > r.left - px && sx < r.right + px && sy > r.top - px && sy < r.bottom + px) return true;
+  }
+  return false;
+}
+function streakLeft(): number {
+  const panel = document.querySelector<HTMLElement>("[data-lab-panel]");
+  return panel !== null && panel.offsetParent !== null ? panel.getBoundingClientRect().right + 14 : 20;
+}
 // Key M: the slanted meteor rain (canon D62, meteor-rain.ts) in the element E has on; its marks share key 8's.
 const meteorAt = new THREE.Vector3();
 const meteor = new MeteorRain({
@@ -1278,6 +1302,7 @@ function reset(): void {
   clipSkills9.clear();
   meteor.reset();
   channel.reset();
+  streak.reset();
   auraSolo.stop();
   swordAura.hide();
   stage.reset();
@@ -1307,8 +1332,18 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? clipSkills9.selectNext() : clipSkills9.cast());
   // M the slanted meteor rain in the element on (E).
   else if (e.key === "m" || e.key === "M") meteor.cast();
-  // C the channel: opens it (or feeds it a word); Shift+C feeds it a SLOPPY word, which breaks it.
-  else if (e.key === "c" || e.key === "C") void (e.shiftKey ? channel.feed("sloppy") : channel.start());
+  // C the channel: opens it (or feeds it a word); Shift+C feeds it a SLOPPY word, which breaks it (and the streak).
+  else if (e.key === "c" || e.key === "C") {
+    if (e.shiftKey) wordTyped("sloppy");
+    else {
+      const opening = !channel.active;
+      channel.start();
+      streak.word("perfect");
+      if (!opening) return;
+    }
+  }
+  // K a clean word for the streak counter (FLASH), Shift+K a SLOPPY one (it breaks the streak).
+  else if (e.key === "k" || e.key === "K") wordTyped(e.shiftKey ? "sloppy" : "flash");
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
@@ -1337,6 +1372,7 @@ window.addEventListener(
 if (params.get("ui") !== "0") {
   const panel = document.createElement("div");
   panel.style.cssText = "position:fixed;left:12px;top:12px;z-index:10;display:flex;flex-direction:column;gap:6px;font:13px system-ui;color:#e6e9ef";
+  panel.dataset.labPanel = "1";
   const names: [string, string][] = [
     ["0", "Phi Kiếm · Flying Sword"],
     ["1", "Ngự Kiếm Quyết · Threefold Sword Command"],
@@ -1349,6 +1385,7 @@ if (params.get("ui") !== "0") {
     ["8", "Tung cột trụ hoặc tuyệt kỹ đang chọn lên bầy quái (Shift+8 chọn mục kế; không hồi chiêu) · Pillars and ultimates"],
     ["9", "Tung kỹ năng mới đang chọn (diện rộng, thần thú…; mục chưa có thông số chỉ phát video; Shift+9 chọn mục kế) · Skills expansion"],
     ["M", "Mưa sao băng nghiêng theo hệ đang chọn (E): ấn đánh dấu, rơi chéo 20°, đất cháy sau đòn · Slanted meteor rain"],
+    ["K", "Bộ đếm chuỗi từ (góc trên trái): K là một từ sạch (Chớp), Shift+K là từ Ẩu, đứt chuỗi; mọi từ của phím 0–7 cũng đếm · Word streak"],
     ["C", "Chiêu duy trì: C mở luồng vào con gần nhất, mỗi từ gõ xong (phím 0–7 hoặc C) nuôi luồng; Shift+C là từ Ẩu, đứt luồng; dừng quá 2,5 s cũng đứt · Channel"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
@@ -1538,6 +1575,8 @@ function frame(dt: number): void {
   clipSkills9.update(world);
   meteor.update(world);
   channel.update(world);
+  // The streak counter is UI: real time.
+  streak.update(dt, streakLeft(), beastNear);
   auraSolo.update(world, view.camera, swordAura, fx.element.trail.flame !== undefined);
   // The aura wears the swords as both modules drew them this frame (CSS viewport for its crowding count).
   swordAura.viewW = innerWidth;
@@ -1733,6 +1772,8 @@ declare global {
       showcase(id?: string): { played: string | null; ids: string[] };
       /** The last key-8 (or key-9) cast: its aim, its strikes' times (the clip's frames), its first blow, blows and kills. */
       clipSkill(key?: 8 | 9): (ClipCastReport & { active: number }) | null;
+      /** The streak counter (streak-counter.ts): `n` words of `grade` (none: just read it); its count, best, tier, grades, box. */
+      streak(grade?: Grade, n?: number): { count: number; best: number; tier: number; grades: Record<Grade, number>; rect: { left: number; top: number; width: number; height: number } };
       /** Key C (channel-skill.ts): "start" (C), "feed" a word, "sloppy" (Shift+C), or none: what it has done. */
       channel(action?: "start" | "feed" | "sloppy"): ChannelReport;
       /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true) or reads the last one. */
@@ -2083,6 +2124,11 @@ void (async () => {
     },
     showcase(id) {
       return { played: clipSkills.cast(id), ids: showcase.ids() };
+    },
+    streak(grade, n = 1) {
+      if (grade !== undefined) for (let k = 0; k < n; k += 1) streak.word(grade);
+      const r = streak.rect();
+      return { count: streak.count, best: streak.best, tier: streak.tier, grades: { ...streak.grades }, rect: { left: r.left, top: r.top, width: r.width, height: r.height } };
     },
     channel(action) {
       if (action === "start") channel.start();
