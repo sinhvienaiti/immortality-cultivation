@@ -64,6 +64,8 @@ uniform float uFade;
 uniform float uClip;
 uniform float uInk;
 uniform vec4 uBand;
+uniform float uBeam;
+uniform float uGain;
 uniform float uMirror;
 uniform float uWindow;
 uniform vec3 uCore;
@@ -83,8 +85,9 @@ void main() {
   float side = 1.0 - abs(vUv.y * 2.0 - 1.0);
   // Soft edges: faded over 45 % of the half width (never a hard edge).
   float soft = smoothstep(0.0, 0.45, side);
-  // It rises out of the crescent's hollow (no straight edge at its head) and thins away to its tail.
-  float taper = (1.0 - vUv.x) * smoothstep(0.0, 0.05, vUv.x);
+  // It rises out of the crescent's hollow (no straight edge at its head) and thins away to its tail; a beam (a channel's
+  // stream) keeps its light end to end, soft at both ends.
+  float taper = uBeam > 0.5 ? smoothstep(0.0, 0.06, vUv.x) * (1.0 - smoothstep(0.94, 1.0, vUv.x)) : (1.0 - vUv.x) * smoothstep(0.0, 0.05, vUv.x);
   float f;
   if (uWindow > 1.5) {
     float k = mod(floor(uTime * uFps), 2.0 * (uWindow - 1.0));
@@ -103,7 +106,7 @@ void main() {
   // It erodes from the tail toward the crescent once the crescent is gone.
   float n = tNoise(vUv * vec2(14.0, 4.0) + uTime * 0.7);
   float keep = 1.0 - smoothstep(1.0 - uFade * 1.25 - 0.05, 1.0 - uFade * 1.25 + 0.1, vUv.x + (n - 0.5) * 0.25);
-  float a = soft * taper * keep;
+  float a = soft * taper * keep * uGain;
   if (a <= 0.002) discard;
   if (uInk > 0.5) {
     // Where its smoke is, it covers: a black body under the rim's light, never a grey veil.
@@ -146,8 +149,18 @@ export class CrescentTrail {
   private time = 0;
   private headed = false;
 
-  /** `lengthM`: how far it trails (m; a meteor's short tail: 2). */
-  constructor(matter: TrailMatter, renderOrder = 11, private readonly lengthM = TRAIL_M) {
+  /** Its light (0–1; a channel's stream over the beasts ≤ 0.6). */
+  gain = 1;
+  private readonly fadeS: number;
+  private readonly beam: boolean;
+
+  /**
+   * `lengthM`: how far it trails (m; a meteor's short tail: 2). `opts.beam`: a stream laid end to end each frame (lay),
+   * its width kept, soft at both ends; `opts.fadeS`: its erosion once nothing feeds it (s).
+   */
+  constructor(matter: TrailMatter, renderOrder = 11, private readonly lengthM = TRAIL_M, opts: { beam?: boolean; fadeS?: number } = {}) {
+    this.beam = opts.beam === true;
+    this.fadeS = opts.fadeS ?? FADE_S;
     const g = new THREE.BufferGeometry();
     this.pos = new Float32Array(N * 2 * 3);
     const uv = new Float32Array(N * 2 * 2);
@@ -180,6 +193,8 @@ export class CrescentTrail {
         uBand: { value: bandOf(matter) },
         uMirror: { value: matter.band !== undefined ? 1 : 0 },
         uWindow: { value: matter.window ?? 0 },
+        uBeam: { value: opts.beam === true ? 1 : 0 },
+        uGain: { value: 1 },
         uCore: { value: new THREE.Vector3(...matter.core) },
         uEdge: { value: new THREE.Vector3(...matter.edge) },
         uBody: { value: new THREE.Vector3(...matter.body) },
@@ -224,13 +239,33 @@ export class CrescentTrail {
     this.headed = true;
   }
 
+  /**
+   * A beam's path this frame (a channel's stream): `pts` from its head (where the matter leaves, u 0) to its tail, the
+   * band `width` m. Laid again each frame; once it is not, it erodes from its tail over its fade.
+   */
+  lay(pts: readonly THREE.Vector3[], width: number): void {
+    const n = Math.min(HISTORY, pts.length);
+    // The history runs oldest first: the tail first, the head last.
+    for (let k = 0; k < n; k += 1) {
+      const p = pts[n - 1 - k]!;
+      this.hx[k] = p.x;
+      this.hy[k] = p.y;
+      this.hz[k] = p.z;
+      this.hs[k] = k > 0 ? this.hs[k - 1]! + Math.hypot(p.x - this.hx[k - 1]!, p.y - this.hy[k - 1]!, p.z - this.hz[k - 1]!) : 0;
+    }
+    this.count = n;
+    this.width = width;
+    this.idle = 0;
+    this.headed = true;
+  }
+
   /** Lays the band along the path and ages it (after the skills, once a frame). */
   update(dt: number, camera: THREE.Camera): void {
     this.time += dt;
     if (this.idle < 0) return;
     if (!this.headed) this.idle += dt;
     this.headed = false;
-    const fade = Math.min(1, this.idle / FADE_S);
+    const fade = Math.min(1, this.idle / this.fadeS);
     if (fade >= 1 || this.count < 2) {
       if (fade >= 1) this.idle = -1;
       this.mesh.visible = false;
@@ -256,8 +291,8 @@ export class CrescentTrail {
       t.set(this.hx[k]! - this.hx[k0]!, this.hy[k]! - this.hy[k0]!, this.hz[k]! - this.hz[k0]!);
       if (t.lengthSq() < 1e-8) t.set(this.hx[last]! - this.hx[0]!, this.hy[last]! - this.hy[0]!, this.hz[last]! - this.hz[0]!);
       side.copy(toCam).sub(v).cross(t).normalize();
-      // Wide at the crescent, thinning to a point at its tail.
-      const half = this.width * 0.5 * (1 - 0.85 * u);
+      // Wide at the crescent, thinning to a point at its tail (a beam keeps its width).
+      const half = this.width * 0.5 * (this.beam ? 1 : 1 - 0.85 * u);
       this.pos.set([v.x + side.x * half, v.y + side.y * half, v.z + side.z * half, v.x - side.x * half, v.y - side.y * half, v.z - side.z * half], i * 6);
     }
     const g = this.mesh.geometry;
@@ -266,6 +301,7 @@ export class CrescentTrail {
     u.uTime!.value = this.time;
     u.uLen!.value = len;
     u.uFade!.value = fade;
+    u.uGain!.value = this.gain;
     this.mesh.visible = true;
   }
 

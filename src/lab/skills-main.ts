@@ -84,6 +84,8 @@ import { FlameSlash } from "../view/skills/flame-slash";
 import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
+import { ChannelSkill, type ChannelReport } from "./channel-skill";
+import type { Grade } from "../content/types";
 import { ClipSkillRunner, describeClipSkill, KEY8_NAV, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipCastReport, type ClipSkill, type ClipSkillHost } from "./clip-skills";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
@@ -403,7 +405,10 @@ function emitRelease(slot: string, tx: number, tz: number): void {
   bus.emit(r);
   // Every skill shouts on its release (big ones a donghua line, small ones a cry); Phi Kiếm stays quiet. Thiên
   // Hà's callout comes with its cut-in instead.
-  if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9" && slot !== "km") {
+  // Every typed word (keys 0–7) feeds the channel (key C) while it runs, with its grade.
+  if (slot === "auto" || slot === "k1" || slot === "k2" || slot === "guard" || slot === "dash" || slot === "k4" || slot === "k5" || slot === "k7") channel.feed(wordGrade);
+  wordGrade = "perfect";
+  if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9" && slot !== "km" && slot !== "kc") {
     const c = bus.callout;
     c.slot = slot;
     c.tier = r.tier;
@@ -412,6 +417,8 @@ function emitRelease(slot: string, tx: number, tz: number): void {
 }
 /** Lab time on real seconds (the key's time stamp). */
 let labTime = 0;
+/** The grade of the word whose release comes next (the lab types without errors: perfect, or flash when fast). */
+let wordGrade: Grade = "perfect";
 /** The impact sound's material by beast class: swarm and small beasts flesh, the armoured boar and the king stone. */
 function materialOf(beastTier: number): Material {
   return beastTier >= 2 ? "stone" : "flesh";
@@ -534,7 +541,7 @@ const compiler = new DamageCompiler(numbers);
 const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 0));
 const W_HP = 90 * realmG;
 /** Canon §12.1 per blow, in W (key 7 is not in the canon yet: a stand-in). */
-const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 2.0, k7: 0.35, km: 0.8 };
+const SKILL_W: Record<string, number> = { auto: 0.25, k1: 0.37, k2: 2.5, guard: 0.3, dash: 0.3, k4: 0.15, k5: 2.0, k7: 0.35, km: 0.8, kc: 0.5 };
 /** Keys 8 and 9's blows by damage tier (lab stand-ins: a light blow as slot 1's, a heavy one, an ultimate's as K5's), × the strike's power. */
 const CLIP_W: Record<ClipSkill["damage"], number> = { light: 0.4, heavy: 1.2, ult: 2.0 };
 const critRand = new Rand(1503);
@@ -559,8 +566,8 @@ function skillRgb(slot: string): number {
     numberRgbWeapon = fx.weapon + "/" + fx.element.id;
   }
   if (slot === "k8" || slot === "k9") return clipRgb;
-  // The meteor rain (key M) in the element's slot-1 colour.
-  if (slot === "km") return skillRgb("k1");
+  // The meteor rain (key M) and the channel (key C) in the element's slot-1 colour.
+  if (slot === "km" || slot === "kc") return skillRgb("k1");
   let v = numberRgb[slot];
   if (v === undefined) {
     // Key 7 takes its element's number tint (Metal: Clear Wind's jade-cyan).
@@ -579,15 +586,17 @@ bus.on((e) => {
     castHits[e.slot] = 0;
     // Field-wide, ultimate and multi-target skills show one running headline total at the top of the view (round
     // 3a: their small blows count only there).
-    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4" || e.slot === "k8" || e.slot === "k9" || e.slot === "km") compiler.headline(attacks);
+    if (e.slot === "k7" || e.slot === "k5" || e.slot === "k2" || e.slot === "k4" || e.slot === "k8" || e.slot === "k9" || e.slot === "km" || e.slot === "kc") compiler.headline(attacks);
   } else if (e.kind === "impact") {
     const n = hitsOf[e.slot] ?? 0;
     hitsOf[e.slot] = n + 1;
     const clip = e.slot === "k8" || e.slot === "k9";
-    let w = clip ? CLIP_W[clipSkillNow?.damage ?? "heavy"] * Math.max(0.15, e.power) : SKILL_W[e.slot] ?? 0.3;
+    // Key C's pulses and ticks weigh by their power (its word's grade in it).
+    const channelled = e.slot === "kc";
+    let w = clip ? CLIP_W[clipSkillNow?.damage ?? "heavy"] * Math.max(0.15, e.power) : (SKILL_W[e.slot] ?? 0.3) * (channelled ? e.power : 1);
     if (e.slot === "k2") w *= Math.max(0.4, 1 - 0.15 * n);
     if (e.role === "finisher" && e.slot === "k7") w = 1.5;
-    if (e.role === "secondary" && e.slot !== "k4" && e.slot !== "k7" && !clip) w *= 0.6;
+    if (e.role === "secondary" && e.slot !== "k4" && e.slot !== "k7" && !clip && !channelled) w *= 0.6;
     const crit = critRand.next() < 0.15;
     const dmg = w * W_HP * dmgRand.range(0.92, 1.08) * (crit ? 1.5 : 1);
     castDamage[e.slot] = (castDamage[e.slot] ?? 0) + dmg;
@@ -927,6 +936,34 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
 }
 const clipSkills = new ClipSkillRunner(showcase, clipHost("k8", showcase), KEY8_SKILLS, KEY8_NAV);
 const clipSkills9 = new ClipSkillRunner(expansion, clipHost("k9", expansion), KEY9_SKILLS, KEY9_NAV, clipSkills);
+// Key C: the typing-sustained channel (canon D61, channel-skill.ts) in the element E has on; every word feeds it.
+const channelAt = new THREE.Vector3();
+const channel = new ChannelSkill({
+  targets: herd,
+  stage,
+  camera: view.camera,
+  layer: view.layers.fx,
+  kit: () => fx.element,
+  pal: () => fx.paletteOf("k1"),
+  hand: (out) => caster.hand(out),
+  caster: (out) => out.set(caster.x, 0, caster.z),
+  keyInterval: () => 60 / (wpm * 5),
+  release: (at) => emitRelease("kc", at.x, at.z),
+  blow(i, dx, dz, power, pulse) {
+    const rgb = fx.paletteOf("k1").flashHex;
+    const killed = herd.hit(i, dx, dz, power, rgb);
+    clipDeath = true;
+    emitImpact("kc", i, dx, dz, power, pulse ? "primary" : "secondary", killed, rgb);
+    clipDeath = false;
+    // A word's pulse lights the beast it lands on.
+    if (pulse) lights.flash(channelAt.set(herd.x(i), 1, herd.z(i)), view.camera.position, rgb, 3, true);
+    return killed;
+  },
+  status(i) {
+    const f = fx.element.foe;
+    if (f !== null) herd.status(i, f.kind, f.seconds, f.rgb);
+  },
+});
 // Key M: the slanted meteor rain (canon D62, meteor-rain.ts) in the element E has on; its marks share key 8's.
 const meteorAt = new THREE.Vector3();
 const meteor = new MeteorRain({
@@ -1202,6 +1239,7 @@ function updateTyping(dt: number): void {
       // when faster than 0.85 of the expected time); a perfect or flash word pulses its swords' rings (SWORD_AURA §4.9).
       const grade = gradeOf({ errors: 0, letters: typing.letters, keyTicks: Math.round((typing.letters - 1) * perLetter * 60), expectedTicks: expectedTicks(typing.letters, Math.round(wpm * 1000)) });
       if (grade === "perfect" || grade === "flash") swordAura.graded();
+      wordGrade = grade;
       probe.lastKey(typing.slot);
       screen.cut();
       caster.release(typing.slot, typing.tx, typing.tz);
@@ -1239,6 +1277,7 @@ function reset(): void {
   clipSkills.clear();
   clipSkills9.clear();
   meteor.reset();
+  channel.reset();
   auraSolo.stop();
   swordAura.hide();
   stage.reset();
@@ -1268,6 +1307,8 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Digit9" || e.key === "9" || e.key === "(") void (e.shiftKey || e.key === "(" ? clipSkills9.selectNext() : clipSkills9.cast());
   // M the slanted meteor rain in the element on (E).
   else if (e.key === "m" || e.key === "M") meteor.cast();
+  // C the channel: opens it (or feeds it a word); Shift+C feeds it a SLOPPY word, which breaks it.
+  else if (e.key === "c" || e.key === "C") void (e.shiftKey ? channel.feed("sloppy") : channel.start());
   else if (greybox !== null && (e.key === "l" || e.key === "L")) greybox.nextLayout();
   else if (greybox !== null && (e.key === "n" || e.key === "N")) greybox.refillAll();
   else if (greybox !== null && (e.key === "v" || e.key === "V")) greybox.addBoss();
@@ -1308,6 +1349,7 @@ if (params.get("ui") !== "0") {
     ["8", "Tung cột trụ hoặc tuyệt kỹ đang chọn lên bầy quái (Shift+8 chọn mục kế; không hồi chiêu) · Pillars and ultimates"],
     ["9", "Tung kỹ năng mới đang chọn (diện rộng, thần thú…; mục chưa có thông số chỉ phát video; Shift+9 chọn mục kế) · Skills expansion"],
     ["M", "Mưa sao băng nghiêng theo hệ đang chọn (E): ấn đánh dấu, rơi chéo 20°, đất cháy sau đòn · Slanted meteor rain"],
+    ["C", "Chiêu duy trì: C mở luồng vào con gần nhất, mỗi từ gõ xong (phím 0–7 hoặc C) nuôi luồng; Shift+C là từ Ẩu, đứt luồng; dừng quá 2,5 s cũng đứt · Channel"],
     ["B", "Enemy blow (test the guard)"],
     ["R", "Reset"],
     ["W", "Next sword"],
@@ -1495,6 +1537,7 @@ function frame(dt: number): void {
   clipSkills.update(world);
   clipSkills9.update(world);
   meteor.update(world);
+  channel.update(world);
   auraSolo.update(world, view.camera, swordAura, fx.element.trail.flame !== undefined);
   // The aura wears the swords as both modules drew them this frame (CSS viewport for its crowding count).
   swordAura.viewW = innerWidth;
@@ -1690,6 +1733,8 @@ declare global {
       showcase(id?: string): { played: string | null; ids: string[] };
       /** The last key-8 (or key-9) cast: its aim, its strikes' times (the clip's frames), its first blow, blows and kills. */
       clipSkill(key?: 8 | 9): (ClipCastReport & { active: number }) | null;
+      /** Key C (channel-skill.ts): "start" (C), "feed" a word, "sloppy" (Shift+C), or none: what it has done. */
+      channel(action?: "start" | "feed" | "sloppy"): ChannelReport;
       /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true) or reads the last one. */
       meteor(cast?: boolean): (MeteorReport & { active: boolean }) | null;
       /** Key 9 (clip-skills.ts, SKILLS_EXPANSION): casts new skill `id` (none: the selected; one without its row plays as its video); what it cast and every id it has. */
@@ -2038,6 +2083,12 @@ void (async () => {
     },
     showcase(id) {
       return { played: clipSkills.cast(id), ids: showcase.ids() };
+    },
+    channel(action) {
+      if (action === "start") channel.start();
+      else if (action === "feed") channel.feed("perfect");
+      else if (action === "sloppy") channel.feed("sloppy");
+      return { ...channel.report, active: channel.active };
     },
     meteor(cast = false) {
       if (cast) meteor.cast();
