@@ -408,6 +408,8 @@ export interface PlayOptions {
   readonly nav?: string;
   /** Its sound file under the sound folder ("tt-sfx-x-<id>/take2.wav"; none: its item's take 1). */
   readonly sound?: string;
+  /** Its sound's class in the mix (none: an ultimate's item "ult", else "heavy"). */
+  readonly soundClass?: "heavy" | "ult";
   /** A divine beast's flight: its card moves at this ground velocity (m/s), drawn at `scale` of its size. */
   readonly velocity?: THREE.Vector3;
   readonly scale?: number;
@@ -438,6 +440,11 @@ export interface ShowcaseHost {
   shake(px: number, seconds: number, rollDeg: number): void;
   /** Where the caption goes (the lab: document.body); null: none (tests). */
   readonly captionHost: HTMLElement | null;
+  /**
+   * Plays its Firefly file (under the sound folder; "#t=" starts it there) at its class's level through the lab's mix;
+   * false (or absent): an <audio> element plays it as before.
+   */
+  sound?(file: string, cls: "heavy" | "ult"): boolean;
 }
 
 /** One caption per host element, shared by the showcases (the last played names itself). */
@@ -768,14 +775,19 @@ export class Showcase {
       this.host.shake(tier.shakePx, tier.shakeS, tier.rollDeg);
       this.host.accent(big ? 0.6 : 0.35);
     }
-    this.sound(it, opts.sound);
+    this.sound(it, opts.sound, opts.soundClass);
     this.show(it, ids, opts.detail, opts.nav);
     return pick;
   }
 
-  /** Its Firefly sound, take 1, or the file a castable skill names (dev lab only); the previous one (any showcase's) stops. */
-  private sound(it: ShowcaseItem, file?: string): void {
-    if ((it.sound === "" && file === undefined) || typeof Audio === "undefined") return;
+  /**
+   * Its Firefly sound, take 1, or the file a castable skill names (dev lab only): through the host's mix (its class's
+   * level, the big voices' cap), else an <audio> element (the previous one, any showcase's, stops).
+   */
+  private sound(it: ShowcaseItem, file?: string, cls?: "heavy" | "ult"): void {
+    if (it.sound === "" && file === undefined) return;
+    if (this.host.sound?.(file ?? it.sound + "/take1.wav", cls ?? (it.kind === "ultimate" ? "ult" : "heavy")) === true) return;
+    if (typeof Audio === "undefined") return;
     playing?.pause();
     const a = new Audio(SOUND_BASE + (file ?? it.sound + "/take1.wav"));
     a.volume = 0.85;

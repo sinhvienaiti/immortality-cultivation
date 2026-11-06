@@ -23,7 +23,10 @@
  * the bus calls `on` on the same frame as the body, VFX, camera and hit-stop.
  */
 import type { LabEvent } from "./events";
-import { BUS_GAIN, MASTER_GAIN, SEND_LEVEL, VERB_RETURN, trimGain, type SoundBus } from "./sound-tiers";
+import {
+  BUS_GAIN, CALLOUT_TRIM_DB, FIREFLY_FADE, FIREFLY_TARGET, KEYS_MIX, LIMITER, MASTER_GAIN, MUSIC, SEND_LEVEL, SPEECH_DIP, VERB_RETURN, VOICE_CAP, classOf,
+  fireflyGain, trimGain, type SoundBus, type VoiceGroup,
+} from "./sound-tiers";
 
 const BASE = "/art-src/lab/audio/";
 /** Every event id the lab may play (folders under BASE). */
@@ -77,24 +80,28 @@ export interface FireflyTake {
 
 /**
  * The takes chosen by measurement on 06/11 (game-art-pipeline references/audio.md §5.4; numbers in
- * typing-game-review/captures/tu-tien/lab-sounds/measure-2026-11-06.md): UI sounds on their own dry level (T1: the
- * streak's tick −30, its Flash ping −25, its tier rise −22, its break −28 LUFS momentary max), combat on the lab's tier
- * targets (sound-tiers.ts TIER_TARGET: the channel's start T4 −13.5, its loop, pulse and collapse T3/T2 −18, the meteor
- * T5 −11.5). Picks: the quickest clean onset and no clipped samples first; then the densest body and longest tail for
- * combat, the shortest clean tail for UI; a loop the steadiest level (its seam is crossfaded on load).
+ * typing-game-review/captures/tu-tien/lab-sounds/measure-2026-11-06.md), each at the gain that brings its momentary max
+ * (sound-tiers.ts FIREFLY_LEVELS, ebur128) to its level with its bus and master, never past −1 dBTP: UI sounds dry (T1:
+ * the streak's tick −30, its Flash ping −25, its tier rise −22, its break −28 LUFS), combat on the lab's tiers (the
+ * channel is a normal skill: its start −16, a pulse on every word −21 under the word's hit, its collapse T3 −18, its
+ * loop a bed at −22; the meteor T5 −11.5). Picks: the
+ * quickest clean onset and no clipped samples first; then the densest body and longest tail for combat, the shortest
+ * clean tail for UI; a loop the steadiest level (its seam is crossfaded on load).
  */
+const take = (file: string, target: number, bus: SoundBus | "ui", onset: number): { file: string; gain: number; onset: number } =>
+  ({ file, gain: fireflyGain(file, target, bus), onset });
 export const LAB_TAKES = {
-  streakCount: { file: "tt-sfx-streak-count/take4.wav", gain: 1.19, onset: 0 },
-  streakFlash: { file: "tt-sfx-streak-flash/take3.wav", gain: 0.37, onset: 0 },
-  streakTierUp: { file: "tt-sfx-streak-tier-up/take3.wav", gain: 0.44, onset: 0 },
-  streakBreak: { file: "tt-sfx-streak-break/take4.wav", gain: 0.92, onset: 0.053, fade: [1.2, 0.45] },
-  channelStart: { file: "tt-sfx-channel-start/take2.wav", gain: 0.4, onset: 0.142 },
-  channelLoop: { file: "tt-sfx-channel-loop/take8.wav", gain: 0.27, onset: 0 },
-  channelPulse: { file: "tt-sfx-channel-pulse/take3.wav", gain: 0.16, onset: 0.214 },
-  channelPulseB: { file: "tt-sfx-channel-pulse/take6.wav", gain: 0.24, onset: 0.546 },
-  channelCollapse: { file: "tt-sfx-channel-collapse/take1.wav", gain: 0.54, onset: 0.508 },
-  meteor: { file: "tt-sfx-meteor-slant-fall/take2.wav", gain: 0.37, onset: 0.268, peak: 1.13 },
-  meteorB: { file: "tt-sfx-meteor-slant-fall/take7.wav", gain: 0.34, onset: 0.244, peak: 1.14 },
+  streakCount: take("tt-sfx-streak-count/take4.wav", -30, "ui", 0),
+  streakFlash: take("tt-sfx-streak-flash/take3.wav", -25, "ui", 0),
+  streakTierUp: take("tt-sfx-streak-tier-up/take3.wav", -22, "ui", 0),
+  streakBreak: { ...take("tt-sfx-streak-break/take4.wav", -28, "ui", 0.053), fade: [1.2, 0.45] as const },
+  channelStart: take("tt-sfx-channel-start/take2.wav", -16, "combat", 0.142),
+  channelLoop: take("tt-sfx-channel-loop/take8.wav", -22, "combat", 0),
+  channelPulse: take("tt-sfx-channel-pulse/take3.wav", -21, "combat", 0.214),
+  channelPulseB: take("tt-sfx-channel-pulse/take6.wav", -21, "combat", 0.546),
+  channelCollapse: take("tt-sfx-channel-collapse/take1.wav", -18, "combat", 0.508),
+  meteor: { ...take("tt-sfx-meteor-slant-fall/take2.wav", -11.5, "combat", 0.268), peak: 1.13 },
+  meteorB: { ...take("tt-sfx-meteor-slant-fall/take7.wav", -11.5, "combat", 0.244), peak: 1.14 },
 } as const satisfies Record<string, FireflyTake>;
 
 /** Options of one take's playback: its bus ("ui": dry, straight to the master), gain × its own, pan, rate, reverb send, a delay (s). */
@@ -107,6 +114,8 @@ export interface TakeOptions {
   readonly delay?: number;
   /** Starts this far into the file (s) instead of its onset (a whoosh joined late, so its hit still lands on time). */
   readonly from?: number;
+  /** Its voice group (a capped number sound at once; VOICE_CAP). */
+  readonly group?: VoiceGroup;
 }
 
 /** A loop playing (loopTake): its level (0–1, eased over `over` s) and its stop (faded over `over` s). */
@@ -148,8 +157,51 @@ export interface SoundTake {
   readonly duck?: number;
   /** A voice-bus take (a callout): a later `stopVoices` cuts it, as reset() stops it live. */
   readonly voice?: boolean;
+  /** Where in its file it starts (s; its quiet lead-in skipped, or a whoosh joined late). */
+  readonly from?: number;
+  /** A UI sound: it joins after the mix's headroom and limiter (its `gain` is before the master's). */
+  readonly ui?: boolean;
+  /** A typed key (Typing Feel): it joins after the mix's headroom and limiter too, outside every duck. */
+  readonly key?: boolean;
+  /** Its voice group, the group's cap and the oldest's fade (the offline mix applies them as live does). */
+  readonly group?: VoiceGroup;
+  /** A fade-out from this many seconds after its start, over [1] s (a long file shortened to its skill). */
+  readonly fade?: readonly [number, number];
+  /** The music's pre-duck: the hit this many s later, its depth (dB) and hold after the hit (s). */
+  readonly musicDuck?: readonly [number, number, number];
   /** reset() while recording: every voice take still sounding stops here. */
   readonly stopVoices?: boolean;
+}
+
+/** The capped voice group of an event's files: hits, deaths, and the big world sounds and ultimate releases. */
+function groupOf(id: string): VoiceGroup | null {
+  if (id.startsWith("impact-")) return "impact";
+  if (id.startsWith("death")) return "death";
+  if (id.startsWith("world-") || id.startsWith("release-k5") || id.startsWith("release-k7")) return "big";
+  return null;
+}
+
+/** Pre-ducks sorted and merged where one starts before the last has come back up (the deeper level wins). */
+export function mergeDucks(list: readonly { start: number; end: number; low: number }[]): { start: number; end: number; low: number }[] {
+  const out: { start: number; end: number; low: number }[] = [];
+  for (const d of [...list].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1];
+    if (last !== undefined && d.start <= last.end + MUSIC.release) {
+      last.end = Math.max(last.end, d.end);
+      last.low = Math.min(last.low, d.low);
+    } else out.push({ ...d });
+  }
+  return out;
+}
+
+/** The 1–4 kHz peaking cut (SPEECH_DIP). */
+function speechDip(context: BaseAudioContext): BiquadFilterNode {
+  const f = context.createBiquadFilter();
+  f.type = "peaking";
+  f.frequency.value = SPEECH_DIP.freq;
+  f.Q.value = SPEECH_DIP.q;
+  f.gain.value = SPEECH_DIP.gain;
+  return f;
 }
 
 /** `raw` with its last `xf` s crossfaded into its first (equal power), `xf` shorter: it loops without a seam. */
@@ -175,6 +227,8 @@ export class LabSound {
   element = "";
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
+  /** After the master's headroom and limiter: UI sounds join here (their level stays theirs). */
+  private ui: GainNode | null = null;
   private verb: DelayNode | null = null;
   private verbReturn: GainNode | null = null;
   private readonly buses = new Map<Bus, GainNode>();
@@ -203,6 +257,89 @@ export class LabSound {
   /** Firefly takes to load with the context (playTake, loopTake) and their loop versions (seam crossfaded). */
   private readonly takeUrls = new Set<string>();
   private readonly loops = new Map<string, AudioBuffer>();
+  /** Voices sounding per capped group (live): the oldest fades when one more comes (VOICE_CAP). */
+  private readonly sounding: Record<VoiceGroup, { src: AudioBufferSourceNode; gain: GainNode }[]> = { impact: [], death: [], big: [] };
+  /** The music bus (under the master, outside the hush) and its track; the end of the pre-duck in force (context s). */
+  private music: GainNode | null = null;
+  private musicSrc: AudioBufferSourceNode | null = null;
+  private musicUrl: string | null = null;
+  /**
+   * Loads a Typing Feel key set (the shared pack, read only; docs/games/TYPING_FEEL_SERVICE.md): `catalogue` is
+   * <origin>/v1/keys/keys-manifest.json, `profile` a profile id (none: the catalogue's default). Its files decode with
+   * the context. Resolves to the set's id ("" when it is not there).
+   */
+  async loadKeys(catalogue: string, profile?: string): Promise<string> {
+    try {
+      const base = catalogue.slice(0, catalogue.lastIndexOf("/") + 1);
+      const cat = (await (await fetch(catalogue)).json()) as { default?: string; profiles?: { id: string; manifest: string }[] };
+      const id = profile ?? cat.default;
+      const row = cat.profiles?.find((p) => p.id === id);
+      if (row === undefined) return "";
+      const setUrl = base + row.manifest;
+      const set = (await (await fetch(setUrl)).json()) as { files?: { file: string; set: string }[] };
+      const dir = setUrl.slice(0, setUrl.lastIndexOf("/") + 1);
+      this.keyFiles.key = [];
+      this.keyFiles.space = [];
+      for (const f of set.files ?? []) if (f.set === "key" || f.set === "space") this.keyFiles[f.set].push(dir + f.file);
+      if (this.context !== null) for (const url of [...this.keyFiles.key, ...this.keyFiles.space]) void this.buffer(url);
+      this.keySet = row.id;
+      return row.id;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * A typed key's sound from the Typing Feel set (a random file, never the last one), at unity: the pack's files carry
+   * their level. It sounds on its own bus, so no skill, hush, pre-duck or limiter ever takes it down (audio.md §5.4).
+   */
+  key(kind: "key" | "space" = "key"): boolean {
+    const list = this.keyFiles[kind].length > 0 ? this.keyFiles[kind] : this.keyFiles.key;
+    if (!this.enabled || list.length === 0) return false;
+    this.keyRand = (this.keyRand * 1103515245 + 12345) >>> 0;
+    let url = list[this.keyRand % list.length]!;
+    if (url === this.lastKeyFile && list.length > 1) url = list[(this.keyRand + 1) % list.length]!;
+    this.lastKeyFile = url;
+    this.asked["key:" + kind] = (this.asked["key:" + kind] ?? 0) + 1;
+    if (this.recording !== null) {
+      this.recording.push({ at: this.clock, url, gain: 10 ** (KEYS_MIX.busDb / 20) / MASTER_GAIN, send: 0, pan: 0, rate: 1, key: true });
+      return true;
+    }
+    const context = this.context;
+    const buffer = this.buffers.get(url);
+    if (context === null || this.keysBus === null || buffer === undefined) return false;
+    // The skills give the click room: their 2–8 kHz dips for a moment (never the key itself).
+    if (this.keyDip !== null) {
+      const g = this.keyDip.gain;
+      const now = context.currentTime;
+      const d = KEYS_MIX.dip;
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(d.gain, now, d.attack);
+      g.setTargetAtTime(0, now + d.hold, d.release);
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.keysBus);
+    source.start();
+    source.onended = () => source.disconnect();
+    this.played += 1;
+    return true;
+  }
+
+  /** The music's pre-ducks in force (context s): each from `start` down to `low` until `end`. */
+  private ducks: { start: number; end: number; low: number }[] = [];
+  /** The 1–4 kHz cut on loops (SPEECH_DIP). */
+  private loopDip: BiquadFilterNode | null = null;
+  /** Typed keys: their own bus to the output, outside the master, the hush, the pre-ducks and the limiter. */
+  private keysBus: GainNode | null = null;
+  /** The skills' 2–8 kHz dip under each keystroke (KEYS_MIX.dip), on the master before the headroom. */
+  private keyDip: BiquadFilterNode | null = null;
+  /** The Typing Feel set's files by kind (loaded with the context) and the last one played (never twice in a row). */
+  private readonly keyFiles: Record<"key" | "space", string[]> = { key: [], space: [] };
+  private lastKeyFile = "";
+  /** The key set in use ("" none): its profile id and name. */
+  keySet = "";
+  private keyRand = 0x2468ace;
 
   /** `variants`: element suffixes to look for beside each event when there is no manifest (the files are probed). */
   constructor(private readonly variants: readonly string[] = []) {}
@@ -249,7 +386,29 @@ export class LabSound {
     this.context = context;
     this.master = context.createGain();
     this.master.gain.value = MASTER_GAIN;
-    this.master.connect(context.destination);
+    // The mix's headroom, then a peak limiter (LIMITER): stacked skills no longer clip the output.
+    const headroom = context.createGain();
+    headroom.gain.value = 10 ** ((LIMITER.headroomDb - LIMITER.makeupDb) / 20);
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.value = LIMITER.thresholdDb;
+    limiter.knee.value = 0;
+    limiter.ratio.value = LIMITER.ratio;
+    limiter.attack.value = LIMITER.attack;
+    limiter.release.value = LIMITER.release;
+    const keyDip = context.createBiquadFilter();
+    keyDip.type = "peaking";
+    keyDip.frequency.value = KEYS_MIX.dip.freq;
+    keyDip.Q.value = KEYS_MIX.dip.q;
+    keyDip.gain.value = 0;
+    this.keyDip = keyDip;
+    this.master.connect(keyDip).connect(headroom).connect(limiter).connect(context.destination);
+    this.ui = context.createGain();
+    this.ui.gain.value = MASTER_GAIN;
+    this.ui.connect(context.destination);
+    this.keysBus = context.createGain();
+    this.keysBus.gain.value = 10 ** (KEYS_MIX.busDb / 20);
+    this.keysBus.connect(context.destination);
+    for (const url of [...this.keyFiles.key, ...this.keyFiles.space]) void this.buffer(url);
     for (const bus of Object.keys(BUS_GAIN) as Bus[]) {
       const node = context.createGain();
       node.gain.value = BUS_GAIN[bus];
@@ -270,7 +429,14 @@ export class LabSound {
     lowpass.Q.value = -3.0103;
     const verbReturn = context.createGain();
     verbReturn.gain.value = VERB_RETURN;
-    delay.connect(highpass).connect(convolver).connect(lowpass).connect(verbReturn).connect(this.master);
+    // The return dips at 1–4 kHz so a typed key's onset stays clear of the room (SPEECH_DIP; offline mix the same).
+    const dip = speechDip(context);
+    delay.connect(highpass).connect(convolver).connect(lowpass).connect(dip).connect(verbReturn).connect(this.master);
+    this.loopDip = speechDip(context);
+    this.loopDip.connect(this.buses.get("combat") ?? this.master);
+    this.music = context.createGain();
+    this.music.connect(this.master);
+    if (this.musicUrl !== null) this.setMusic(this.musicUrl);
     this.verb = delay;
     this.verbReturn = verbReturn;
     // An unloaded convolver is silent; the dry buses can play while the IR loads.
@@ -290,8 +456,8 @@ export class LabSound {
 
   /**
    * Plays Firefly take `t` from its onset (or `o.from`) at its measured gain × `o.gain`, on `o.bus` (combat by default;
-   * "ui" dry to the master), `o.delay` s from now. While recording (captures) it is logged on the lab clock, shifted back
-   * by the skipped lead-in. False: silent (no context, not loaded yet, or the lab's sound is off).
+   * "ui" dry to the master), `o.delay` s from now. While recording (captures) it is logged on the lab clock with where in
+   * its file it starts. False: silent (no context, not loaded yet, or the lab's sound is off).
    */
   playTake(t: FireflyTake, o: TakeOptions = {}): boolean {
     const url = FIREFLY_SOUND + t.file;
@@ -306,7 +472,13 @@ export class LabSound {
     const rate = o.rate ?? 1;
     if (!this.enabled) return false;
     if (this.recording !== null) {
-      this.recording.push({ at: Math.max(0, this.clock + (o.delay ?? 0) - from / rate), url, gain: gain * busGain, send: send / busGain, pan: clamp(o.pan ?? 0, -1, 1), rate });
+      this.recording.push({
+        at: this.clock + (o.delay ?? 0), url, gain: gain * busGain, send: send / busGain, pan: clamp(o.pan ?? 0, -1, 1), rate,
+        ...(from > 0 ? { from } : {}),
+        ...(bus === "ui" ? { ui: true } : {}),
+        ...(o.group !== undefined ? { group: o.group } : {}),
+        ...(t.fade !== undefined && t.fade[0] > from ? { fade: [(t.fade[0] - from) / rate, t.fade[1] / rate] as const } : {}),
+      });
       this.played += 1;
       return true;
     }
@@ -314,7 +486,13 @@ export class LabSound {
     if (context === null) return false;
     const buffer = this.buffers.get(url);
     if (buffer === undefined) {
-      void this.buffer(url);
+      // Not decoded yet (keys 8 and 9 load a file on its first cast): it starts when it is, joined where it would be by
+      // then, unless that is more than 0.4 s late.
+      const asked = context.currentTime;
+      void this.buffer(url).then((b) => {
+        const late = context.currentTime - asked;
+        if (b !== null && late < 0.4) this.playTake(t, { ...o, from: from + late * rate, delay: Math.max(0, (o.delay ?? 0) - late) });
+      });
       return false;
     }
     const source = context.createBufferSource();
@@ -331,7 +509,7 @@ export class LabSound {
     }
     const panner = context.createStereoPanner();
     panner.pan.value = clamp(o.pan ?? 0, -1, 1);
-    source.connect(volume).connect(panner).connect(bus === "ui" ? this.master! : this.buses.get(bus) ?? this.master!);
+    source.connect(volume).connect(panner).connect(bus === "ui" ? this.ui ?? this.master! : this.buses.get(bus) ?? this.master!);
     const sendNode = context.createGain();
     sendNode.gain.value = send;
     if (send > 0 && this.verb !== null) panner.connect(sendNode).connect(this.verb);
@@ -342,8 +520,106 @@ export class LabSound {
       panner.disconnect();
       sendNode.disconnect();
     };
+    if (o.group !== undefined) this.admit(o.group, source, volume);
     this.played += 1;
     return true;
+  }
+
+  /**
+   * Keys 8 and 9's Firefly file (`file`: "job/takeN.wav", "#t=0.8" starts it there) at its class's level (T5 heavy, T6
+   * ultimate; FIREFLY_LEVELS) on the world bus, in the big group, faded out from FIREFLY_FADE[0] s after its start.
+   */
+  playFirefly(file: string, cls: "heavy" | "ult"): boolean {
+    const [path, frag] = file.split("#t=");
+    const from = Math.max(0, Number(frag ?? "0") || 0);
+    const t: FireflyTake = { file: path!, gain: fireflyGain(path!, FIREFLY_TARGET[cls], "world"), onset: from, fade: [from + FIREFLY_FADE[0], FIREFLY_FADE[1]] };
+    return this.playTake(t, { bus: "world", send: cls === "ult" ? 0.4 : 0.3, group: "big" });
+  }
+
+  /** A new voice of `group` (live): over the group's cap the oldest fades out over its fade and stops. */
+  private admit(group: VoiceGroup | null, src: AudioBufferSourceNode, gain: GainNode): void {
+    const context = this.context;
+    if (group === null || context === null) return;
+    const list = this.sounding[group];
+    const cap = VOICE_CAP[group];
+    const now = context.currentTime;
+    while (list.length >= cap.max) {
+      const old = list.shift()!;
+      old.gain.gain.cancelScheduledValues(now);
+      old.gain.gain.setValueAtTime(old.gain.gain.value, now);
+      old.gain.gain.linearRampToValueAtTime(0, now + cap.fade);
+      try {
+        old.src.stop(now + cap.fade + 0.02);
+      } catch {
+        // already stopped
+      }
+    }
+    const entry = { src, gain };
+    list.push(entry);
+    src.addEventListener("ended", () => {
+      const k = list.indexOf(entry);
+      if (k >= 0) list.splice(k, 1);
+    });
+  }
+
+  /** A music track on the music bus, looped at MUSIC.gain (the lab has none: ?music=<url>); null stops it. */
+  setMusic(url: string | null): void {
+    this.musicUrl = url;
+    const context = this.context;
+    if (context === null || this.music === null) return;
+    try {
+      this.musicSrc?.stop();
+    } catch {
+      // not started
+    }
+    this.musicSrc = null;
+    if (url === null) return;
+    void this.buffer(url).then((b) => {
+      if (b === null || this.musicUrl !== url || this.music === null) return;
+      const src = context.createBufferSource();
+      src.buffer = b;
+      src.loop = true;
+      const g = context.createGain();
+      g.gain.value = MUSIC.gain;
+      src.connect(g).connect(this.music);
+      src.start();
+      this.musicSrc = src;
+    });
+  }
+
+  /**
+   * The music's pre-duck before a big hit `hitIn` s from now (REF_VIDEO_LESSONS lesson 11): down MUSIC.depth[cls] dB
+   * over MUSIC.ramp from MUSIC.lead s before the hit (now, if the hit is sooner), held MUSIC.hold[cls] after it, back
+   * over MUSIC.release. Ducks that meet merge (the deeper wins), so a later one never cuts an earlier one short.
+   * Recorded for the offline mix.
+   */
+  preDuck(hitIn: number, cls: "heavy" | "ult"): void {
+    const depth = MUSIC.depth[cls];
+    const hold = MUSIC.hold[cls];
+    if (this.recording !== null) {
+      this.recording.push({ at: this.clock, url: "", gain: 0, send: 0, pan: 0, rate: 1, musicDuck: [Math.max(0, hitIn), depth, hold] });
+      return;
+    }
+    const context = this.context;
+    if (context === null || this.music === null) return;
+    const now = context.currentTime;
+    this.ducks = mergeDucks(
+      [...this.ducks.filter((d) => d.end + MUSIC.release > now), { start: now + Math.max(0, hitIn - MUSIC.lead), end: now + Math.max(0, hitIn) + hold, low: 10 ** (depth / 20) }],
+    );
+    const g = this.music.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    for (const d of this.ducks) {
+      if (d.start > now) g.setValueAtTime(g.value > d.low ? 1 : g.value, d.start);
+      g.linearRampToValueAtTime(d.low, Math.max(now, d.start) + MUSIC.ramp);
+      g.setValueAtTime(d.low, d.end);
+      g.linearRampToValueAtTime(1, d.end + MUSIC.release);
+    }
+  }
+
+  /** The music bus's gain now (checks; 1 without a context). */
+  musicLevel(): number {
+    return this.music?.gain.value ?? 1;
   }
 
   /**
@@ -374,7 +650,8 @@ export class LabSound {
     volume.gain.setValueAtTime(0, now);
     volume.gain.setTargetAtTime(t.gain * k, now, Math.max(0.005, (o.fadeIn ?? 0.08) / 3));
     const bus = o.bus ?? "combat";
-    source.connect(volume).connect(this.buses.get(bus) ?? this.master!);
+    // A loop sits under the keys: through the 1–4 kHz cut on its way to the combat bus.
+    source.connect(volume).connect(bus === "combat" && this.loopDip !== null ? this.loopDip : this.buses.get(bus) ?? this.master!);
     const sendNode = context.createGain();
     sendNode.gain.value = o.send ?? 0;
     if ((o.send ?? 0) > 0 && this.verb !== null) volume.connect(sendNode).connect(this.verb);
@@ -479,7 +756,8 @@ export class LabSound {
       if (this.clock - (this.lastRecorded.get(id) ?? -Infinity) < gap - 1e-6) return false;
       this.lastRecorded.set(id, this.clock);
       const url = list[this.rr++ % list.length]!;
-      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], send: sendLevel / BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate), ...(bus === "voice" ? { voice: true } : {}) });
+      const group = groupOf(use);
+      recording.push({ at: this.clock, url, gain: gain * BUS_GAIN[bus], send: sendLevel / BUS_GAIN[bus], pan: clamp(pan, -1, 1), rate: this.rateOf(bus, rate), ...(bus === "voice" ? { voice: true } : {}), ...(group !== null ? { group } : {}) });
       this.played += 1;
       return true;
     }
@@ -503,6 +781,7 @@ export class LabSound {
     send.gain.value = sendLevel;
     if (this.verb !== null) panner.connect(send).connect(this.verb);
     source.start();
+    this.admit(groupOf(use), source, volume);
     if (bus === "voice") this.voices.add(source);
     source.onended = () => {
       this.voices.delete(source);
@@ -600,7 +879,8 @@ export class LabSound {
         else this.play("world-" + e.phase, "world", e.phase === "climax" ? 1 : 0.85, 0, 1, 0.2);
         break;
       case "callout":
-        this.playFirst("callout-" + e.slot, "callout", "voice", 1);
+        // A shout at its skill's class (CALLOUT_TRIM_DB): a normal skill's no longer over its own blows.
+        this.playFirst("callout-" + e.slot, "callout", "voice", 10 ** (CALLOUT_TRIM_DB[classOf(e.slot)] / 20));
         break;
     }
   }

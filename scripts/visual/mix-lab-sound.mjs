@@ -11,11 +11,16 @@
 // A send is relative to the recorded dry bus gain. Old takes have send=0. The shared wet return joins before
 // hush and master, as live; its silent full-length bed preserves afir's tail after the final take.
 // Default duration: longest take + 25 ms + IR duration with sends; otherwise longest take + 250 ms.
+// The mix pass (06/11): a take may start into its file (`from`), fade out (`fade`: from s after its start, over s) and
+// belong to a capped voice group (`group`, sound-tiers.ts VOICE_CAP: a new voice over the cap fades the oldest, as live);
+// the wet return dips at 1–4 kHz (SPEECH_DIP); --music=<file> lays a looped bed at MUSIC.gain under the mix with the
+// recorded pre-ducks (`musicDuck`); --raw writes 32-bit float without the limiter (to read the true peak).
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { KEYS_MIX, LIMITER, MUSIC, SPEECH_DIP, VOICE_CAP } from "../../src/lab/sound-tiers.ts";
 
 const SR = 48000;
 const args = process.argv.slice(2);
@@ -30,6 +35,8 @@ if (takesPath === undefined || outPath === undefined) {
 }
 const root = resolve(flag("root", join(dirname(fileURLToPath(import.meta.url)), "..", "..")));
 const offset = Number(flag("offset", "0"));
+const musicFile = flag("music", "");
+const raw = args.includes("--raw");
 const takes = JSON.parse(readFileSync(takesPath, "utf8"));
 const hasWet = takes.some((t) => t.url && (t.send ?? 0) > 0);
 const irFile = resolve(flag("ir", join(root, "art-src/lab/audio/ir/hall-a.wav")));
@@ -48,6 +55,8 @@ const fileOf = (url) => {
   } catch {
     // a literal "%" in a file name: use it as it is
   }
+  // Vite's /@fs/<absolute path> (the Typing Feel keys, outside the lab's root) is that file.
+  if (path.startsWith("/@fs/")) return path.slice(4);
   return join(root, path);
 };
 /** Duration (s) and channel count of each file, probed once. */
@@ -86,12 +95,39 @@ for (const t of takes) {
     missing += 1;
     continue;
   }
-  const { duration: len, channels } = probe(file);
+  const { duration: fileLen, channels } = probe(file);
+  const from = Math.max(0, t.from ?? 0);
+  const len = Math.max(0.01, (fileLen - from) / t.rate);
   const at = Math.max(0, t.at + offset);
-  let end = at + len / t.rate;
+  let end = at + len;
+  let fadeLen = 0.01;
+  // A long file shortened to its skill fades out.
+  if (t.fade && t.fade[0] + t.fade[1] < len) {
+    end = at + t.fade[0] + t.fade[1];
+    fadeLen = t.fade[1];
+  }
   // A callout still sounding when the lab reset stops there.
-  if (t.voice) for (const s of stops) if (s > at && s < end) end = s;
-  sounding.push({ ...t, file, at, end, channels, cut: end < at + len / t.rate - 1e-4 });
+  if (t.voice) for (const s of stops) if (s > at && s < end) {
+    end = s;
+    fadeLen = 0.01;
+  }
+  sounding.push({ ...t, file, from, at, end, fadeLen, channels, cut: end < at + len - 1e-4 });
+}
+// Capped voice groups, as live: a voice over its group's cap fades the oldest still sounding.
+for (const [group, cap] of Object.entries(VOICE_CAP)) {
+  const live = [];
+  for (const t of sounding.filter((x) => x.group === group).sort((a, b) => a.at - b.at)) {
+    for (let k = live.length - 1; k >= 0; k -= 1) if (live[k].end <= t.at) live.splice(k, 1);
+    while (live.length >= cap.max) {
+      const old = live.shift();
+      if (t.at + cap.fade < old.end) {
+        old.end = t.at + cap.fade;
+        old.fadeLen = cap.fade;
+        old.cut = true;
+      }
+    }
+    live.push(t);
+  }
 }
 const lastEnd = sounding.reduce((m, t) => Math.max(m, t.end), 0);
 const duration = Number(flag("duration", String(lastEnd + (hasWet ? 0.025 + probe(irFile).duration : 0.25))));
@@ -109,6 +145,8 @@ files.forEach((f, i) => {
 });
 const labels = [];
 const wetLabels = [];
+/** UI takes join after the headroom and the limiter, at the master's gain (live: their own node to the output). */
+const uiLabels = [];
 sounding.forEach((t, j) => {
   const i = files.indexOf(t.file);
   const k = next.get(t.file);
@@ -116,14 +154,17 @@ sounding.forEach((t, j) => {
   const ms = Math.round(t.at * 1000);
   const pan = t.channels === 1 ? `aformat=channel_layouts=mono,${panMono(t.pan)}` : `aformat=channel_layouts=stereo,${panStereo(t.pan)}`;
   const len = t.end - t.at;
-  const cut = t.cut ? `,atrim=end=${len.toFixed(4)},afade=t=out:st=${Math.max(0, len - 0.01).toFixed(4)}:d=0.01` : "";
+  const fl = Math.min(t.fadeLen, len);
+  const cut = t.cut ? `,atrim=end=${len.toFixed(4)},afade=t=out:st=${Math.max(0, len - fl).toFixed(4)}:d=${fl.toFixed(4)}` : "";
+  const start = t.from > 0 ? `atrim=start=${t.from.toFixed(4)},asetpts=PTS-STARTPTS,` : "";
   const split = (t.send ?? 0) > 0 ? `,asplit=2[t${j}][w${j}]` : `[t${j}]`;
-  lines.push(`[f${i}u${k}]asetrate=${Math.round(SR * t.rate)},aresample=${SR}${cut},aformat=sample_fmts=fltp,${pan},volume=${t.gain},adelay=${ms}|${ms}${split}`);
+  lines.push(`[f${i}u${k}]${start}asetrate=${Math.round(SR * t.rate)},aresample=${SR}${cut},aformat=sample_fmts=fltp,${pan},volume=${t.gain},adelay=${ms}|${ms}${split}`);
   if ((t.send ?? 0) > 0) {
     lines.push(`[w${j}]volume=${t.send}[ws${j}]`);
     wetLabels.push(`[ws${j}]`);
   }
-  labels.push(`[t${j}]`);
+  // UI sounds and typed keys join after the headroom and the limiter (live: their own nodes to the output).
+  (t.ui || t.key ? uiLabels : labels).push(`[t${j}]`);
 });
 lines.push(`anullsrc=r=${SR}:cl=stereo,atrim=0:${duration.toFixed(4)}[base]`);
 labels.push("[base]");
@@ -132,7 +173,7 @@ if (hasWet) {
   lines.push(`anullsrc=r=${SR}:cl=stereo,atrim=0:${duration.toFixed(4)}[wetBase]`);
   wetLabels.push("[wetBase]");
   lines.push(`${wetLabels.join("")}amix=inputs=${wetLabels.length}:normalize=0:duration=longest,adelay=25|25,highpass=f=200:t=q:w=0.7071[wetIn]`);
-  lines.push(`[wetIn][${files.length}:a]afir=irnorm=-1:irgain=1,volume=${irScale},lowpass=f=6500:t=q:w=0.7071,volume=0.7[wet]`);
+  lines.push(`[wetIn][${files.length}:a]afir=irnorm=-1:irgain=1,volume=${irScale},lowpass=f=6500:t=q:w=0.7071,equalizer=f=${SPEECH_DIP.freq}:t=q:w=${SPEECH_DIP.q}:g=${SPEECH_DIP.gain},volume=0.7[wet]`);
   labels.push("[wet]");
 }
 
@@ -144,7 +185,46 @@ const duckGain = ducks.map(([a, s]) => {
   return `if(lt(t,${a.toFixed(4)}),1,if(lt(t,${b.toFixed(4)}),1-0.92*(t-${a.toFixed(4)})/0.012,if(lt(t,${c.toFixed(4)}),0.08,if(lt(t,${d.toFixed(4)}),0.08+0.92*(t-${c.toFixed(4)})/0.01,1))))`;
 });
 const gain = duckGain.length === 0 ? "" : duckGain.reduce((acc, g) => (acc === "" ? g : `min(${acc},${g})`), "");
+// The music bed and its pre-ducks (sound.ts preDuck): down over MUSIC.ramp from MUSIC.lead before each hit, held, back.
+if (musicFile !== "") {
+  const ducksM = takes.filter((t) => t.musicDuck).map((t) => {
+    const [hitIn, depth, hold] = t.musicDuck;
+    const hit = t.at + offset + hitIn;
+    return { a: Math.max(0, hit - MUSIC.lead), b: Math.max(0, hit - MUSIC.lead) + MUSIC.ramp, c: hit + hold, d: hit + hold + MUSIC.release, low: 10 ** (depth / 20) };
+  });
+  const env = ducksM.map(({ a, b, c, d, low }) => `if(lt(t,${a.toFixed(4)}),1,if(lt(t,${b.toFixed(4)}),1-${(1 - low).toFixed(5)}*(t-${a.toFixed(4)})/${(b - a).toFixed(4)},if(lt(t,${c.toFixed(4)}),${low.toFixed(5)},if(lt(t,${d.toFixed(4)}),${low.toFixed(5)}+${(1 - low).toFixed(5)}*(t-${c.toFixed(4)})/${(d - c).toFixed(4)},1))))`);
+  const g = env.length === 0 ? "1" : env.reduce((acc, e) => (acc === "" ? e : `min(${acc},${e})`), "");
+  const idx = files.length + (hasWet ? 1 : 0);
+  lines.push(`[${idx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=0:${duration.toFixed(4)},asetpts=N/SR/TB,volume=${MUSIC.gain},aeval=exprs='val(0)*(${g})|val(1)*(${g})':c=same[music]`);
+  labels.push("[music]");
+}
 const fadeAt = Math.max(0, duration - 0.05).toFixed(4);
+// Under each typed key the skills' 2–8 kHz dips (KEYS_MIX.dip, live: a peaking filter on the master): the mix minus
+// k × envelope × its band (k: a peaking cut of dip.gain dB at the centre), the envelope a mono float input at SR.
+const keyAts = sounding.filter((t) => t.key).map((t) => t.at).sort((a, b) => a - b);
+let keyDipInput = null;
+if (keyAts.length > 0) {
+  const d = KEYS_MIX.dip;
+  const n = Math.round(duration * SR);
+  const env = new Float32Array(n);
+  let target = 0;
+  let level = 0;
+  let next = 0;
+  let until = -1;
+  const up = 1 - Math.exp(-1 / (d.attack * SR));
+  const down = 1 - Math.exp(-1 / (d.release * SR));
+  for (let i = 0; i < n; i += 1) {
+    const t = i / SR;
+    while (next < keyAts.length && keyAts[next] <= t) until = keyAts[next++] + d.hold;
+    target = t < until ? 1 : 0;
+    level += (target - level) * (target > level ? up : down);
+    env[i] = level;
+  }
+  keyDipInput = join(mkdtempSync(join(tmpdir(), "mix-key-dip-")), "env.f32");
+  writeFileSync(keyDipInput, Buffer.from(env.buffer));
+}
+const keyDipIndex = files.length + (hasWet ? 1 : 0) + (musicFile !== "" ? 1 : 0);
+const dipK = (1 - 10 ** (KEYS_MIX.dip.gain / 20)).toFixed(5);
 const post = [
   `amix=inputs=${labels.length}:normalize=0:duration=longest`,
   // Sample-count timestamps: the ducks and the trim land on exact samples whatever the inputs' frame sizes.
@@ -152,20 +232,42 @@ const post = [
   // Quoted: the expression's commas would otherwise split the filter chain.
   ...(gain ? [`aeval=exprs='val(0)*(${gain})|val(1)*(${gain})':c=same`] : []),
   "volume=0.9",
-  `aresample=192000,alimiter=limit=0.89:attack=1:release=50:level=0,aresample=${SR}`,
+  // The mix's headroom before the limiter (LIMITER; live: before its DynamicsCompressorNode).
+  `volume=${(10 ** (LIMITER.headroomDb / 20)).toFixed(5)}`,
+  ...(raw ? [] : [`aresample=192000,alimiter=limit=0.89:attack=1:release=50:level=0,aresample=${SR}`]),
   "asetpts=N/SR/TB",
   `atrim=end_sample=${Math.round(duration * SR)}`,
   `afade=t=out:st=${fadeAt}:d=0.05`,
 ].join(",");
-lines.push(`${labels.join("")}${post}[out]`);
+// The key dip goes in before the master (live: the peaking filter right after it): the skills' sum split, its band
+// times the dip's envelope taken off, then the master chain.
+let mainIn = labels.join("");
+let chain = post;
+if (keyDipInput !== null) {
+  lines.push(`${mainIn}amix=inputs=${labels.length}:normalize=0:duration=longest,asetpts=N/SR/TB,asplit=2[dry][toBand]`);
+  lines.push(`[toBand]bandpass=f=${KEYS_MIX.dip.freq}:width_type=q:width=${KEYS_MIX.dip.q}:csg=0[band]`);
+  lines.push(`[${keyDipIndex}:a]aformat=sample_fmts=flt:channel_layouts=mono,pan=stereo|c0=c0|c1=c0,asetpts=N/SR/TB[env]`);
+  lines.push(`[band][env]amultiply,volume=-${dipK}[dipped]`);
+  lines.push(`[dry][dipped]amix=inputs=2:normalize=0:duration=first[premix]`);
+  mainIn = "[premix]";
+  chain = post.replace(`amix=inputs=${labels.length}:normalize=0:duration=longest`, "anull");
+}
+if (uiLabels.length === 0) lines.push(`${mainIn}${chain}[out]`);
+else {
+  lines.push(`${mainIn}${chain}[mixed]`);
+  lines.push(`${uiLabels.join("")}amix=inputs=${uiLabels.length}:normalize=0:duration=longest,volume=0.9,apad=whole_dur=${duration.toFixed(4)}[uiMix]`);
+  lines.push(`[mixed][uiMix]amix=inputs=2:normalize=0:duration=first,asetpts=N/SR/TB[out]`);
+}
 
 const dir = mkdtempSync(join(tmpdir(), "mix-lab-sound-"));
 const script = join(dir, "graph.txt");
 writeFileSync(script, lines.join(";\n"));
 const inputs = files.flatMap((f) => ["-i", f]);
 if (hasWet) inputs.push("-i", irFile);
+if (musicFile !== "") inputs.push("-stream_loop", "-1", "-i", resolve(musicFile));
+if (keyDipInput !== null) inputs.push("-f", "f32le", "-ar", String(SR), "-ac", "1", "-i", keyDipInput);
 // ffmpeg 7.1+ reads an option's value from a file with "-/option" (-filter_complex_script is gone).
-const ffmpegArgs = ["-y", "-hide_banner", "-loglevel", "error", ...inputs, "-/filter_complex", script, "-map", "[out]", "-c:a", "pcm_s16le", resolve(outPath)];
+const ffmpegArgs = ["-y", "-hide_banner", "-loglevel", "error", ...inputs, "-/filter_complex", script, "-map", "[out]", "-c:a", raw ? "pcm_f32le" : "pcm_s16le", resolve(outPath)];
 console.log(["ffmpeg", ...ffmpegArgs].map((v) => /^[\w./:=+,-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`).join(" "));
 const run = spawnSync("ffmpeg", ffmpegArgs, { encoding: "utf8", maxBuffer: 1 << 26 });
 rmSync(dir, { recursive: true, force: true });
