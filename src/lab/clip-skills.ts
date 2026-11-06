@@ -78,6 +78,11 @@ export interface ClipSkill {
   readonly angles?: readonly number[];
   /** Its hits go one point after another: hit strike k strikes points k, k + n, … (n hit strikes); its ticks strike all. */
   readonly perPoint?: boolean;
+  /**
+   * The share of its light kept behind a word tag while its clip shows (default the tag mask's, TAG_KEEP 0.3): lower
+   * where its peak still drowns a tag at 0.3 (lab-readability, 06/11: 0.12 brings every tag to ≥ 7:1).
+   */
+  readonly tagKeep?: number;
 }
 
 /** Where a clip stands (showcase.ts ShowcasePlace): its shapes centre there. */
@@ -121,24 +126,29 @@ const at = (frame: number, power: number): ClipStrike => ({ frame, power });
  * first strike of each is its clip's peak frame (art-src/lab/vfx/ult/manifest.json timing.peak); a later strike is a
  * frame inside the clip's hold chosen by what the clip shows, marked as a guess.
  */
+/** The light kept behind a word tag by the skills whose peak still drowns one at the mask's 0.3 (lab-readability, 06/11). */
+const TAG_KEEP_LOW = 0.12;
+/** How long a cast's tagKeep holds after its key (s): its clip's attack and longest tail (showcase SCENE_S), its linger. */
+const TAG_KEEP_S = 5;
+
 export const KEY8_SKILLS: readonly ClipSkill[] = [
   { id: "pillar-thunder-single", element: "thunder", shape: "point", radius: 2.2, count: 1, strikes: [peak(1)], damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: true, linger: 2 },
-  { id: "pillar-thunder-field", element: "thunder", shape: "multi", radius: 1.4, count: 12, strikes: [peak(0.85)], damage: "heavy", status: { kind: "stun", seconds: 0.8 }, mark: true, linger: 1.6 },
-  { id: "pillar-light-judgement", element: "light", shape: "point", radius: 3, count: 1, strikes: [peak(1)], damage: "heavy", status: { kind: "stun", seconds: 0.6 }, mark: true, linger: 2.2 },
+  { id: "pillar-thunder-field", tagKeep: TAG_KEEP_LOW, element: "thunder", shape: "multi", radius: 1.4, count: 12, strikes: [peak(0.85)], damage: "heavy", status: { kind: "stun", seconds: 0.8 }, mark: true, linger: 1.6 },
+  { id: "pillar-light-judgement", tagKeep: TAG_KEEP_LOW, element: "light", shape: "point", radius: 3, count: 1, strikes: [peak(1)], damage: "heavy", status: { kind: "stun", seconds: 0.6 }, mark: true, linger: 2.2 },
   { id: "pillar-fire-meteor", element: "fire", shape: "point", radius: 3.6, count: 1, strikes: [peak(1)], damage: "heavy", mark: true, linger: 2.5 },
-  { id: "ult-metal-geng", element: "metal", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(12, 0.5)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: false, linger: 2, guess: "frame 12: the bell's second toll" },
-  { id: "ult-wood-primordial-tree", element: "wood", shape: "field", radius: 30, count: 1, strikes: [peak(0.9)], damage: "ult", status: { kind: "bind", seconds: 2.2 }, mark: false, linger: 2.5 },
+  { id: "ult-metal-geng", tagKeep: TAG_KEEP_LOW, element: "metal", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(12, 0.5)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: false, linger: 2, guess: "frame 12: the bell's second toll" },
+  { id: "ult-wood-primordial-tree", tagKeep: TAG_KEEP_LOW, element: "wood", shape: "field", radius: 30, count: 1, strikes: [peak(0.9)], damage: "ult", status: { kind: "bind", seconds: 2.2 }, mark: false, linger: 2.5 },
   { id: "ult-water-profound-sea-v2", element: "water", shape: "field", radius: 30, count: 1, strikes: [peak(0.9), at(12, 0.6)], damage: "ult", status: { kind: "slow", seconds: 2.5 }, mark: false, linger: 2, guess: "frame 12: the sea dragon's pass" },
-  { id: "ult-fire-one-spark", element: "fire", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(10, 0.4), at(18, 0.4)], damage: "ult", mark: false, linger: 2.5, guess: "frames 10, 18: the burning sky's two burns" },
-  { id: "ult-earth-ink-peaks", element: "earth", shape: "field", radius: 30, count: 1, strikes: [peak(1)], damage: "ult", status: { kind: "stun", seconds: 1 }, mark: false, linger: 2.5 },
-  { id: "ult-thunder-nine-heavens-v2", element: "thunder", shape: "field", radius: 30, count: 1, strikes: [peak(0.8), at(6, 0.6), at(12, 0.6)], damage: "ult", status: { kind: "stun", seconds: 1 }, mark: true, linger: 2, guess: "frames 6, 12: the edict's next bolts" },
+  { id: "ult-fire-one-spark", tagKeep: TAG_KEEP_LOW, element: "fire", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(10, 0.4), at(18, 0.4)], damage: "ult", mark: false, linger: 2.5, guess: "frames 10, 18: the burning sky's two burns" },
+  { id: "ult-earth-ink-peaks", tagKeep: TAG_KEEP_LOW, element: "earth", shape: "field", radius: 30, count: 1, strikes: [peak(1)], damage: "ult", status: { kind: "stun", seconds: 1 }, mark: false, linger: 2.5 },
+  { id: "ult-thunder-nine-heavens-v2", tagKeep: TAG_KEEP_LOW, element: "thunder", shape: "field", radius: 30, count: 1, strikes: [peak(0.8), at(6, 0.6), at(12, 0.6)], damage: "ult", status: { kind: "stun", seconds: 1 }, mark: true, linger: 2, guess: "frames 6, 12: the edict's next bolts" },
   { id: "ult-wind-firmament", element: "wind", shape: "field", radius: 30, count: 1, strikes: [peak(1)], damage: "ult", status: { kind: "slow", seconds: 1.5 }, mark: false, linger: 1.5 },
   { id: "ult-ice-cold-silence", element: "ice", shape: "field", radius: 30, count: 1, strikes: [peak(0.6)], damage: "ult", status: { kind: "bind", seconds: 3 }, mark: false, linger: 2.5 },
   { id: "ult-dark-a", element: "dark", shape: "field", radius: 30, count: 1, strikes: [peak(1)], damage: "ult", status: { kind: "slow", seconds: 2 }, mark: false, linger: 2 },
-  { id: "ult-light", element: "light", shape: "field", radius: 30, count: 1, strikes: [peak(1)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: true, linger: 2 },
+  { id: "ult-light", tagKeep: TAG_KEEP_LOW, element: "light", shape: "field", radius: 30, count: 1, strikes: [peak(1)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: true, linger: 2 },
   { id: "ult-poison", element: "poison", shape: "field", radius: 30, count: 1, strikes: [peak(0.6), at(8, 0.35), at(16, 0.35), at(24, 0.35)], damage: "ult", status: { kind: "slow", seconds: 2.5 }, mark: false, linger: 2.5, guess: "frames 8, 16, 24: the miasma's bites" },
   { id: "ult-blood", element: "blood", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(20, 0.5)], damage: "ult", mark: false, linger: 2, guess: "frame 20: the blood lotus drinks" },
-  { id: "ult-void", element: "void", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(8, 0.6)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: false, linger: 1.5, guess: "frame 8: the mirror's shards" },
+  { id: "ult-void", tagKeep: TAG_KEEP_LOW, element: "void", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(8, 0.6)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: false, linger: 1.5, guess: "frame 8: the mirror's shards" },
   { id: "ult-star", element: "star", shape: "field", radius: 30, count: 1, strikes: [peak(0.8), at(6, 0.8), at(12, 1)], damage: "ult", mark: true, linger: 2, guess: "frames 6, 12: the next meteors" },
 ];
 
@@ -160,7 +170,7 @@ export const KEY8_SKILLS: readonly ClipSkill[] = [
 export const KEY9_SKILLS: readonly ClipSkill[] = [
   // A1 Myriad Spirit Lotus Bloom · Vạn Linh Liên Hoa Trận
   {
-    id: "myriad-lotus-domain", element: "wood", shape: "ring", radius: 18, count: 3, damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: false, linger: 1.8, sfx: "tt-sfx-x-myriad-lotus-domain/take1.wav",
+    id: "myriad-lotus-domain", tagKeep: TAG_KEEP_LOW, element: "wood", shape: "ring", radius: 18, count: 3, damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: false, linger: 1.8, sfx: "tt-sfx-x-myriad-lotus-domain/take1.wav",
     strikes: [{ frame: "peak", power: 0.6 }, { after: 0.12, power: 0.8 }, { after: 0.24, power: 1 }, { after: 0.8, power: 0.2, kind: "tick" }, { after: 1.3, power: 0.2, kind: "tick" }, { after: 1.8, power: 0.2, kind: "tick" }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak",
   },
@@ -256,7 +266,7 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
   },
   // D1 Heaven-Overturning Mountain Seal · Phiên Thiên Trấn Nhạc Ấn
   {
-    id: "mountain-crushing-imperial-seal", element: "earth", shape: "point", radius: 7, count: 1, damage: "heavy", mark: 0.25, linger: 1.8, sfx: "tt-sfx-x-mountain-crushing-imperial-seal/take4.wav",
+    id: "mountain-crushing-imperial-seal", tagKeep: TAG_KEEP_LOW, element: "earth", shape: "point", radius: 7, count: 1, damage: "heavy", mark: 0.25, linger: 1.8, sfx: "tt-sfx-x-mountain-crushing-imperial-seal/take4.wav",
     strikes: [{ frame: "peak", power: 1 }, { after: 0.8, power: 0.25, kind: "tick" }, { after: 1.4, power: 0.25, kind: "tick" }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.25 s to the clip peak; the seal drops onto the densest group (the table: the field's middle)",
   },
@@ -286,7 +296,7 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
   },
   // D6 Taiji Void-Reflecting Mirror · Thái Cực Chiếu Hư Kính
   {
-    id: "yin-yang-void-mirror", element: "light", shape: "sweep", radius: 22, count: 1, damage: "heavy", mark: false, linger: 1.6, centre: "north", arc: 140, sfx: "tt-sfx-x-yin-yang-void-mirror/take3.wav#t=0.35",
+    id: "yin-yang-void-mirror", tagKeep: TAG_KEEP_LOW, element: "light", shape: "sweep", radius: 22, count: 1, damage: "heavy", mark: false, linger: 1.6, centre: "north", arc: 140, sfx: "tt-sfx-x-yin-yang-void-mirror/take3.wav#t=0.35",
     strikes: [{ frame: "peak", power: 0.3 }, { after: 0.5, power: 1 }, { after: 1, power: 0.25, kind: "tick" }, { after: 1.6, power: 0.25, kind: "tick" }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.15 s to the clip peak; the mirror sweeps from the far edge (its clip), 140°; sound: Firefly take 3 from 0.35 s (its lead-in skipped; measured 06/11)",
   },
@@ -310,13 +320,13 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
   },
   // B2 Thousand-Hand Bodhi Illuminator · Thiên Thủ Lưu Ly Minh Vương Pháp Tướng
   {
-    id: "myriad-palm-bodhi-avatar", element: "light", shape: "multi", radius: 2.6, count: 16, damage: "ult", mark: 0.15, linger: 1.7, perPoint: true, sfx: "tt-sfx-x-myriad-palm-bodhi-avatar/take1.wav",
+    id: "myriad-palm-bodhi-avatar", tagKeep: TAG_KEEP_LOW, element: "light", shape: "multi", radius: 2.6, count: 16, damage: "ult", mark: 0.15, linger: 1.7, perPoint: true, sfx: "tt-sfx-x-myriad-palm-bodhi-avatar/take1.wav",
     strikes: [{ frame: "peak", power: 0.6 }, { after: 0.1, power: 0.7 }, { after: 0.2, power: 0.8 }, { after: 0.3, power: 0.9 }, { after: 0.4, power: 1 }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak",
   },
   // B3 Primordial Heaven-and-Earth Titan · Pháp Thiên Tượng Địa Cự Thần
   {
-    id: "heaven-earth-titan-avatar", element: "earth", shape: "sweep", radius: 18, count: 1, damage: "ult", mark: false, linger: 2, arc: 270, sfx: "tt-sfx-x-heaven-earth-titan-avatar/take1.wav",
+    id: "heaven-earth-titan-avatar", tagKeep: TAG_KEEP_LOW, element: "earth", shape: "sweep", radius: 18, count: 1, damage: "ult", mark: false, linger: 2, arc: 270, sfx: "tt-sfx-x-heaven-earth-titan-avatar/take1.wav",
     strikes: [{ frame: "peak", power: 0.6 }, { after: 0.17, power: 0.8 }, { after: 0.35, power: 1 }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.35 s to the clip peak; a 270° cleave round the caster",
   },
@@ -334,7 +344,7 @@ export const KEY9_SKILLS: readonly ClipSkill[] = [
   },
   // B6 Taixu Sword Immortal Phantom · Thái Hư Kiếm Tiên Pháp Tướng
   {
-    id: "immortal-sword-progenitor-avatar", element: "metal", shape: "multi", radius: 1.9, count: 24, damage: "ult", mark: false, linger: 1.6, sfx: "tt-sfx-x-immortal-sword-progenitor-avatar/take4.wav",
+    id: "immortal-sword-progenitor-avatar", tagKeep: TAG_KEEP_LOW, element: "metal", shape: "multi", radius: 1.9, count: 24, damage: "ult", mark: false, linger: 1.6, sfx: "tt-sfx-x-immortal-sword-progenitor-avatar/take4.wav",
     strikes: [{ frame: "peak", power: 1 }],
     guess: "table guesses: shape, radius, count, damage, status, mark, linger, later strikes; first strike moved from the table's 0.2 s to the clip peak; element any: its design's first, metal",
   },
@@ -668,6 +678,8 @@ export class ClipSkillRunner {
   private readonly ownsMarks: boolean;
   /** The last cast's report. */
   last: ClipCastReport | null = null;
+  /** Casts asking for less light behind word tags: the share and the time left (s). */
+  private readonly keeps: { keep: number; left: number }[] = [];
 
   /** `marksOf`: a runner whose ground marks it shares (keys 8 and 9: one atlas per element, not two). */
   constructor(private readonly showcase: Showcase, private readonly host: ClipSkillHost, rows: readonly ClipSkill[] = KEY8_SKILLS, private readonly nav = KEY8_NAV, marksOf?: ClipSkillRunner) {
@@ -741,6 +753,7 @@ export class ClipSkillRunner {
       beats: [], hits: [], next: 0, colour, report,
     };
     this.host.release(skill, run.anchor);
+    if (skill.tagKeep !== undefined) this.keeps.push({ keep: skill.tagKeep, left: lead + TAG_KEEP_S });
     this.running.push(run);
     this.last = report;
     if (lead === 0) this.spawnClip(run, 0);
@@ -789,6 +802,7 @@ export class ClipSkillRunner {
    * cards age. A strike lands when its clip's own clock reaches it: the video's time, else the time since the clip came out.
    */
   update(dt: number): void {
+    for (let k = this.keeps.length - 1; k >= 0; k -= 1) if ((this.keeps[k]!.left -= dt) <= 0) this.keeps.splice(k, 1);
     if (this.ownsMarks) {
       this.marks.update(dt);
       this.showcase.updateVideos(dt);
@@ -849,8 +863,16 @@ export class ClipSkillRunner {
     return this.running.length;
   }
 
+  /** The least light any of its casts keeps behind a word tag now (1: none asks; ClipSkill.tagKeep). */
+  tagKeep(): number {
+    let k = 1;
+    for (const x of this.keeps) k = Math.min(k, x.keep);
+    return k;
+  }
+
   clear(): void {
     this.running.length = 0;
+    this.keeps.length = 0;
     if (this.ownsMarks) {
       this.marks.clear();
       this.showcase.stopVideos();

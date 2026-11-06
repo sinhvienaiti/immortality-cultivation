@@ -9,6 +9,7 @@
  * (LESSONS §5).
  */
 import * as THREE from "three";
+import { TAG_UNIFORMS, withTagMask } from "./tag-mask";
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
@@ -158,6 +159,7 @@ void main() {
   gl_FragColor = vec4(vCol.rgb * t.rgb * a, a);
 #endif
 }`;
+const SPRITE_FRAGMENT_TAGGED = withTagMask(SPRITE_FRAGMENT);
 
 /** What the next spawn looks like; set fields, then call `emit()`. Reused, never allocated per spawn. */
 export class SpriteSpec {
@@ -335,8 +337,10 @@ export class SpritePool {
     if (opts.matte !== undefined) defines.MATTE = "";
     const material = new THREE.ShaderMaterial({
       vertexShader: SPRITE_VERTEX,
-      fragmentShader: SPRITE_FRAGMENT,
+      // Its light behind a word tag dims to the tag mask's share (tag-mask.ts).
+      fragmentShader: SPRITE_FRAGMENT_TAGGED,
       uniforms: {
+        ...TAG_UNIFORMS,
         map: { value: texture },
         uPull: { value: facing === "camera" ? Math.max(0, pull) : 0 },
         uCrop: { value: crop },
