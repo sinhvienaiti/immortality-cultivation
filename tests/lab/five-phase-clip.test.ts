@@ -7,8 +7,10 @@ import { ClipSkillRunner, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipSkillHost
 import { Showcase, ULT_SHOWCASE } from "../../src/lab/showcase";
 import { FoeFlipbookFx, FOE_CLIPS } from "../../src/lab/foe-flipbook-fx";
 import { LabBus } from "../../src/lab/events";
-import { FlipbookPlayer, parseFlipbookManifest, type FlipOptions } from "../../src/view/skills/flipbook";
+import { FlipbookPlayer, parseFlipbookManifest, type FlipbookPool, type FlipOptions } from "../../src/view/skills/flipbook";
 import type { TargetField } from "../../src/view/skills/targets";
+import { thunderCasterR2Enabled } from "../../src/lab/thunder-caster-r2";
+import { FlashLights } from "../../src/lab/feel";
 
 const clips = [
   ["thunder-charge", "charge", 12], ["thunder-release", "release", 19],
@@ -39,6 +41,7 @@ function fixture(search = "", warm = true) {
   if (warm) {
     for (const [id, role, peak] of clips) five.adopt(meta(id, role, peak, role === "sparkle" || role === "hitAffliction" || role === "ribbon"), new THREE.Texture());
     five.fill.adopt("thunder", meta("thunder-charge-fill", "charge"), new THREE.Texture());
+    for (const id of ["thunder-caster-seal", "thunder-ring-burst"]) five.casterR2?.adopt(meta(id, id, 21), new THREE.Texture());
   }
   const pool = (id: string) => five.player.pool("thunder", id);
   return { five, targets, point, alive, release, glow, hand, at, pool, parent };
@@ -242,5 +245,120 @@ describe("Thunder Pillar five-phase sample", () => {
     const f = fixture(); f.five.cast(f.at); f.five.strike(f.at); f.five.hit(0, false, 1); f.five.update(0);
     f.five.clear(); f.five.update(0);
     expect(f.glow.mock.lastCall![1]).toBe(0); expect(f.five.player.live + f.five.fill.player.live).toBe(0);
+  });
+});
+
+describe("Thunder Pillar round 2 caster layers", () => {
+  function layer(f: ReturnType<typeof fixture>, id: string) {
+    return f.five.casterR2!.group.children.find((m) => m.name === "flipbook-" + id) as THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial>;
+  }
+  function snapshot(f: ReturnType<typeof fixture>) {
+    return [f.five.player, f.five.fill.player].map((p) => p.group.children.map((m) => {
+      const mesh = m as THREE.Mesh<THREE.InstancedBufferGeometry>;
+      return { visible: mesh.visible, count: mesh.geometry.instanceCount,
+        attributes: Object.fromEntries(Object.entries(mesh.geometry.attributes).map(([k, a]) => [k, Array.from(a.array)])) };
+    }));
+  }
+
+  it("starts the grounded ring and existing light on release; charge rises then every layer ends on time", () => {
+    const f = fixture("?tp2=1"), lights = new FlashLights(f.parent, 3), camera = new THREE.Vector3(0, 15, 12);
+    const ring = layer(f, "thunder-ring-burst"), seal = layer(f, "thunder-caster-seal"), sparks = layer(f, "thunder-sparkle");
+    f.release.mockImplementation((at: THREE.Vector3) => {
+      expect(ring.visible).toBe(true); // already drawn before B8's synchronous release sound/light hook
+      lights.flash(at, camera, "#d9ccff", 3, true);
+    });
+    f.five.cast(f.at);
+    expect(f.release).toHaveBeenCalledTimes(1);
+    expect(lights.levels().filter((v) => v > 0)).toEqual([3]);
+    expect(f.parent.children.filter((c) => c instanceof THREE.PointLight)).toHaveLength(3);
+    expect(ring.geometry.getAttribute("iData").getW(0)).toBe(1);
+    expect(ring.geometry.getAttribute("iData").getX(0)).toBeCloseTo(0.8);
+    expect(seal.geometry.getAttribute("iData").getW(0)).toBe(0);
+    expect(sparks.visible).toBe(false);
+    expect(seal.material.customProgramCacheKey()).toBe("element-ground-card");
+    expect(ring.material.customProgramCacheKey()).toBe("element-ground-card");
+    f.five.update(0.1);
+    expect(seal.geometry.getAttribute("iData").getW(0)).toBeCloseTo(0.5);
+    expect(sparks.geometry.instanceCount).toBe(12);
+    const pos = sparks.geometry.getAttribute("iPos"), frames = sparks.geometry.getAttribute("iData");
+    const particleZero = (age: number) => Array.from({ length: sparks.geometry.instanceCount }, (_, i) => i).find((i) => Math.abs(frames.getZ(i) - age * 24) < 1e-5)!;
+    const distanceFromHand = (i: number) => Math.hypot(pos.getX(i) - f.hand.x, pos.getY(i) - f.hand.y, pos.getZ(i) - f.hand.z);
+    const distance = distanceFromHand(particleZero(0.1));
+    f.five.update(0.05);
+    expect(sparks.geometry.instanceCount).toBeGreaterThanOrEqual(18);
+    expect(sparks.geometry.instanceCount).toBeLessThanOrEqual(19);
+    expect(distanceFromHand(particleZero(0.15))).toBeLessThan(distance);
+    expect(ring.geometry.getAttribute("iData").getX(0)).toBeCloseTo(4);
+    f.five.update(0.05);
+    expect(sparks.visible).toBe(false); expect(seal.geometry.getAttribute("iData").getW(0)).toBe(1);
+    f.five.update(0.15);
+    expect(seal.geometry.getAttribute("iAge").getX(0)).toBeCloseTo(0.5);
+    expect(ring.geometry.getAttribute("iData").getW(0)).toBeGreaterThan(0);
+    f.five.update(0.05); expect(ring.visible).toBe(false);
+    f.five.update(0.1); expect(seal.visible).toBe(false);
+    for (let i = 0; i < 120; i++) lights.update(1 / 60);
+    expect(lights.levels()).toEqual([0, 0, 0]);
+  });
+
+  it("preserves B8's buffers frame for frame off and on, and leaves the hit clock unchanged", () => {
+    const base = runner(), off = runner("?tp2=0"), on = runner("?tp2=1");
+    for (const f of [base, off, on]) f.casts.cast(FIVE_CLIP_ID);
+    for (let i = 0; i < 180; i++) {
+      for (const f of [base, off, on]) f.step(1 / 60);
+      expect(snapshot(off)).toEqual(snapshot(base)); expect(snapshot(on)).toEqual(snapshot(base));
+      expect(on.blows).toEqual(base.blows); expect(on.statuses).toEqual(base.statuses);
+    }
+    expect(off.five.casterR2).toBeNull();
+    expect(fixture("?tp2=1&fivephase=0").five.casterR2).toBeNull();
+    expect(thunderCasterR2Enabled("?tp2=unexpected")).toBe(false);
+    expect(on.release.mock.calls).toEqual(base.release.mock.calls);
+  });
+
+  it("shares sparkle's texture, stays within three extra pool draws and 64 MB even with PNG mipmaps", () => {
+    const f = fixture("?tp2=1"), group = f.five.casterR2!.group;
+    expect(layer(f, "thunder-sparkle").material.uniforms.uMap!.value).toBe(f.pool("thunder-sparkle").mesh.material.uniforms.uMap!.value);
+    f.five.cast(f.at);
+    for (let i = 0; i < 40; i++) {
+      f.five.update(1 / 120);
+      expect(group.children.filter((m) => m.visible && (m as THREE.Mesh<THREE.InstancedBufferGeometry>).geometry.instanceCount > 0).length).toBeLessThanOrEqual(3);
+      expect(layer(f, "thunder-sparkle").geometry.instanceCount).toBeLessThanOrEqual(24);
+      for (const mesh of group.children as THREE.Mesh<THREE.InstancedBufferGeometry>[]) {
+        const c = mesh.geometry.getAttribute("iColor");
+        for (let j = 0; j < mesh.geometry.instanceCount; j++) expect(Math.max(c.getX(j), c.getY(j), c.getZ(j))).toBeLessThanOrEqual(0.9);
+      }
+    }
+    const manifest = JSON.parse(readFileSync(new URL("../../art-src/lab/vfx/thunder/manifest.json", import.meta.url), "utf8"));
+    const bytes = ["thunder-caster-seal", "thunder-ring-burst"].reduce((n, id) => {
+      const m = manifest.flipbooks[id]; return n + m.width * m.height * 4 * 4 / 3;
+    }, 0);
+    expect(bytes).toBeLessThan(64_000_000);
+    f.five.clear(); expect(group.children.every((m) => !m.visible)).toBe(true);
+  });
+
+  it("reuses pools, buffers, vectors and options during warm frames without hot-path allocations", () => {
+    const f = fixture("?tp2=1"), r2 = f.five.casterR2!, options = new Set<FlipOptions>(), vectors = new Set<THREE.Vector3>();
+    const buffers = r2.group.children.map((m) => (m as THREE.Mesh).geometry.attributes);
+    const spawn = vi.spyOn(Object.getPrototypeOf(f.pool("thunder-charge")), "spawn");
+    const makePool = vi.spyOn(FlipbookPlayer.prototype, "pool"), clone = vi.spyOn(THREE.Vector3.prototype, "clone");
+    f.five.cast(f.at);
+    for (let i = 0; i < 60; i++) f.five.update(1 / 120);
+    for (let i = 0; i < spawn.mock.calls.length; i++) if ((spawn.mock.contexts[i] as FlipbookPool).mesh.parent === r2.group) {
+      const call = spawn.mock.calls[i]!;
+      options.add(call[2] as FlipOptions); vectors.add(call[0] as THREE.Vector3);
+    }
+    expect(options.size).toBe(1); expect(vectors.size).toBe(1);
+    expect(makePool).not.toHaveBeenCalled(); expect(clone).not.toHaveBeenCalled();
+    r2.group.children.forEach((m, i) => expect((m as THREE.Mesh).geometry.attributes).toBe(buffers[i]));
+    const source = readFileSync(new URL("../../src/lab/thunder-caster-r2.ts", import.meta.url), "utf8");
+    const tree = ts.createSourceFile("thunder-caster-r2.ts", source, ts.ScriptTarget.Latest, true), allocations: string[] = [];
+    function check(node: ts.Node): void {
+      if (ts.isNewExpression(node) || ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node) || ts.isArrowFunction(node)) allocations.push(node.getText(tree));
+      ts.forEachChild(node, check);
+    }
+    function find(node: ts.Node): void {
+      if (ts.isMethodDeclaration(node) && ["update", "render", "clear", "cast"].includes(node.name.getText(tree))) { if (node.body) check(node.body); }
+      else ts.forEachChild(node, find);
+    }
+    find(tree); expect(allocations).toEqual([]);
   });
 });

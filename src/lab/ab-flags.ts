@@ -14,6 +14,7 @@ export const AB_FLAGS: readonly AbFlag[] = [
   { key: "ambient", label: "Ambient", value: "0", enabledWhenSet: false },
   { key: "chargefill", label: "Charge layer", value: "0", enabledWhenSet: false },
   { key: "fivephase", label: "Thunder Pillar five phases", value: "0", enabledWhenSet: false },
+  { key: "tp2", label: "Thunder Pillar round 2", value: "1", enabledWhenSet: true },
   { key: "video", label: "Video clips", value: "0", enabledWhenSet: false },
   { key: "sigil", label: "Painted sigils", value: "code", enabledWhenSet: false },
   { key: "readable", label: "Readability dimming", value: "1", enabledWhenSet: true },

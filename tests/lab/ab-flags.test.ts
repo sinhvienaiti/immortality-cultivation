@@ -9,6 +9,7 @@ const cases = [
   { key: "ambient", value: "0", defaultOn: true },
   { key: "chargefill", value: "0", defaultOn: true },
   { key: "fivephase", value: "0", defaultOn: true },
+  { key: "tp2", value: "1", defaultOn: false },
   { key: "video", value: "0", defaultOn: true },
   { key: "sigil", value: "code", defaultOn: true },
   { key: "readable", value: "1", defaultOn: false },
@@ -19,7 +20,7 @@ const base = "https://tutien.typing-game.local/skills.html?element=fire&show=fir
 describe("lab A/B flags (node)", () => {
   it("registers each comparison once with an English label", () => {
     expect(AB_FLAGS.map((flag) => flag.key)).toEqual(cases.map((flag) => flag.key));
-    for (const flag of AB_FLAGS) expect(flag.label).toMatch(/^[A-Za-z][A-Za-z -]+$/);
+    for (const flag of AB_FLAGS) expect(flag.label).toMatch(/^[A-Za-z][A-Za-z0-9 -]+$/);
   });
 
   describe.each(cases)("$key", ({ key, value, defaultOn }) => {

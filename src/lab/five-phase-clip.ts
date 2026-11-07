@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { FlipbookPlayer, ONE_FRAME, type FlipbookMeta, type FlipbookPool, type FlipOptions } from "../view/skills/flipbook";
 import type { TargetField } from "../view/skills/targets";
 import { ChargeFillFx, type ChargeFillPose } from "./charge-fill-fx";
+import { ThunderCasterR2, thunderCasterR2Enabled } from "./thunder-caster-r2";
 
 export const FIVE_CLIP_ID = "pillar-thunder-single";
 export const FIVE_CLIP_CHARGE_S = 0.2;
@@ -27,6 +28,7 @@ export class FivePhaseClip {
   readonly enabled: boolean;
   readonly player: FlipbookPlayer;
   readonly fill: ChargeFillFx;
+  readonly casterR2: ThunderCasterR2 | null;
   private readonly cards: Card[] = IDS.map((id) => ({ id, pool: null }));
   private readonly afflictions: Affliction[] = Array.from({ length: 64 }, () => ({ target: -1, left: 0, life: 0 }));
   private readonly afflictionAges = new Float32Array(64);
@@ -47,10 +49,12 @@ export class FivePhaseClip {
     parent.add(this.player.group);
     this.fill = new ChargeFillFx(parent, base, this.enabled ? search : "?chargefill=0");
     this.fill.player.group.name = "fx-five-phase-thunder-charge-fill";
+    this.casterR2 = this.enabled && thunderCasterR2Enabled(search) ? new ThunderCasterR2(parent, this.player, host) : null;
   }
 
   prepare(): void {
     if (!this.enabled) return;
+    this.casterR2?.prepare();
     this.fill.prepareElement("thunder");
     if (this.loading || this.retry > 0) return;
     let ready = true;
@@ -76,6 +80,7 @@ export class FivePhaseClip {
     this.player.library("thunder", () => true).add(meta, texture);
     this.host.upload?.(texture);
     card.pool = this.player.pool("thunder", meta.id, { mode: meta.mode, capacity: meta.id === "thunder-sparkle" ? 128 : 64, renderOrder: 13 });
+    this.casterR2?.adopt(meta, texture);
   }
 
   private pool(id: Id): FlipbookPool | null {
@@ -146,6 +151,7 @@ export class FivePhaseClip {
     }
     this.host.hand(this.at);
     this.host.glow(0xd9ccff, 0.9);
+    this.casterR2?.cast();
     this.host.release(this.at);
   }
 
@@ -180,6 +186,7 @@ export class FivePhaseClip {
   update(dt: number): void {
     if (!this.enabled) return;
     this.retry = Math.max(0, this.retry - dt);
+    this.casterR2?.update(dt);
     const affliction = this.pool("thunder-hit-affliction");
     affliction?.clear();
     this.host.pose(this.casterPose);
@@ -228,5 +235,6 @@ export class FivePhaseClip {
     this.charging = -1;
     for (const a of this.afflictions) a.target = -1;
     this.fill.clear(); this.player.clear();
+    this.casterR2?.clear();
   }
 }
