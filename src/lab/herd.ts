@@ -45,6 +45,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { FoeStatusKind } from "../view/skills/element-kit";
 import type { TargetField } from "../view/skills/targets";
 import { LAB_ASSETS } from "./look";
+import { ThunderBodyReaction } from "./thunder-impact-r2";
 
 interface Species {
   readonly file: string;
@@ -241,6 +242,7 @@ export class LabHerd implements TargetField {
   /** Stagger tilt (rad) and its rate, about the ground axis (ax, az) ⟂ the last blow. */
   private readonly tilt = new Float32Array(MAX);
   private readonly tiltV = new Float32Array(MAX);
+  private readonly thunderBody = new ThunderBodyReaction(MAX);
   private readonly ax = new Float32Array(MAX);
   private readonly az = new Float32Array(MAX);
   /** > 0 while dying (s since the killing blow); the slot then waits `gone` s and respawns. */
@@ -480,6 +482,7 @@ export class LabHerd implements TargetField {
       this.rx[i] = this.rz[i] = this.rvx[i] = this.rvz[i] = 0;
       this.svx[i] = this.svz[i] = this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = 0;
       this.tilt[i] = this.tiltV[i] = 0;
+      this.thunderBody.clear(i);
       this.caught[i] = 0;
       this.shownDis[i] = this.shownLift[i] = 0;
       this.hero[i] = this.heldDeath[i] = this.whiteShown[i] = 0;
@@ -710,6 +713,13 @@ export class LabHerd implements TargetField {
     this.hit(i, dx, dz, power, rgb);
   }
 
+  /** Thunder R3: replace only the generic tilt, preserving HP, stun, recoil and the existing rim. */
+  thunderImpact(i: number, dx: number, dz: number): void {
+    if (!this.alive(i)) return;
+    this.tilt[i] = this.tiltV[i] = 0;
+    this.thunderBody.strike(i, dx, dz);
+  }
+
   /** `rimS`: the rim flash's length (s; default 2–4 frames; the five-phase samples ask for about 0.1 s). */
   hit(i: number, dx: number, dz: number, power: number, rgb: number, rimS?: number): boolean {
     if (!this.alive(i)) return false;
@@ -770,6 +780,7 @@ export class LabHerd implements TargetField {
     }
     this.hp[i] = this.hp[i]! - (power >= 0.9 ? 3 : power >= 0.5 ? 2 : 1) / this.toughness;
     if (this.hp[i]! <= 0) {
+      this.thunderBody.clear(i);
       this.dying[i] = 1e-4;
       // The slice runs along this blow.
       this.kdx[i] = dx;
@@ -1065,6 +1076,7 @@ export class LabHerd implements TargetField {
         this.p.z += -this.pv.z;
       }
       this.s.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
+      this.thunderBody.apply(i, dt, this.heights[k] ?? this.radius(i) * 2, this.p, this.q, this.s);
       this.m.compose(this.p, this.q, this.s);
       mesh.setMatrixAt(idx, this.m);
       dis.setX(idx, dissolve);

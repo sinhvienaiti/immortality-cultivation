@@ -6,6 +6,53 @@ import { layFlat } from "../view/skills/element-clips";
 export const THUNDER_IMPACT_OFFSET_S = 3 / 60;
 export const THUNDER_HIT_RGB = 0xd9ccff;
 export const THUNDER_HIT_RIM_S = 0.1;
+export const THUNDER_BODY_RETURN_S = 0.3;
+const smooth = (t: number): number => t * t * (3 - 2 * t);
+
+/** View-only, foot-pivot reaction. Fixed storage and scratch transforms; no new draw or shader. */
+export class ThunderBodyReaction {
+  private readonly age: Float64Array;
+  private readonly dx: Float32Array;
+  private readonly dz: Float32Array;
+  private readonly axis = new THREE.Vector3();
+  private readonly turn = new THREE.Quaternion();
+
+  constructor(size: number) {
+    this.age = new Float64Array(size).fill(-1);
+    this.dx = new Float32Array(size); this.dz = new Float32Array(size);
+  }
+
+  strike(i: number, dx: number, dz: number): void {
+    const len = Math.hypot(dx, dz);
+    this.dx[i] = len > 1e-6 ? dx / len : 0;
+    this.dz[i] = len > 1e-6 ? dz / len : -1;
+    this.age[i] = 0;
+  }
+
+  clear(i: number): void { this.age[i] = -1; }
+
+  apply(i: number, dt: number, height: number, p: THREE.Vector3, q: THREE.Quaternion, scale: THREE.Vector3): void {
+    if (this.age[i]! < 0) return;
+    const age = this.age[i]! + Math.max(0, dt);
+    this.age[i] = age;
+    if (age >= THUNDER_BODY_RETURN_S - 1e-8) { this.clear(i); return; }
+    // H0 already tips 10°; peak 14° at 40 ms, then ease home by 300 ms, even while stunned.
+    const rise = smooth(Math.min(1, age / 0.04));
+    const home = smooth(Math.max(0, (age - 0.04) / (THUNDER_BODY_RETURN_S - 0.04)));
+    this.axis.set(this.dz[i]!, 0, -this.dx[i]!).normalize();
+    this.turn.setFromAxisAngle(this.axis, (10 + 4 * rise) * Math.PI / 180 * (1 - home));
+    q.premultiply(this.turn);
+    // Compress about the feet, then rebound by 80 ms. Height scales the hop for every species.
+    const rebound = smooth(Math.min(1, Math.max(0, (age - 0.025) / 0.055)));
+    const settle = smooth(Math.min(1, Math.max(0, (age - 0.08) / (THUNDER_BODY_RETURN_S - 0.08))));
+    const squash = age < 0.025 ? 0.06 + 0.1 * smooth(age / 0.025)
+      : age < 0.08 ? 0.16 - 0.22 * rebound : -0.06 * (1 - settle);
+    const sy = 1 - squash;
+    scale.set(1 / Math.sqrt(sy), sy, 1 / Math.sqrt(sy));
+    p.y += height * 0.1 * rebound * (1 - settle);
+  }
+}
+
 const deferred = (): boolean => true;
 
 export class ThunderImpactR2 {

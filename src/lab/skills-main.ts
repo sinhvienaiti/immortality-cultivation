@@ -1139,6 +1139,7 @@ showcase.deferAtlases = expansion.deferAtlases = params.get("atlases") !== "all"
 // key 9 the expansion batch by batch. The strikes land on the clip's frames through the same hit path as keys 0–7
 // (emitImpact, the screen's tier, the kick, the lights).
 const clipTmp = new THREE.Vector3();
+let thunderBodyDirty = false;
 const thunderFive = new FivePhaseClip(view.layers.fx, VFX_BASE, {
   camera: view.camera,
   targets: herd,
@@ -1176,6 +1177,11 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
       if (thunderR2) clipRgb = THUNDER_HIT_RGB;
       // Existing herd.hit supplies tier-scaled recoil (king root fixed); emitImpact keeps sound on this same hit.
       const killed = herd.hit(i, dx, dz, power, clipRgb, thunderR2 ? THUNDER_HIT_RIM_S : undefined);
+      if (thunderR2 && !killed) {
+        // ClipSkillRunner's directions radiate from the strike; its centre target uses the caster direction.
+        herd.thunderImpact(i, dx, dz);
+        thunderBodyDirty = true;
+      }
       clipDeath = true;
       emitImpact(slot, i, dx, dz, power, role, killed, clipRgb);
       clipDeath = false;
@@ -2313,6 +2319,8 @@ function frame(dt: number): void {
   myriad.update(world);
   clipSkills.update(world);
   clipSkills9.update(world);
+  // The herd was drawn before clip dispatch: flush all new thunder poses together on H0, without ageing them.
+  if (thunderBodyDirty) { herd.update(0); thunderBodyDirty = false; }
   meteor.update(world);
   ab?.update(dt);
   channel.update(world);
