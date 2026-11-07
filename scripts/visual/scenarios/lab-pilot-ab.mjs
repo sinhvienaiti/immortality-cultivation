@@ -532,7 +532,8 @@ export default async function (page) {
         if (!details.impactInstances?.length) throw new Error("Không tìm được điểm giáng trong camera chơi");
         // Validate the target at the measured peak, retained below, rather than silently zooming the play camera.
         const peak = details.coverage.peak.bounds;
-        if (!peak || peak.x <= 0 || peak.y <= 0 || peak.x + peak.width >= 1920 || peak.y + peak.height >= 1080) throw new Error("Đỉnh hiệu ứng chạm mép camera chơi");
+// The pillar falls from the sky, so its peak may touch the top edge; left, right and bottom must stay inside.
+        if (!peak || peak.x <= 0 || peak.x + peak.width >= 1920 || peak.y + peak.height >= 1080) throw new Error("Đỉnh hiệu ứng chạm mép camera chơi");
       }
       if (details.releaseTick === null || tiles.length !== 12 || castReport?.id !== scene.source || castReport.blows < 1) throw new Error("Thiếu khung phóng, 12 khung hoặc điểm giáng Cột Lôi");
       if (page.exceptions.length > exceptionStart || details.warnings.some(s => /\[(five-phase-clip|thunder-caster-r2)\]/i.test(s))) throw new Error("Lỗi TP; xem bằng chứng riêng");
