@@ -131,7 +131,7 @@ export function tpUrl(base, enabled) {
   const url = new URL(base);
   if (url.pathname !== "/skills-lab.html") throw new Error("URL phải trỏ tới /skills-lab.html");
   url.searchParams.delete("tp2");
-  for (const [k, v] of Object.entries({ fixed: "1", ui: "0", bar: "0", dpr: "1", q: "high", element: "thunder" })) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries({ fixed: "1", video: "0", ui: "0", bar: "0", dpr: "1", q: "high", element: "thunder" })) url.searchParams.set(k, v);
   if (url.searchParams.get("fivephase") === "0") throw new Error("TP cần B8 fivephase bật");
   if (enabled) url.searchParams.set("tp2", "1");
   return url;
