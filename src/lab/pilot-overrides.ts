@@ -5,7 +5,7 @@ export const PILOT_ROOT = "/art-src/lab/vfx-pilot-2026-11-07/";
 export const PILOT_IDS = {
   boss: "boss-entrance-vortex",
   blood: "blood-ring-burst",
-  fire: "i2v-fire-comet",
+  fire: "fire-comet",
   beast: "beast-hit-spark-burst",
 } as const;
 
