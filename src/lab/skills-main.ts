@@ -109,6 +109,7 @@ import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { SHOWER } from "./meteor-plan";
 import { CrescentSample, FIVE, FIVE_RECIPES, FivePhase, type FiveHost } from "./five-phase";
 import { FivePhaseClip } from "./five-phase-clip";
+import { THUNDER_HIT_RGB, THUNDER_HIT_RIM_S } from "./thunder-impact-r2";
 import { ChannelSkill, COLLAPSE_S, WORD_S, type ChannelReport } from "./channel-skill";
 import { StreakCounter } from "./streak-counter";
 import { LabWordTags, PLATE } from "./word-tags";
@@ -1171,7 +1172,10 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
     blow(skill, i, dx, dz, power, role) {
       clipSkillNow = skill;
       clipRgb = tmpColour.set(sc.item(skill.id).light).getHex(THREE.SRGBColorSpace);
-      const killed = herd.hit(i, dx, dz, power, clipRgb);
+      const thunderR2 = slot === "k8" && skill.id === "pillar-thunder-single" && thunderFive.impactR2 !== null;
+      if (thunderR2) clipRgb = THUNDER_HIT_RGB;
+      // Existing herd.hit supplies tier-scaled recoil (king root fixed); emitImpact keeps sound on this same hit.
+      const killed = herd.hit(i, dx, dz, power, clipRgb, thunderR2 ? THUNDER_HIT_RIM_S : undefined);
       clipDeath = true;
       emitImpact(slot, i, dx, dz, power, role, killed, clipRgb);
       clipDeath = false;

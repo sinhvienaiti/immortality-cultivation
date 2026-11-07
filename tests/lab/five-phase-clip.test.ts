@@ -295,8 +295,10 @@ describe("Thunder Pillar round 2 caster layers", () => {
   function layer(f: ReturnType<typeof fixture>, id: string) {
     return f.five.casterR2!.group.children.find((m) => m.name === "flipbook-" + id) as THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial>;
   }
-  function snapshot(f: ReturnType<typeof fixture>, ignoreRibbon = false) {
-    return [f.five.player, f.five.fill.player].map((p) => p.group.children.filter((m) => !ignoreRibbon || m.name !== "flipbook-thunder-ribbon-loop").map((m) => {
+  function snapshot(f: ReturnType<typeof fixture>, ignoreReplaced = false, afterHit = false) {
+    const replaced = ["thunder-ribbon-loop", "thunder-impact", "thunder-ground-impact"];
+    if (afterHit) replaced.push("thunder-sparkle");
+    return [f.five.player, f.five.fill.player].map((p) => p.group.children.filter((m) => !ignoreReplaced || !replaced.some((id) => m.name === "flipbook-" + id)).map((m) => {
       const mesh = m as THREE.Mesh<THREE.InstancedBufferGeometry>;
       return { visible: mesh.visible, count: mesh.geometry.instanceCount,
         attributes: Object.fromEntries(Object.entries(mesh.geometry.attributes).map(([k, a]) => [k, Array.from(a.array)])) };
@@ -385,13 +387,15 @@ describe("Thunder Pillar round 2 caster layers", () => {
     expect(on.five.casterR2!.group.children.every((m) => !m.visible)).toBe(true);
   });
 
-  it("preserves B8 off, replaces only its ribbon on, and leaves the hit clock unchanged", () => {
+  it("preserves B8 off, replaces its R2 travel/impact layers on, and leaves the hit clock unchanged", () => {
     const base = runner(), off = runner("?tp2=0"), on = runner("?tp2=1");
     for (const f of [base, off, on]) f.casts.cast(FIVE_CLIP_ID);
     for (let i = 0; i < 180; i++) {
       for (const f of [base, off, on]) f.step(1 / 60);
-      expect(snapshot(off)).toEqual(snapshot(base)); expect(snapshot(on, true)).toEqual(snapshot(base, true));
+      expect(snapshot(off)).toEqual(snapshot(base));
+      expect(snapshot(on, true, on.blows.length > 0)).toEqual(snapshot(base, true, base.blows.length > 0));
       expect(on.pool("thunder-ribbon-loop").live).toBe(0);
+      expect(on.pool("thunder-impact").live + on.pool("thunder-ground-impact").live).toBe(0);
       expect(on.blows).toEqual(base.blows); expect(on.statuses).toEqual(base.statuses);
     }
     expect(off.five.casterR2).toBeNull();

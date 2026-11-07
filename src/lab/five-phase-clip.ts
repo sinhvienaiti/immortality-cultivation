@@ -5,6 +5,7 @@ import type { TargetField } from "../view/skills/targets";
 import { ChargeFillFx, type ChargeFillPose } from "./charge-fill-fx";
 import { ThunderCasterR2, thunderCasterR2Enabled } from "./thunder-caster-r2";
 import { ThunderTravelR2 } from "./thunder-travel-r2";
+import { ThunderImpactR2, THUNDER_IMPACT_OFFSET_S } from "./thunder-impact-r2";
 
 export const FIVE_CLIP_ID = "pillar-thunder-single";
 export const FIVE_CLIP_CHARGE_S = 0.2;
@@ -32,6 +33,7 @@ export class FivePhaseClip {
   readonly fill: ChargeFillFx;
   readonly casterR2: ThunderCasterR2 | null;
   readonly travelR2: ThunderTravelR2 | null;
+  readonly impactR2: ThunderImpactR2 | null;
   private readonly cards: Card[] = IDS.map((id) => ({ id, pool: null }));
   private readonly afflictions: Affliction[] = Array.from({ length: 64 }, () => ({ target: -1, left: 0, life: 0 }));
   private readonly afflictionAges = new Float32Array(64);
@@ -54,11 +56,13 @@ export class FivePhaseClip {
     this.fill.player.group.name = "fx-five-phase-thunder-charge-fill";
     this.casterR2 = this.enabled && thunderCasterR2Enabled(search) ? new ThunderCasterR2(parent, this.player, host) : null;
     this.travelR2 = this.casterR2 === null ? null : new ThunderTravelR2(parent, host);
+    this.impactR2 = this.casterR2 === null ? null : new ThunderImpactR2(parent, this.player, search);
   }
 
   prepare(): void {
     if (!this.enabled) return;
     this.casterR2?.prepare();
+    this.impactR2?.prepare();
     this.fill.prepareElement("thunder");
     if (this.loading || this.retry > 0) return;
     let ready = true;
@@ -79,6 +83,7 @@ export class FivePhaseClip {
   /** Uses the same library/pools as production; also allows renderer-free tests. */
   adopt(meta: FlipbookMeta, texture: THREE.Texture): void {
     if (!this.enabled) return;
+    this.impactR2?.adopt(meta, texture);
     const card = this.cards.find((c) => c.id === meta.id);
     if (card === undefined) return;
     this.player.library("thunder", () => true).add(meta, texture);
@@ -171,13 +176,16 @@ export class FivePhaseClip {
     if (!this.enabled) return;
     this.travelR2?.strike();
     this.at.set(target.x, 0.12, target.z);
-    this.burst("thunder-ground-impact", 5, 0.85);
+    if (this.impactR2 !== null) this.impactR2.strike(target);
+    else this.burst("thunder-ground-impact", 5, 0.85);
     const sparkle = this.pool("thunder-sparkle");
-    if (sparkle?.meta == null) return;
+    if (sparkle?.meta == null || this.impactR2?.sparkles === false) return;
     // Phase offsets and decreasing sizes/lifetimes thin out the authored sparkle, with erosion rather than a fast fade.
     for (let i = 0; i < 5; i += 1) {
       const o = this.opts();
       o.frame = i * 9; o.delay = i * 0.12; o.life = FIVE_CLIP_TAIL_S - i * 0.25 - o.delay; o.cool = 0.35;
+      // Keep B8's eroding tail and its end time; separate its first sparkle from the core by 2–3 frames.
+      if (this.impactR2 !== null) { o.delay += THUNDER_IMPACT_OFFSET_S; o.life -= THUNDER_IMPACT_OFFSET_S; }
       this.at.set(target.x + Math.cos(i * 2.4) * 1.1, 0.3, target.z + Math.sin(i * 2.4) * 1.1);
       sparkle.spawn(this.at, 1.1 - i * 0.13, o);
     }
@@ -187,7 +195,7 @@ export class FivePhaseClip {
     if (!this.enabled) return;
     const t = this.host.targets;
     this.at.set(t.x(i), t.midY(i), t.z(i));
-    this.burst("thunder-impact", Math.max(1.6, t.radius(i) * 3), 0.65);
+    if (this.impactR2 === null) this.burst("thunder-impact", Math.max(1.6, t.radius(i) * 3), 0.65);
     if (killed || statusS <= 0) return;
     let voice: Affliction | undefined;
     for (const a of this.afflictions) if (a.target === i) { voice = a; break; }
@@ -200,6 +208,7 @@ export class FivePhaseClip {
     this.retry = Math.max(0, this.retry - dt);
     this.casterR2?.update(dt);
     this.travelR2?.update(dt);
+    this.impactR2?.update(dt);
     const affliction = this.pool("thunder-hit-affliction");
     affliction?.clear();
     this.host.pose(this.casterPose);
@@ -250,5 +259,6 @@ export class FivePhaseClip {
     this.fill.clear(); this.player.clear();
     this.casterR2?.clear();
     this.travelR2?.clear();
+    this.impactR2?.clear();
   }
 }
