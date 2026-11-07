@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import ts from 'typescript';
 import { FivePhaseClip } from '../../src/lab/five-phase-clip.ts';
-import { ThunderTravelR2, THUNDER_TRAVEL_TAIL_S, THUNDER_PILLAR_TAIL_S, THUNDER_PILLAR_SIZE } from '../../src/lab/thunder-travel-r2.ts';
+import { ThunderTravelR2, THUNDER_TRAVEL_TAIL_S, THUNDER_PILLAR_TAIL_S, THUNDER_PILLAR_SIZE, THUNDER_GUIDE_RISE_S, THUNDER_GUIDE_FLIGHT_S } from '../../src/lab/thunder-travel-r2.ts';
 import { ClipSkillRunner } from '../../src/lab/clip-skills.ts';
 import { Showcase, ULT_SHOWCASE } from '../../src/lab/showcase.ts';
 import { FlipbookPlayer, FlipbookPool, parseFlipbookManifest } from '../../src/view/skills/flipbook.ts';
@@ -39,16 +39,13 @@ for (const f of [on, off, base]) f.five.cast(target);
 assert.deepEqual(on.releases, base.releases);
 const travel = on.five.travelR2, ribbon = layer(travel.group, 'thunder-ribbon-loop');
 const sparkle = layer(travel.group, 'thunder-sparkle'), halo = layer(travel.group, 'thunder-charge');
-assert.equal(ribbon.geometry.instanceCount, 2);
+assert.equal(ribbon.geometry.instanceCount, 0); // only the bright head starts at the hand
 assert.equal(halo.visible, false);
-// Each textured segment spans exactly its two socket positions, not a velocity-driven detached card.
-for (const [i, a, b] of [[0, hand, new THREE.Vector3(1, 8, 3)], [1, new THREE.Vector3(1, 8, 3), new THREE.Vector3(2, 8, -6)]]) {
-  const p = ribbon.geometry.getAttribute('iPos'), d = ribbon.geometry.getAttribute('iDir'), lift = ribbon.geometry.getAttribute('iLift');
-  const centre = new THREE.Vector3().fromBufferAttribute(p, i), dir = new THREE.Vector3().fromBufferAttribute(d, i);
-  assert.ok(centre.distanceTo(a.clone().lerp(b, 0.5)) < 1e-5);
-  assert.ok(dir.distanceTo(b.clone().sub(a)) < 1e-5);
-  assert.ok(Math.abs(lift.getY(i) - a.distanceTo(b)) < 1e-5);
-}
+on.five.update(THUNDER_GUIDE_RISE_S / 2);
+const guideEnd = (mesh, i, sign) => new THREE.Vector3().fromBufferAttribute(mesh.geometry.getAttribute('iPos'), i)
+  .addScaledVector(new THREE.Vector3().fromBufferAttribute(mesh.geometry.getAttribute('iDir'), i), sign);
+assert.ok(guideEnd(ribbon, 0, -0.5).distanceTo(hand) < 1e-5);
+assert.ok(guideEnd(ribbon, ribbon.geometry.instanceCount - 1, 0.5).distanceTo(hand.clone().lerp(new THREE.Vector3(1, 8, 3), 0.5)) < 1e-5);
 for (const id of ['thunder-ribbon-loop', 'thunder-sparkle', 'thunder-charge']) {
   assert.equal(layer(travel.group, id).material.uniforms.uMap.value, on.textures.get(id));
 }
@@ -158,15 +155,14 @@ const camera = new THREE.PerspectiveCamera(28, 16 / 9, 0.1, 300);
 camera.position.set(0, 26, 14); camera.lookAt(0, 0, -6); camera.updateMatrixWorld(true);
 const projected = new ThunderTravelR2(new THREE.Group(), { hand: (out) => out.copy(hand), camera });
 projected.adopt(meta('thunder-ribbon-loop'), new THREE.Texture()); projected.cast(target);
+projected.update(THUNDER_GUIDE_FLIGHT_S);
 camera.position.x += 4; camera.lookAt(0, 0, -6); camera.updateMatrixWorld(true);
 projected.present(new THREE.Group());
 const strip = layer(projected.group, 'thunder-ribbon-loop');
-for (const [i, from, to] of [[0, hand, new THREE.Vector3(1, 8, 3)], [1, new THREE.Vector3(1, 8, 3), new THREE.Vector3(2, 8, -6)]]) {
-  const centre = new THREE.Vector3().fromBufferAttribute(strip.geometry.getAttribute('iPos'), i);
-  const dir = new THREE.Vector3().fromBufferAttribute(strip.geometry.getAttribute('iDir'), i);
-  for (const [sign, endpoint] of [[-0.5, from], [0.5, to]]) {
-    const actual = centre.clone().addScaledVector(dir, sign).project(camera), expected = endpoint.clone().project(camera);
-    assert.ok(Math.hypot(actual.x - expected.x, actual.y - expected.y) < 1e-5);
-  }
+const sorted = Array.from({ length: strip.geometry.instanceCount }, (_, i) => i).sort((a, b) => strip.geometry.getAttribute('iData').getX(a) - strip.geometry.getAttribute('iData').getX(b));
+const tail = hand.clone().lerp(new THREE.Vector3(1, 8, 3), 0.3 * THUNDER_GUIDE_FLIGHT_S / THUNDER_GUIDE_RISE_S);
+for (const [i, sign, expected] of [[sorted[0], -0.5, tail], [sorted.at(-1), 0.5, new THREE.Vector3(2, 8, -6)]]) {
+  const actual = guideEnd(strip, i, sign).project(camera), point = expected.clone().project(camera);
+  assert.ok(Math.hypot(actual.x - point.x, actual.y - point.y) < 1e-5);
 }
-console.log('PASS: perspective strip endpoints remain on the sockets after camera movement.');
+console.log('PASS: moving/tapered perspective guide endpoints remain on their path after camera movement.');

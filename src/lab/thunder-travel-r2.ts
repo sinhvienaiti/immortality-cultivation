@@ -3,6 +3,10 @@ import * as THREE from "three";
 import { FlipbookPool, ONE_FRAME, type FlipbookMeta, type FlipOptions } from "../view/skills/flipbook";
 
 export const THUNDER_TRAVEL_TAIL_S = 0.12;
+export const THUNDER_GUIDE_RISE_S = 0.12;
+export const THUNDER_GUIDE_FLIGHT_S = 0.18;
+export const THUNDER_GUIDE_WIDTH = 0.8;
+const GUIDE_SEGMENTS = 12;
 export const THUNDER_PILLAR_TAIL_S = 0.55;
 export const THUNDER_PILLAR_SIZE = 10;
 const IDS = ["thunder-ribbon-loop", "thunder-sparkle", "thunder-charge"] as const;
@@ -18,6 +22,8 @@ export class ThunderTravelR2 {
   private readonly summit = new THREE.Vector3();
   private readonly at = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
+  private readonly from = new THREE.Vector3();
+  private readonly to = new THREE.Vector3();
   private readonly screenA = new THREE.Vector3();
   private readonly screenB = new THREE.Vector3();
   private readonly options: FlipOptions = { life: ONE_FRAME, rate: 0, alpha: 1, intensity: 0.75,
@@ -33,7 +39,7 @@ export class ThunderTravelR2 {
   adopt(meta: FlipbookMeta, texture: THREE.Texture): void {
     const card = this.cards.find((c) => c.id === meta.id);
     if (card === undefined || card.pool !== null) return;
-    const pool = new FlipbookPool(meta.id, meta.mode, meta.id === "thunder-sparkle" ? 16 : 2, 14, this.blank);
+    const pool = new FlipbookPool(meta.id, meta.mode, meta.id === "thunder-ribbon-loop" ? GUIDE_SEGMENTS + 1 : meta.id === "thunder-sparkle" ? 16 : 2, 14, this.blank);
     // Centre the strip on each socket-to-socket segment. No new texture, shader or library.
     pool.attach(meta.id === "thunder-ribbon-loop" ? { ...meta, pivot: [0.5, 0.5] } : meta, texture);
     card.pool = pool;
@@ -59,7 +65,7 @@ export class ThunderTravelR2 {
     if (this.host.camera === undefined) this.render();
   }
 
-  private segment(pool: FlipbookPool, from: THREE.Vector3, to: THREE.Vector3): void {
+  private segment(pool: FlipbookPool, from: THREE.Vector3, to: THREE.Vector3, width: number): void {
     const o = this.options;
     this.dir.subVectors(to, from);
     o.span = this.dir.length(); o.dir = this.dir;
@@ -74,7 +80,36 @@ export class ThunderTravelR2 {
       this.dir.subVectors(this.screenB, this.screenA); o.span = this.dir.length();
       this.at.copy(this.screenA).addScaledVector(this.dir, 0.5);
     }
-    pool.spawn(this.at, 0.45, o);
+    pool.spawn(this.at, width, o);
+  }
+
+  /** One continuous head: first up from the hand, then across to the pillar's summit. */
+  private guidePoint(t: number, out: THREE.Vector3): void {
+    const corner = THUNDER_GUIDE_RISE_S / THUNDER_GUIDE_FLIGHT_S;
+    if (t <= corner) out.lerpVectors(this.hand, this.sky, t / corner);
+    else out.lerpVectors(this.sky, this.summit, (t - corner) / (1 - corner));
+  }
+
+  private guide(pool: FlipbookPool): void {
+    const head = Math.min(1, this.age / THUNDER_GUIDE_FLIGHT_S);
+    const tail = Math.max(0, head - 0.7), corner = THUNDER_GUIDE_RISE_S / THUNDER_GUIDE_FLIGHT_S;
+    const o = this.options;
+    o.frame = this.age * pool.meta!.fps % pool.meta!.frames;
+    for (let i = 0; i < GUIDE_SEGMENTS; i += 1) {
+      const a = tail + (head - tail) * i / GUIDE_SEGMENTS;
+      const b = tail + (head - tail) * (i + 1) / GUIDE_SEGMENTS;
+      if (b - a < 1e-6) continue;
+      const fresh = (i + 0.5) / GUIDE_SEGMENTS;
+      const width = 0.08 + (THUNDER_GUIDE_WIDTH - 0.08) * fresh;
+      o.alpha = (0.12 + 0.7 * fresh) * Math.min(1, this.age / 0.025);
+      this.guidePoint(a, this.from); this.guidePoint(b, this.to);
+      // Split at the bend so the ribbon never cuts diagonally across the two sockets.
+      if (a < corner && b > corner) {
+        this.segment(pool, this.from, this.sky, width);
+        this.segment(pool, this.sky, this.to, width);
+      } else this.segment(pool, this.from, this.to, width);
+    }
+    pool.update(0);
   }
 
   private render(): void {
@@ -84,14 +119,17 @@ export class ThunderTravelR2 {
     this.summit.set(this.target.x, this.sky.y, this.target.z);
     const ribbon = this.cards[0]!.pool, sparkle = this.cards[1]!.pool, halo = this.cards[2]!.pool;
     const o = this.options;
-    const travel = this.hitAge < 0 ? 1 : Math.max(0, 1 - this.hitAge / THUNDER_TRAVEL_TAIL_S);
+    const travel = this.hitAge < 0 ? 1 : 0;
     if (ribbon?.meta != null && travel > 1e-6) {
-      o.frame = this.age * ribbon.meta.fps % ribbon.meta.frames; o.alpha = travel * 0.75;
-      this.segment(ribbon, this.hand, this.sky); this.segment(ribbon, this.sky, this.summit);
-      ribbon.update(0);
+      this.guide(ribbon);
     }
     o.dir = null; o.span = 0;
     if (sparkle?.meta != null) {
+      if (travel > 0) {
+        this.guidePoint(Math.min(1, this.age / THUNDER_GUIDE_FLIGHT_S), this.at);
+        o.alpha = 0.9; o.frame = sparkle.meta.peak ?? sparkle.meta.start;
+        sparkle.spawn(this.at, 0.32, o);
+      }
       for (let i = 0; i < 8; i += 1) {
         const t = (this.age * 1.6 + i / 8) % 1;
         if (travel > 1e-6) {
