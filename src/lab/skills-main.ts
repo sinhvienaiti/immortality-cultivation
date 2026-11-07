@@ -1139,6 +1139,7 @@ showcase.deferAtlases = expansion.deferAtlases = params.get("atlases") !== "all"
 // (emitImpact, the screen's tier, the kick, the lights).
 const clipTmp = new THREE.Vector3();
 const thunderFive = new FivePhaseClip(view.layers.fx, VFX_BASE, {
+  camera: view.camera,
   targets: herd,
   hand: (out) => caster.hand(out),
   pose(out) {
@@ -2365,6 +2366,10 @@ function frame(dt: number): void {
   chargeFillPose.x = caster.x;
   chargeFillPose.y = caster.root.position.y;
   chargeFillPose.z = caster.z;
+  if (thunderFive.travelR2 !== null) {
+    view.camera.updateMatrixWorld();
+    thunderFive.travelR2.present(stage.flipbooks.group);
+  }
   chargeFill.update(dt, chargeFillPose);
   ambient.update(dt);
   placeTags();
