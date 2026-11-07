@@ -12,6 +12,7 @@ const cases = [
   { key: "video", value: "0", defaultOn: true },
   { key: "sigil", value: "code", defaultOn: true },
   { key: "readable", value: "1", defaultOn: false },
+  { key: "pilot", value: "1", defaultOn: false },
 ];
 const base = "https://tutien.typing-game.local/skills.html?element=fire&show=fire-pillar&expand=water-avatar&quality=ultra&typed=1&other=a&other=b#lab";
 

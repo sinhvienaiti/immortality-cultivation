@@ -164,6 +164,7 @@ export class CometHead {
     this.el = el;
     this.texture = texture;
     this.duration = v.frames / v.fps;
+    if (rim.meta.playback !== undefined) el.playbackRate = this.duration / rim.meta.playback.durationS;
     const cell: FlipbookMeta = { ...rim.meta, id: rim.meta.id + "#video", cols: 1, rows: 1, frames: 1, fps: v.fps, start: 0, loop: false, aspect: v.w / v.h,
       pivot: rim.meta.comet!.head, peak: undefined, holdEnd: undefined, video: undefined };
     this.videoPool.attach(cell, texture);
@@ -202,12 +203,15 @@ export class CometHead {
     const atlas = !showing || this.mode === "ab";
     if (showing) {
       o.frame = 0;
+      const duration = rim.meta.playback?.durationS;
+      o.playbackT = duration === undefined ? undefined : (this.clock % duration) / duration;
       this.videoPool.spawn(at, size, o);
       if (boost > 0) {
         o.intensity = boost; o.occlude = HEAD_OCCLUDE;
         this.headVideo.spawn(at, size, o);
         o.intensity = undefined; o.occlude = 0.3;
       }
+      o.playbackT = undefined;
     }
     if (atlas) {
       o.frame = cometFrame(this.clock, phase, rim.meta.fps, rim.meta.frames);
@@ -234,7 +238,9 @@ export class CometHead {
       if (this.seenDraw && this.idle < 0.05) {
         if (this.driven) {
           if (!el.paused) el.pause();
-          const t = (this.clock - dt) % Math.max(0.1, this.duration - 0.05);
+          const duration = this.rim?.meta.playback?.durationS;
+          const t = duration === undefined ? (this.clock - dt) % Math.max(0.1, this.duration - 0.05)
+            : ((this.clock - dt) % duration) * this.duration / duration;
           if (Math.abs(el.currentTime - t) > 0.5 / 24) seekVideoFrame(el, t);
         } else if (el.paused) void el.play().catch(() => undefined);
       } else if (!el.paused) el.pause();

@@ -93,7 +93,14 @@ export interface Ktx2File { readonly url: string; readonly bytes: number }
 export interface Ktx2Set { readonly uastc?: Ktx2File; readonly etc1s?: Ktx2File }
 export interface FlipbookMotion { readonly url: string; readonly bytes: number; readonly strength: number; readonly ktx2?: Ktx2Set }
 
+/** Optional host-authored playback; the game manifest parser never creates it. */
+export interface FlipbookPlayback {
+  readonly durationS: number;
+  sample(t: number, out: { scale: number; alpha: number; erosion: number }): void;
+}
+
 export interface FlipbookMeta {
+  readonly playback?: FlipbookPlayback;
   readonly bytes?: number;
   readonly ktx2?: Ktx2Set;
   readonly motion?: FlipbookMotion;
@@ -477,6 +484,11 @@ export function motionSampleUv(u: number, v: number, du: number, dv: number, w: 
 const SPLIT_X = { value: 0 };
 export function setFlipbookSplitX(px: number): void { SPLIT_X.value = px; }
 
+type ManifestTransform = (metas: Map<string, FlipbookMeta>, base: string) => Promise<Map<string, FlipbookMeta>>;
+let manifestTransform: ManifestTransform | null = null;
+/** The dev lab installs its loader before creating players; normal game loading is unchanged. */
+export function setFlipbookManifestTransform(transform: ManifestTransform | null): void { manifestTransform = transform; }
+
 /**
  * One element folder's atlases (loaded once; pools attach as they arrive). `defer` names clips whose atlas waits until
  * asked (fetchAtlas): they arrive at once with a blank stand-in, so pools know their clip, and `release` lets a fetched
@@ -573,6 +585,7 @@ export class FlipbookLibrary {
         const response = await fetch(this.base + "manifest.json", { cache: "no-cache" });
         if (!response.ok || !(response.headers.get("content-type") ?? "").includes("json")) return;
         metas = parseFlipbookManifest(await response.json(), this.base);
+        if (manifestTransform !== null) metas = await manifestTransform(metas, this.base);
         for (const m of metas.values()) this.declared.set(m.id, m);
       } catch (error) {
         console.warn("[flipbook] no manifest at " + this.base, error);
@@ -1021,6 +1034,8 @@ const FRAGMENT_TAGGED = withTagMask(FRAGMENT);
 const FRAGMENT_V2_TAGGED = withTagMask(FRAGMENT_V2);
 
 export interface FlipOptions {
+  /** Host-driven normalized playback time for cards rebuilt each frame. */
+  playbackT?: number;
   /** Seconds it lives (default: one pass of the clip at `rate`; a loop: one second). ONE_FRAME: drawn this frame only. */
   life?: number;
   /** Playback speed × the clip's fps (default 1); 0 holds `frame`. */
@@ -1314,14 +1329,15 @@ export class FlipbookPool {
   private readonly varAttribute: THREE.InstancedBufferAttribute;
   private readonly varCell: Float32Array;
   private readonly timings: (FlipbookTiming | null)[];
+  private readonly playbackSample = { scale: 1, alpha: 1, erosion: 0 };
   private v2Key: string | null = null;
   private masked = false;
   private hasMotion = false;
   private blendMotion = true;
   private variantTurn = 0;
-  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode, slowFrom, slowFps */
+  /** x y z, vx vy vz, size, grow, rot, spin, age, life, frame, fps, alpha, drag, gravity, fadeIn, fadeOut, ground, occlude, r g b, dx dy dz, delay, cool, seed, lift, span, erode, slowFrom, slowFps, playbackT */
   private readonly state: Float32Array;
-  private static readonly STRIDE = 35;
+  private static readonly STRIDE = 36;
   private cursor = 0;
   live = 0;
   /** Sprites dropped since the last clear because every slot held a live one. */
@@ -1608,7 +1624,7 @@ export class FlipbookPool {
     const slowFrom = slowFromOf(meta, options);
     const slowFps = slowFrom >= 0 ? meta.fps * Math.max(0.01, options.slowRate!) : 0;
     const timing = this.masked ? flipbookTimingOf(meta, options) : null;
-    const life = playLife(meta, options);
+    const life = options.life !== ONE_FRAME && meta.playback !== undefined ? meta.playback.durationS : playLife(meta, options);
     const vars = this.v2Key !== null ? meta.variants ?? 1 : 1;
     let v = 0;
     if (vars > 1) {
@@ -1660,6 +1676,7 @@ export class FlipbookPool {
     st[o + 32] = Math.min(1, Math.max(0, options.erode ?? 0));
     st[o + 33] = slowFrom;
     st[o + 34] = slowFps;
+    st[o + 35] = options.playbackT ?? (options.life === ONE_FRAME && meta.playback !== undefined ? (first - meta.start) / Math.max(1, meta.frames - meta.start) : -1);
   }
 
   /** Draws each sprite at its age (frame 0 at age 0, full alpha unless it fades in), then ages it by `dt`. */
@@ -1682,16 +1699,18 @@ export class FlipbookPool {
         st[o + 27] = 0;
       }
       const k = age / life;
+      const playback = this.meta?.playback;
+      if (playback !== undefined) playback.sample(st[o + 35]! >= 0 ? st[o + 35]! : k, this.playbackSample);
       const fadeIn = st[o + 17]! > 0 ? Math.min(1, (age + 1 / 60) / st[o + 17]!) : 1;
       const fadeOut = st[o + 18]! > 0 ? Math.min(1, (life - age) / st[o + 18]!) : 1;
       const grow = 1 + st[o + 7]! * (1 - (1 - k) * (1 - k));
       this.iPos[n * 3] = st[o]!;
       this.iPos[n * 3 + 1] = st[o + 1]!;
       this.iPos[n * 3 + 2] = st[o + 2]!;
-      this.iData[n * 4] = st[o + 6]! * grow;
+      this.iData[n * 4] = st[o + 6]! * (playback !== undefined ? this.playbackSample.scale : grow);
       this.iData[n * 4 + 1] = st[o + 8]!;
       this.iData[n * 4 + 2] = frameAt(st[o + 12]!, st[o + 13]!, st[o + 33]!, st[o + 34]!, age);
-      this.iData[n * 4 + 3] = st[o + 14]! * fadeIn * fadeOut;
+      this.iData[n * 4 + 3] = st[o + 14]! * (playback !== undefined ? this.playbackSample.alpha : fadeIn * fadeOut);
       this.iColor[n * 4] = st[o + 21]!;
       this.iColor[n * 4 + 1] = st[o + 22]!;
       this.iColor[n * 4 + 2] = st[o + 23]!;
@@ -1700,14 +1719,14 @@ export class FlipbookPool {
       this.iDir[n * 4 + 1] = st[o + 25]!;
       this.iDir[n * 4 + 2] = st[o + 26]!;
       this.iDir[n * 4 + 3] = st[o + 20]!;
-      this.iAge[n * 4] = k;
-      this.iAge[n * 4 + 1] = st[o + 28]!;
+      this.iAge[n * 4] = playback !== undefined ? this.playbackSample.erosion : k;
+      this.iAge[n * 4 + 1] = playback !== undefined ? 1e-6 : st[o + 28]!;
       this.iAge[n * 4 + 2] = st[o + 29]!;
-      this.iAge[n * 4 + 3] = st[o + 32]!;
+      this.iAge[n * 4 + 3] = playback !== undefined ? this.playbackSample.erosion : st[o + 32]!;
       this.iLift[n * 2] = st[o + 30]!;
       this.iLift[n * 2 + 1] = st[o + 31]!;
       if (this.v2Key !== null) {
-        flipbookControl(age, life, st[o + 28]!, st[o + 32]!, this.timings[i]!, this.iCtl, n * 4);
+        flipbookControl(age, life, playback !== undefined ? 0 : st[o + 28]!, this.iAge[n * 4 + 3]!, playback !== undefined ? null : this.timings[i]!, this.iCtl, n * 4);
         this.iVar[n] = this.varCell[i]!;
       }
       n += 1;

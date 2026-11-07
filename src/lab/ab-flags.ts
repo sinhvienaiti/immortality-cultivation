@@ -17,6 +17,7 @@ export const AB_FLAGS: readonly AbFlag[] = [
   { key: "video", label: "Video clips", value: "0", enabledWhenSet: false },
   { key: "sigil", label: "Painted sigils", value: "code", enabledWhenSet: false },
   { key: "readable", label: "Readability dimming", value: "1", enabledWhenSet: true },
+  { key: "pilot", label: "Pilot sources", value: "1", enabledWhenSet: true },
 ];
 
 export function abFlagEnabled(url: URL, flag: AbFlag): boolean {

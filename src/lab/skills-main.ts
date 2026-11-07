@@ -129,8 +129,10 @@ import { keyIcon, SkillBar, type SkillBarState } from "./skill-bar";
 import { QiDragonSwarm } from "../view/skills/qi-dragon-swarm";
 import { QiSwarmLab, skillsLabQuality, type SwarmLabReport } from "./qi-dragon-swarm";
 import { AB_FLAGS, abFlagEnabled, withAbFlag } from "./ab-flags";
+import { installPilotOverrides } from "./pilot-overrides";
 
 const params = new URLSearchParams(location.search);
+installPilotOverrides(params);
 // ?cut=sabre: the lopsided swept swing (kept for the Sabre school) in place of the Sword's symmetric crescent (read once).
 if (params.get("cut") === "sabre") SLASH_STYLE.style = "sabre";
 // ?dark=b: Dark in palette B (black, silver-grey rims) in place of the owner's pick A, to compare them (read once).
