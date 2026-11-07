@@ -2486,6 +2486,10 @@ declare global {
       zoom(value?: number): number;
       /** The camera's framing now: the player's zoom (wanted, shown), a big skill's wide weight and the camera distance (m). */
       framing(): Record<string, number>;
+      /** Fixed capture camera at the play tilt; sets no simulation time. No target: read the play fit. */
+      captureCamera(target?: { x: number; y: number; z: number; distanceM: number }): { position: number[]; quaternion: number[]; fov: number; distanceM: number };
+      /** Live flipbook anchors and billboard sizes, for effect-centred capture cameras. */
+      fxInstances(prefix: string): { x: number; y: number; z: number; sizeM: number }[];
       /** The hand prop's state (loaded, dissolve, jade and core levels, length, triangles) and its grip. */
       hand(): Record<string, unknown>;
       /** Tunes the grip (degrees, metres in the hand's frame); missing fields keep theirs. */
@@ -2842,6 +2846,29 @@ void (async () => {
       return zoom.value;
     },
     framing: () => ({ wanted: zoom.wanted, shown: zoom.value, wide: zoom.wideShown, distanceM: view.camera.position.distanceTo(screenV.set(0, 0, view.fit.targetZ)) }),
+    captureCamera(target) {
+      if (target !== undefined) {
+        customCamera = true;
+        placeCamera(view.camera, 55, target.distanceM, target.x, target.z, target.y);
+        camBase.copy(view.camera.position);
+        view.render(0);
+      }
+      return { position: view.camera.position.toArray(), quaternion: view.camera.quaternion.toArray(), fov: view.camera.fov, distanceM: target?.distanceM ?? view.fit.distanceM };
+    },
+    fxInstances(prefix) {
+      const out: { x: number; y: number; z: number; sizeM: number }[] = [];
+      view.layers.fx.traverseVisible((c) => {
+        if (!c.name.startsWith(prefix)) return;
+        const g = (c as THREE.Mesh).geometry as THREE.InstancedBufferGeometry | undefined;
+        const pos = g?.getAttribute("iPos"), data = g?.getAttribute("iData");
+        if (pos === undefined || data === undefined) return;
+        for (let i = 0; i < (g?.instanceCount ?? 0); i += 1) {
+          if (data.getW(i) <= 0) continue;
+          out.push({ x: pos.getX(i), y: pos.getY(i), z: pos.getZ(i), sizeM: data.getX(i) });
+        }
+      });
+      return out;
+    },
     camera(mode, x = 0, z = -6, distanceM = 15) {
       customCamera = mode !== "play";
       zoom.set(0);
