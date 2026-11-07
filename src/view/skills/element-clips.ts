@@ -42,7 +42,7 @@ export function lin(hex: string): Rgb {
   return [c.r, c.g, c.b];
 }
 
-export const CLIP_ROLES: readonly ClipRole[] = ["charge", "release", "ribbon", "sheath", "impact", "burst", "groundImpact", "sparkle", "slash", "groundMark"];
+export const CLIP_ROLES: readonly ClipRole[] = ["charge", "release", "ribbon", "sheath", "impact", "burst", "groundImpact", "sparkle", "slash", "groundMark", "ringBurst"];
 
 /** How an element's clips are drawn (its law in placement and time; colours are the clips' own or the heat ramp). */
 export interface ClipLook {
@@ -127,11 +127,11 @@ const COOL = 0.55;
 
 /** Sprites a role's pool holds (key 7 strikes by the dozen; a sheath is redrawn every frame on every blade). */
 const CAPACITY: Readonly<Record<ClipRole, number>> = {
-  charge: 6, release: 48, ribbon: 48, sheath: 192, impact: 160, burst: 48, groundImpact: 96, sparkle: 640, slash: 64, groundMark: 128,
+  charge: 6, release: 48, ribbon: 48, sheath: 192, impact: 160, burst: 48, groundImpact: 96, sparkle: 640, slash: 64, groundMark: 128, ringBurst: 12,
 };
 /** Draw order: ground marks under everything, bodies, then thin light on top. */
 const ORDER: Readonly<Record<ClipRole, number>> = {
-  groundMark: 5, groundImpact: 11, burst: 12, impact: 12, slash: 12, release: 13, charge: 13, ribbon: 12, sheath: 11, sparkle: 14,
+  groundMark: 5, groundImpact: 11, burst: 12, impact: 12, slash: 12, release: 13, charge: 13, ribbon: 12, sheath: 11, sparkle: 14, ringBurst: 6,
 };
 
 /**
@@ -140,7 +140,7 @@ const ORDER: Readonly<Record<ClipRole, number>> = {
  */
 const TIMES: Readonly<Record<ClipRole, readonly [attack: number, tail: number]>> = {
   charge: [0.1, 0.5], release: [0.05, 0.6], ribbon: [0.05, 0.5], sheath: [0.05, 0.5], impact: [0.05, 0.9], burst: [0.08, 1.5],
-  groundImpact: [0.08, 1.3], sparkle: [0.05, 0.6], slash: [0.06, 0.75], groundMark: [0.12, 2.8],
+  groundImpact: [0.08, 1.3], sparkle: [0.05, 0.6], slash: [0.06, 0.75], groundMark: [0.12, 2.8], ringBurst: [0.08, 0.9],
 };
 
 const isRole = (r: string | undefined): r is ClipRole => r !== undefined && (CLIP_ROLES as readonly string[]).includes(r);
@@ -549,7 +549,7 @@ class ClipLayers {
     if (role === "impact" || role === "burst" || role === "release" || role === "charge" || role === "groundImpact") pool.vignette = 0.5;
     // A vertical sheath (9:16) flows up its cell: its height follows the blade.
     if (role === "sheath" && e.meta.aspect < 1 && e.meta.heading === 0) pool.attach({ ...e.meta, heading: Math.PI / 2 }, e.texture, e.controls);
-    if (role === "groundMark") layFlat(pool);
+    if (role === "groundMark" || role === "ringBurst") layFlat(pool);
     if (role === "slash" && !body) sweepCard(pool, halfOf(this.spec.id, id));
     list.push(pool);
     lists.set(role, list);
@@ -886,6 +886,7 @@ class ClipLayers {
     const big = a.skill === "k7" || a.tier >= 3;
     const s = big ? 1.5 : 1;
     const p = a.at;
+    if (this.spec.id === "blood" && a.skill === "k1") this.ringBurst(a.caster.x, a.caster.z, Math.max(3, a.ringM * 1.2));
     const o = this.once(r, "release");
     o.rot = this.stage.rand.range(0, Math.PI * 2);
     o.lift = 0.8;
@@ -907,6 +908,18 @@ class ClipLayers {
       this.mark(c.x, c.z, Math.max(3, a.ringM * 1.2), this.stage.rand.range(0, Math.PI * 2));
       this.stage.accent(p.x, p.y, p.z, 0.25);
     }
+    return true;
+  }
+
+  /** Blood's ground shockwave shares the existing ground-card projection and timing kit. */
+  ringBurst(x: number, z: number, width: number): boolean {
+    const p = this.pick("ringBurst");
+    if (p === null || this.spec.id !== "blood") return false;
+    const o = this.once(p, "ringBurst");
+    const height = width / p.meta!.aspect;
+    o.lift = 0.05;
+    o.span = width * this.spec.look.scale;
+    this.spawn("ringBurst", p, x, 0.04, z, height, o);
     return true;
   }
 
@@ -1581,6 +1594,11 @@ const LAYERS = new WeakMap<ElementStage, Map<ElementId, ClipLayers>>();
 /** What a clip kit has drawn on `stage` since its last reset (the lab's __lab.clipKit; null before it is attached). */
 export function clipAudit(stage: ElementStage, id: ElementId): ClipAudit | null {
   return LAYERS.get(stage)?.get(id)?.audit ?? null;
+}
+
+/** Lab isolation uses the same ground ring as Blood's release hook. */
+export function bloodRingBurst(stage: ElementStage, x: number, z: number, width = 5): boolean {
+  return LAYERS.get(stage)?.get("blood")?.ringBurst(x, z, width) ?? false;
 }
 
 /** Key 7's light from the element's colours (linear): white core, halo (≤ 0.9), the finisher's body, lit body and deep end. */

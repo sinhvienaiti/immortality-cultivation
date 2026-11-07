@@ -28,6 +28,25 @@ function fixture(poses = [beast(0)], search = "") {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("lab elite and boss presence", () => {
+  it("fits an upright portal to 1.75 body widths with its pivoted bottom above the birth floor", () => {
+    const p = beast(0, true), { fx, pool, poses } = fixture([p]);
+    const c = FOE_AURA_CLIPS.find((c) => c.id === VORTEX)!;
+    const meta = parseFlipbookManifest({ flipbooks: { [VORTEX]: {
+      file: "portal.png", cols: 4, rows: 4, frames: 16, fps: 8,
+      cell: [320, 160], pivot: [0.4, 0.2], mode: "fire",
+    } } }, "/v/").get(VORTEX)!;
+    fx.adopt(c, meta, new THREE.Texture());
+    fx.update(0);
+    const mesh = pool(VORTEX).mesh, pos = mesh.geometry.getAttribute("iPos");
+    const height = mesh.geometry.getAttribute("iData").getX(0);
+    expect(height * meta.aspect / (2 * p.radius)).toBeCloseTo(1.75);
+    expect(pos.getY(0) - height * (1 - meta.pivot[1]) * Math.cos(55 * Math.PI / 180)).toBeCloseTo(p.groundY! + 0.04);
+    expect(mesh.geometry.getAttribute("iLift").getX(0)).toBeCloseTo(-0.02);
+    poses[0]!.x = 20; fx.update(0.1);
+    expect(pos.getX(0)).toBe(1); // Entrance stays at the birth position as the boss walks away.
+    fx.player.dispose();
+  });
+
   it("follows the body, loops for its lifetime and stops on disappearance or death", () => {
     const { fx, poses, live, pool } = fixture();
     fx.update(0); expect(pool(IRON).live).toBe(1);

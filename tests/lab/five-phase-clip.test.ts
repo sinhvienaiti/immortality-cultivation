@@ -249,6 +249,49 @@ describe("Thunder Pillar five-phase sample", () => {
 });
 
 describe("Thunder Pillar round 2 caster layers", () => {
+  it("keeps key 8 out of the shared charge fill and releases on its final typed letter", () => {
+    const source = readFileSync(new URL("../../src/lab/skills-main.ts", import.meta.url), "utf8");
+    const clip = source.slice(source.indexOf("function castClip8("), source.indexOf("/** A lab key's skill:"));
+    const typing = source.slice(source.indexOf("const pending = {"), source.indexOf("function reset():"));
+    const events: string[] = [];
+    const sync = vi.fn();
+    const charge = vi.fn();
+    const cast = vi.fn(() => { events.push("cast"); return FIVE_CLIP_ID; });
+    const deps = {
+      chargeFill: { sync }, thunderFive: { prepare() {}, charge },
+      clipSkills: { selectedId: () => FIVE_CLIP_ID, select() {}, cast },
+      heroPresence: { typed() {} }, sound: { key() {} }, fx: { element: { id: "fire" } },
+    };
+    const body = ts.transpileModule(`
+      const { ${Object.keys(deps).join(",")} } = deps;
+      let typing = null, typedMode = true, wpm = 120;
+      ${clip}
+      ${typing}
+      castClip8();
+      const word = typing;
+      updateTyping(0);
+      for (let i = 0; i < 5; i++) updateTyping(0.1);
+      const before = typing.typed;
+      updateTyping(0.1);
+      return { word, before, finished: typing === null };
+    `, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+    cast.mockImplementation(() => {
+      expect(charge).toHaveBeenLastCalledWith(1);
+      expect(sync).toHaveBeenLastCalledWith(expect.objectContaining({ slot: "k8", typed: 7 }), "fire");
+      events.push("cast"); return FIVE_CLIP_ID;
+    });
+    const result = new Function("deps", body)(deps);
+    expect(result).toEqual({ word: expect.objectContaining({ slot: "k8", clip: FIVE_CLIP_ID }), before: 6, finished: true });
+    expect(events).toEqual(["cast"]);
+    expect(charge.mock.calls.map(([p]) => p)).toEqual([0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1]);
+    expect(sync).toHaveBeenCalledTimes(7);
+    const f = fixture("?tp2=1");
+    const prepare = vi.spyOn(f.five.fill, "prepareElement");
+    f.five.fill.sync(result.word, "fire");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(f.five.fill.player.live).toBe(0);
+  });
+
   function layer(f: ReturnType<typeof fixture>, id: string) {
     return f.five.casterR2!.group.children.find((m) => m.name === "flipbook-" + id) as THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial>;
   }
@@ -260,7 +303,7 @@ describe("Thunder Pillar round 2 caster layers", () => {
     }));
   }
 
-  it("starts the grounded ring and existing light on release; charge rises then every layer ends on time", () => {
+  it("peaks the seal on an instant release while the other layers retain their clocks", () => {
     const f = fixture("?tp2=1"), lights = new FlashLights(f.parent, 3), camera = new THREE.Vector3(0, 15, 12);
     const ring = layer(f, "thunder-ring-burst"), seal = layer(f, "thunder-caster-seal"), sparks = layer(f, "thunder-sparkle");
     f.release.mockImplementation((at: THREE.Vector3) => {
@@ -273,12 +316,15 @@ describe("Thunder Pillar round 2 caster layers", () => {
     expect(f.parent.children.filter((c) => c instanceof THREE.PointLight)).toHaveLength(3);
     expect(ring.geometry.getAttribute("iData").getW(0)).toBe(1);
     expect(ring.geometry.getAttribute("iData").getX(0)).toBeCloseTo(0.8);
-    expect(seal.geometry.getAttribute("iData").getW(0)).toBe(0);
+    expect(seal.geometry.getAttribute("iData").getW(0)).toBe(1);
+    expect(seal.geometry.getAttribute("iData").getZ(0)).toBe(21);
+    expect(seal.geometry.getAttribute("iAge").getX(0)).toBe(0);
     expect(sparks.visible).toBe(false);
     expect(seal.material.customProgramCacheKey()).toBe("element-ground-card");
     expect(ring.material.customProgramCacheKey()).toBe("element-ground-card");
     f.five.update(0.1);
-    expect(seal.geometry.getAttribute("iData").getW(0)).toBeCloseTo(0.5);
+    expect(seal.geometry.getAttribute("iData").getW(0)).toBe(1);
+    expect(seal.geometry.getAttribute("iAge").getX(0)).toBeCloseTo(1 / 3);
     expect(sparks.geometry.instanceCount).toBe(12);
     const pos = sparks.geometry.getAttribute("iPos"), frames = sparks.geometry.getAttribute("iData");
     const particleZero = (age: number) => Array.from({ length: sparks.geometry.instanceCount }, (_, i) => i).find((i) => Math.abs(frames.getZ(i) - age * 24) < 1e-5)!;
@@ -292,12 +338,51 @@ describe("Thunder Pillar round 2 caster layers", () => {
     f.five.update(0.05);
     expect(sparks.visible).toBe(false); expect(seal.geometry.getAttribute("iData").getW(0)).toBe(1);
     f.five.update(0.15);
-    expect(seal.geometry.getAttribute("iAge").getX(0)).toBeCloseTo(0.5);
+    expect(seal.visible).toBe(false);
     expect(ring.geometry.getAttribute("iData").getW(0)).toBeGreaterThan(0);
     f.five.update(0.05); expect(ring.visible).toBe(false);
     f.five.update(0.1); expect(seal.visible).toBe(false);
     for (let i = 0; i < 120; i++) lights.update(1 / 60);
     expect(lights.levels()).toEqual([0, 0, 0]);
+  });
+
+  it.each([0.1, 0.6])("scrubs the seal with letters for a %s s word and peaks before the release hook", (duration) => {
+    const f = fixture("?tp2=1"), seal = layer(f, "thunder-caster-seal");
+    const data = seal.geometry.getAttribute("iData"), age = seal.geometry.getAttribute("iAge");
+    for (let letter = 0; letter < 4; letter++) {
+      const p = letter / 4;
+      f.five.charge(p); f.five.update(duration / 4);
+      expect(data.getW(0)).toBeCloseTo(p * p * (3 - 2 * p));
+      expect(data.getZ(0)).toBeCloseTo(21 * p);
+      expect(age.getX(0)).toBe(0);
+      expect(layer(f, "thunder-ring-burst").visible).toBe(false);
+      expect(layer(f, "thunder-sparkle").visible).toBe(false);
+      expect(f.release).not.toHaveBeenCalled();
+    }
+    f.five.update(0.5); // Pausing typing never advances the charge.
+    expect(data.getZ(0)).toBeCloseTo(21 * 0.75);
+    f.five.charge(1);
+    expect(data.getW(0)).toBe(1); expect(data.getZ(0)).toBe(21);
+    f.release.mockImplementation(() => {
+      expect(data.getW(0)).toBe(1); expect(data.getZ(0)).toBe(21); expect(age.getX(0)).toBe(0);
+    });
+    f.five.cast(f.at);
+    expect(f.release).toHaveBeenCalledTimes(1);
+    f.five.charge(null); f.five.update(1 / 60);
+    expect(age.getX(0)).toBeGreaterThan(0);
+    f.five.update(0.3); expect(seal.visible).toBe(false);
+  });
+
+  it("cancels a typed seal and leaves B8 unchanged when tp2 is off", () => {
+    const on = fixture("?tp2=1"), off = fixture("?tp2=0"), base = fixture();
+    on.five.charge(0.5); on.five.charge(null); on.five.update(0.1);
+    expect(layer(on, "thunder-caster-seal").visible).toBe(false);
+    off.five.charge(0.5); off.five.update(0.1); base.five.update(0.1);
+    expect(snapshot(off)).toEqual(snapshot(base));
+    off.five.charge(1); off.five.cast(off.at); base.five.cast(base.at);
+    expect(snapshot(off)).toEqual(snapshot(base));
+    on.five.charge(0.75); on.five.clear(); on.five.update(0.1);
+    expect(on.five.casterR2!.group.children.every((m) => !m.visible)).toBe(true);
   });
 
   it("preserves B8's buffers frame for frame off and on, and leaves the hit clock unchanged", () => {
@@ -356,7 +441,7 @@ describe("Thunder Pillar round 2 caster layers", () => {
       ts.forEachChild(node, check);
     }
     function find(node: ts.Node): void {
-      if (ts.isMethodDeclaration(node) && ["update", "render", "clear", "cast"].includes(node.name.getText(tree))) { if (node.body) check(node.body); }
+      if (ts.isMethodDeclaration(node) && ["update", "render", "clear", "cast", "charge"].includes(node.name.getText(tree))) { if (node.body) check(node.body); }
       else ts.forEachChild(node, find);
     }
     find(tree); expect(allocations).toEqual([]);

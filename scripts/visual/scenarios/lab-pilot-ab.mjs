@@ -15,22 +15,30 @@ const ACTION = 12;
 const TICKS = 180;
 const VIEWS = ["play", "close"];
 const MIN_SHARE = 0.005;
-const SCENES = [
+export const SCENES = [
   {
     id: "TP", source: "pillar-thunder-single", element: "thunder", views: ["play", "caster"],
     trigger: "window.__lab.showcase('pillar-thunder-single')",
-    // Relative to R0: eight samples through +0.60 s, then four impact/tail samples.
-    samples: [[12, "charge + release"], [14, "charge + release"], [18, "charge + release"],
-      [24, "charge end"], [30, "seal erosion"], [36, "ring end"], [42, "seal end"],
-      [48, "release tail"], [60, "impact window"], [84, "impact tail"], [120, "aftermath"], [178, "aftermath"]],
+    // Seven letters at 120 WPM: six intervals after the first key, then the unchanged clip clocks.
+    samples: [[12, "word start"], [18, "charge"], [30, "charge"], [42, "charge"],
+      [48, "last letter window"], [50, "release window"], [52, "seal erosion"],
+      [58, "ring peak"], [64, "seal tail"], [78, "impact window"], [108, "impact tail"], [178, "aftermath"]],
   },
   {
-    id: "P1", source: "boss-entrance-vortex", kit: "boss", element: "metal", greybox: true,
+    id: "P1", source: "boss-entrance-vortex", kit: "boss", element: "metal", greybox: true, ticks: 360, probeTicks: 120,
     trigger: "window.__lab.twinPearl.boss()",
     // An entrance has no typed charge or projectile travel; do not invent those phases.
     samples: [[0, "charge: n/a"], [10, "before entrance"], [14, "release"], [18, "release"],
       [24, "travel: n/a"], [32, "opening"], [44, "opening"], [60, "hold"],
-      [80, "decay"], [100, "aftermath"], [138, "aftermath"], [178, "aftermath"]],
+      [100, "hold"], [132, "baseline peak window"], [240, "decay"], [358, "aftermath"]],
+  },
+  {
+    id: "P2", source: "blood-ring-burst", kit: "blood", element: "blood", probeTicks: 6,
+    // Real Blood K1 release hook, including its ring under the caster's feet.
+    trigger: "window.__lab.cast('k1', 0, -6)",
+    samples: [[0, "before cast"], [10, "before release"], [12, "release"], [16, "ring attack"],
+      [18, "ring peak window"], [24, "impact"], [32, "ring tail"], [44, "ring tail"],
+      [68, "decay"], [100, "aftermath"], [138, "aftermath"], [178, "aftermath"]],
   },
   {
     id: "P3", source: "fire-comet", kit: "fire", element: "fire",
@@ -42,20 +50,14 @@ const SCENES = [
       [64, "first impact tail"], [90, "tail + later falls"], [132, "tail + later falls"], [178, "tail + later falls"]],
   },
   {
-    id: "P4", source: "beast-hit-spark-burst", kit: "beast", element: "metal",
-    // auto/k1 are directional and select beast-hit-ink-streak, not this source (hitClip).
-    // The existing channel API emits real non-directional light hits: 0.605 pulse, 0.22 ticks.
-    trigger: "window.__lab.channel('start')",
-    alternative: "Đòn nhẹ channel (C); 0/1 chọn beast-hit-ink-streak do directional=true.",
+    id: "P4", source: "beast-hit-spark-burst", kit: "beast", element: "metal", ticks: 360, probeTicks: 216,
+    // Exactly one non-directional light hit through herd.hit + the shared impact bus.
+    trigger: "window.__lab.hit()",
     samples: [[0, "charge: n/a"], [10, "before release"], [12, "release"], [14, "travel / hit bucket"],
       [18, "impact"], [24, "impact"], [32, "impact"], [44, "impact tail"],
-      [68, "aftermath"], [100, "aftermath"], [138, "aftermath"], [178, "aftermath"]],
+      [100, "baseline rise"], [226, "baseline peak window"], [280, "baseline decay"], [358, "aftermath"]],
   },
 ];
-const SKIPPED = {
-  id: "P2", source: "blood-ring-burst", status: "skipped",
-  reason: "Manifest khai báo ringBurst, nhưng CLIP_ROLES trong src/view/skills/element-clips.ts không nhận vai trò này; FIVE_RECIPES chỉ có fire. Chưa có chiêu Blood gọi đúng nguồn. Cần nối ringBurst vào chiêu và cung cấp API tung chiêu; không thay bằng phát clip rời để chấm hiệu ứng ghép.",
-};
 
 // RGB screenshots, display luminance in 0..255. The optional same-frame hidden-source
 // image excludes unrelated animation/lighting; the pre-trigger difference is always required.
@@ -131,7 +133,7 @@ export function tpUrl(base, enabled) {
   const url = new URL(base);
   if (url.pathname !== "/skills-lab.html") throw new Error("URL phải trỏ tới /skills-lab.html");
   url.searchParams.delete("tp2");
-  for (const [k, v] of Object.entries({ fixed: "1", video: "0", ui: "0", bar: "0", dpr: "1", q: "high", element: "thunder" })) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries({ fixed: "1", video: "0", ui: "0", bar: "0", dpr: "1", q: "high", typed: "1", wpm: "120", element: "thunder" })) url.searchParams.set(k, v);
   if (url.searchParams.get("fivephase") === "0") throw new Error("TP cần B8 fivephase bật");
   if (enabled) url.searchParams.set("tp2", "1");
   return url;
@@ -182,7 +184,8 @@ export default async function (page) {
   note(privateDir, "Khóa và bằng chứng kỹ thuật; không gửi thư mục này cho giám khảo");
   const key = { seed: seedText, randomSeed: seed, scenes: {} };
   const result = { seed: seedText, width: 1920, height: 1080, dpr: 1, hz: 60, fps: 30, seconds: 3,
-    silent: true, views: VIEWS, scenes: [], note: "Video hình ảnh không thu âm; P3 chỉ là 3 giây đầu mưa sao băng. Nhãn pha là mốc kịch bản, chưa được kiểm bằng trình duyệt." };
+    secondsByScene: Object.fromEntries(SCENES.map((s) => [s.id, (s.ticks ?? TICKS) / 60])),
+    silent: true, views: VIEWS, scenes: [], note: "Video hình ảnh không thu âm; P1/P4 quay 6 giây, P2/P3/TP quay 3 giây. P3 chỉ là đầu mưa sao băng. Nhãn pha là mốc kịch bản, chưa được kiểm bằng trình duyệt." };
   const evidence = {};
   let preloadId;
   const ev = async (expression) => {
@@ -237,6 +240,7 @@ export default async function (page) {
     finally { await ev(`window.__lab.fxShowNamed(${prefix}, true)`); }
   }
   async function capture(scene, pilot, label, folder, viewName) {
+    const ticks = scene.ticks ?? TICKS;
     if (preloadId) await page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: preloadId });
     const installed = await page.send("Page.addScriptToEvaluateOnNewDocument", { source: bootstrap(hash(seedText + ":" + scene.id)) });
     preloadId = installed.identifier;
@@ -263,7 +267,7 @@ export default async function (page) {
     await settleVideos();
     await reset();
     await ev(scene.trigger);
-    await ev(`window.__lab.step(${scene.id === "P1" ? 32 : scene.id === "P3" ? 30 : 12}, 1/60)`);
+    await ev(`window.__lab.step(${scene.probeTicks ?? 30}, 1/60)`);
     await settleVideos();
     const raw = mkdtempSync(join(out, "raw-" + scene.id + "-" + viewName + "-" + label + "-"));
     note(raw, "Khung thô riêng của lần quay này; tự dọn sau khi xuất video và bằng chứng");
@@ -281,6 +285,12 @@ export default async function (page) {
         if (!anchor) throw new Error(scene.id + " không có vị trí hiệu ứng sống để đặt camera");
         const fit = await ev("window.__lab.captureCamera()");
         const target = { x: anchor.x, y: anchor.y, z: anchor.z, distanceM: viewName === "play" ? fit.distanceM : Math.max(3, anchor.sizeM / (2 * Math.tan(fit.fov * Math.PI / 360) * 0.48)) };
+        if (viewName === "play" && scene.id !== "P3") {
+          // Keep the actual play frame; only the diagnostic close view follows the source.
+          target.x = fit.position[0];
+          target.y = fit.position[1] - fit.distanceM * Math.sin(55 * Math.PI / 180);
+          target.z = fit.position[2] - fit.distanceM * Math.cos(55 * Math.PI / 180);
+        }
         if (viewName === "close") {
           // Refine using the source's real pixels (transparent atlas margins are not its main shape).
           for (let attempt = 0; attempt < 5; attempt++) {
@@ -318,13 +328,14 @@ export default async function (page) {
       const tiles = [];
       let sawSource = false;
       let sawPilotMedia = !pilot;
-      for (let tick = 0; tick < TICKS; tick++) {
+      for (let tick = 0; tick < ticks; tick++) {
         if (tick === ACTION) {
           await settleVideos();
           await ev(`window.__lab.captureCamera(${JSON.stringify(target)})`);
           await page.shot(beforeFile);
           before = await pixels(beforeFile);
-          await ev(scene.trigger);
+          details.triggerResult = await ev(scene.trigger);
+          if (scene.id === "P4" && !Number.isInteger(details.triggerResult?.target)) throw new Error("P4 chưa phát được đòn nhẹ đơn lẻ");
         }
         if (tick % 2 === 0) {
           await settleVideos();
@@ -363,7 +374,7 @@ export default async function (page) {
       if (warnings.some((s) => /\[pilot\]/i.test(s)) || page.exceptions.length > exceptionStart) throw new Error("Có lỗi pilot hoặc ngoại lệ; xem _private/evidence.json");
       const mp4 = join(folder, label + ".mp4");
       const sheet = join(folder, label + "-sheet.jpg");
-      await run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-n", "-framerate", "30", "-i", join(raw, "f%04d.png"), "-frames:v", "90", "-an", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", mp4]);
+      await run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-n", "-framerate", "30", "-i", join(raw, "f%04d.png"), "-frames:v", String(ticks / 2), "-an", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", mp4]);
       const args = ["montage", "-font", FONT, "-pointsize", "18", "-background", "#11151c", "-fill", "#e6e9ef"];
       for (const [file, caption] of tiles) args.push("-label", caption, file);
       args.push("-tile", "4x3", "-geometry", "480x270+4+4", "-quality", "92", sheet);
@@ -402,7 +413,7 @@ export default async function (page) {
     await reset();
     const raw = mkdtempSync(join(out, `raw-TP-${viewName}-${label}-`));
     note(raw, "Khung TP tạm của lần quay này; giữ trước/đỉnh và dọn sau xuất");
-    const details = { url: url.href, view: viewName, coverage: { minimumShare: MIN_SHARE, frames: [], peak: { share: 0, tick: null } } };
+    const details = { url: url.href, view: viewName, releaseTick: null, coverage: { minimumShare: MIN_SHARE, frames: [], peak: { share: 0, tick: null } } };
     evidence.TP[viewName][label] = details;
     const poseKey = "TP:" + viewName;
     try {
@@ -472,7 +483,9 @@ export default async function (page) {
           await ev(`window.__lab.captureCamera(${JSON.stringify(target)})`);
           await page.shot(beforeFile); before = await pixels(beforeFile);
           if ((await ev(scene.trigger))?.played !== scene.source) throw new Error("Không tung được Cột Lôi");
+          if (!await ev("window.__lab.typing()")) throw new Error("TP thiếu từ đang gõ");
         }
+        if (tick > ACTION && details.releaseTick === null && !await ev("window.__lab.typing()")) details.releaseTick = tick;
         if (tick % 2 === 0) {
           await settleVideos();
           await ev(`window.__lab.captureCamera(${JSON.stringify(target)})`);
@@ -500,7 +513,7 @@ export default async function (page) {
               }
             }
           }
-          if (samples.has(tick)) tiles.push([file, `${label} · ${samples.get(tick)} · R0+${((tick - ACTION) / 60).toFixed(2)} s`]);
+          if (samples.has(tick)) tiles.push([file, `${label} · ${samples.get(tick)} · t=${(tick / 60).toFixed(2)} s`]);
         }
         await ev("window.__lab.step(1, 1/60)");
         await settleVideos();
@@ -521,7 +534,7 @@ export default async function (page) {
         const peak = details.coverage.peak.bounds;
         if (!peak || peak.x <= 0 || peak.y <= 0 || peak.x + peak.width >= 1920 || peak.y + peak.height >= 1080) throw new Error("Đỉnh hiệu ứng chạm mép camera chơi");
       }
-      if (tiles.length !== 12 || castReport?.id !== scene.source || castReport.blows < 1) throw new Error("Thiếu 12 khung hoặc điểm giáng Cột Lôi");
+      if (details.releaseTick === null || tiles.length !== 12 || castReport?.id !== scene.source || castReport.blows < 1) throw new Error("Thiếu khung phóng, 12 khung hoặc điểm giáng Cột Lôi");
       if (page.exceptions.length > exceptionStart || details.warnings.some(s => /\[(five-phase-clip|thunder-caster-r2)\]/i.test(s))) throw new Error("Lỗi TP; xem bằng chứng riêng");
       await run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-n", "-framerate", "30", "-i", join(raw, "f%04d.png"), "-frames:v", "90", "-an", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", join(folder, label + ".mp4")]);
       const args = ["montage", "-font", FONT, "-pointsize", "18", "-background", "#11151c", "-fill", "#e6e9ef"];
@@ -542,14 +555,13 @@ export default async function (page) {
 
   try {
     for (const id of requested) {
-      if (id === "P2") { result.scenes.push(SKIPPED); save(); continue; }
       const scene = SCENES.find((s) => s.id === id);
       const folder = join(out, id);
       note(folder, `${id}: tấm 12 khung 4 × 3 và video mù X/Y, không chứa khóa`);
       const xIsPilot = (hash(seedText + ":blind:" + id) & 1) === 1;
       const variant = scene.id === "TP" ? "B: tp2=1" : "B: pilot=1";
       key.scenes[id] = { X: xIsPilot ? variant : "A: baseline", Y: xIsPilot ? "A: baseline" : variant };
-      const row = { id, source: scene.source, ...(scene.views ? { views: scene.views } : {}), status: "running", ...(scene.alternative ? { alternative: scene.alternative } : {}), files: [] };
+      const row = { id, source: scene.source, seconds: (scene.ticks ?? TICKS) / 60, ...(scene.views ? { views: scene.views } : {}), status: "running", files: [] };
       result.scenes.push(row);
       evidence[id] = {};
       save();
@@ -611,5 +623,18 @@ if (process.argv[2] === "--self-test" && import.meta.url === pathToFileURL(resol
     const dark = Buffer.alloc(before.length, 91);
     assert.equal(measureDifference(before, dark, width, height).share, 1);
     assert.throws(() => measureDifference(before, frame, 99, height));
+  });
+  test("P1/P2/P4 có nguồn thật, 12 mẫu hợp lệ và đủ thời gian quay đỉnh clip cũ", () => {
+    for (const id of ["P1", "P2", "P4"]) {
+      const scene = SCENES.find(s => s.id === id);
+      assert.equal(scene.samples.length, 12);
+      assert.equal(new Set(scene.samples.map(([tick]) => tick)).size, 12);
+      assert.ok(scene.samples.every(([tick]) => tick % 2 === 0 && tick >= 0 && tick < (scene.ticks ?? TICKS)));
+      assert.ok(!scene.trigger.includes("channel"));
+    }
+    assert.equal(SCENES.find(s => s.id === "P2").trigger, "window.__lab.cast('k1', 0, -6)");
+    assert.equal(SCENES.find(s => s.id === "P4").trigger, "window.__lab.hit()");
+    for (const id of ["P1", "P4"]) assert.ok(SCENES.find(s => s.id === id).ticks >= 360);
+    assert.equal(MIN_SHARE, 0.005);
   });
 }

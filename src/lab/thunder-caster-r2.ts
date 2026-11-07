@@ -19,6 +19,7 @@ export class ThunderCasterR2 {
   private readonly pose: ChargeFillPose = { x: 0, y: 0, z: 0, height: 2, bodyWidth: 0.7 };
   private readonly o: FlipOptions = { life: ONE_FRAME, rate: 0, alpha: 1, intensity: 0.9, fadeIn: 0, fadeOut: 0, cool: 0, occlude: 0, ground: -1e5, lift: 0.03 };
   private age = -1;
+  private progress = -1;
   private loading = false;
   private retry = 0;
 
@@ -55,16 +56,31 @@ export class ThunderCasterR2 {
   }
 
   cast(): void {
+    this.progress = -1;
     this.age = 0;
     this.render();
     // The existing B8 host.release flashes its pooled light and plays the release on this same call.
   }
 
+  /** The word owns anticipation; an instant cast has no anticipation to invent. */
+  charge(progress: number | null): void {
+    const next = progress === null || !Number.isFinite(progress) ? -1 : Math.min(1, Math.max(0, progress));
+    if (next === this.progress) return;
+    this.progress = next;
+    if (this.age >= 0 || this.progress >= 0) this.render();
+    else this.cards[0]!.pool?.clear();
+  }
+
   update(dt: number): void {
     this.retry = Math.max(0, this.retry - dt);
-    if (this.age < 0) return;
+    if (this.age < 0) { if (this.progress >= 0) this.render(); return; }
     this.age += Math.max(0, dt);
-    if (this.age >= THUNDER_CASTER_END_S - 1e-8) { this.clear(); return; }
+    if (this.age >= THUNDER_CASTER_END_S - 1e-8) {
+      this.age = -1;
+      for (const card of this.cards) card.pool?.clear();
+      if (this.progress >= 0) this.render();
+      return;
+    }
     this.render();
   }
 
@@ -74,16 +90,20 @@ export class ThunderCasterR2 {
     const seal = this.cards[0]!.pool, sparkle = this.cards[1]!.pool, ring = this.cards[2]!.pool;
     const o = this.o;
     for (const card of this.cards) card.pool?.clear();
-    if (seal?.meta != null) {
-      o.frame = seal.meta.start + age * seal.meta.fps; o.alpha = p * p * (3 - 2 * p); o.rot = age * 0.35;
+    const sealProgress = this.progress >= 0 ? this.progress : 1;
+    const erosion = this.progress >= 0 ? 0 : Math.max(0, age / 0.3);
+    if (seal?.meta != null && erosion < 1) {
+      const peak = seal.meta.peak ?? seal.meta.frames - 1;
+      o.frame = seal.meta.start + (peak - seal.meta.start) * sealProgress;
+      o.alpha = sealProgress * sealProgress * (3 - 2 * sealProgress); o.rot = Math.max(0, age) * 0.35;
       o.span = 3.2; o.erode = 0;
       this.at.set(this.pose.x, this.pose.y + 0.04, this.pose.z);
       seal.spawn(this.at, 3.2, o); seal.update(0);
       // Reissued fire-mode cards need their real erosion age (the existing shader reads iAge.xy).
-      const erosion = Math.max(0, (age - THUNDER_CASTER_CHARGE_S) / 0.3);
       const a = seal.mesh.geometry.getAttribute("iAge");
       a.setXY(0, erosion, 1e-6); a.needsUpdate = true;
     }
+    if (age < 0) return;
     if (sparkle?.meta != null && p < 1) {
       const count = Math.ceil(24 * p);
       o.span = 0; o.rot = 0; o.erode = 0;
@@ -107,6 +127,7 @@ export class ThunderCasterR2 {
 
   clear(): void {
     this.age = -1;
+    this.progress = -1;
     for (const card of this.cards) card.pool?.clear();
   }
 }

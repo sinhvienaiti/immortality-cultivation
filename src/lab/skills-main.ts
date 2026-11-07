@@ -103,7 +103,7 @@ import { CasterPresence } from "./presence";
 import { applyBladeLook, SWORD_LIGHT } from "../view/skills/sword-material";
 import { BRUSH, FIRE_FURNACE_BLADE, FIRE_LAB, firePrewarmStatus, prewarmFire, type FireAudit, type FirePrewarm } from "../view/skills/element-fire";
 import { FlameSlash } from "../view/skills/flame-slash";
-import { clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
+import { bloodRingBurst, clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } from "../view/skills/element-clips";
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { SHOWER } from "./meteor-plan";
@@ -358,7 +358,7 @@ const bus = new LabBus();
 /** Each lab skill's screen tier: Phi Kiếm a basic blow, Thiên Hà the ultimate, the rest (key 7 too) skills. */
 function tierOf(slot: string): ScreenTier {
   if (slot === "k8" || slot === "k9") return clipSkillNow?.damage === "ult" ? "ultimate" : "skill";
-  return slot === "auto" ? "basic" : slot === "k5" ? "ultimate" : "skill";
+  return slot === "auto" || slot === "lab-hit" ? "basic" : slot === "k5" ? "ultimate" : "skill";
 }
 /** The key-8 or key-9 skill landing now (clip-skills.ts): its tier, its damage weight and its colour for the shared hit path. */
 let clipSkillNow: ClipSkill | null = null;
@@ -1623,9 +1623,10 @@ function emitBolt(k: number): void {
 
 // Typing simulation: letters at the chosen WPM (5 letters a word), the charge follows them.
 interface Typing {
-  slot: SwordSlot;
+  slot: SwordSlot | "k8";
   /** A five-phase sample's word (key 2 or key M in Fire): its charge and release are the sample's. */
   five?: "k2" | "km";
+  clip?: string;
   letters: number;
   typed: number;
   next: number;
@@ -1642,6 +1643,21 @@ const TARGET: Record<SwordSlot, [number, number]> = { auto: [0, -8], k1: [0, -8]
  * the WPM first (the charge follows the letters, the release comes on the last one), as before the power pass.
  */
 let typedMode = params.get("typed") === "1";
+
+/** The Thunder Pillar lab word uses the existing WPM/letter clock. */
+function castClip8(id?: string): string | null {
+  const pick = id ?? clipSkills.selectedId();
+  if (!typedMode || pick !== "pillar-thunder-single") {
+    if (typing?.clip !== undefined) typing = null;
+    thunderFive.charge(null);
+    return clipSkills.cast(id);
+  }
+  clipSkills.select(pick);
+  typing = { slot: "k8", clip: pick, letters: "thunder".length, typed: 0, next: 0, tx: 0, tz: -8 };
+  thunderFive.prepare();
+  thunderFive.charge(0);
+  return pick;
+}
 
 /** A lab key's skill: the seven Kiếm slots, and key 7's field-wide prototype (always cast at once); "km" the meteor's word. */
 type LabSlot = SwordSlot | "k7" | "km";
@@ -1767,6 +1783,14 @@ function updateTyping(dt: number): void {
     typing.next += perLetter;
     const p = typing.typed / typing.letters;
     chargeFill.sync(typing, fx.element.id);
+    if (typing.slot === "k8") {
+      thunderFive.charge(p);
+      if (typing.typed >= typing.letters) {
+        clipSkills.cast(typing.clip);
+        typing = null;
+      }
+      continue;
+    }
     if (typing.typed >= typing.letters && typing.slot === "k5") {
       // Thiên Hà's last letter: the cut-in first, the release when it ends.
       startUltimate(typing.tx, typing.tz);
@@ -1903,7 +1927,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Digit8" || e.key === "8" || e.key === "*") {
     if (e.shiftKey || e.key === "*") clipSkills.selectNext();
     else {
-      clipSkills.cast();
+      castClip8();
       bar?.flash("8");
     }
     refreshClipSlots();
@@ -2172,7 +2196,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   };
   showcaseList("Kỹ năng (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ để tung —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" }, {
     cast: (id) => {
-      clipSkills.cast(id);
+      castClip8(id);
       refreshClipSlots();
     },
     detail: (id) => {
@@ -2267,6 +2291,7 @@ function frame(dt: number): void {
     ultDarkEnd = -1;
     if (!myriad.running) screen.holdDark(0);
   } else if (ultDark) screen.holdDark(SCREEN_TIERS.ultimate.hold, SCREEN_TIERS.ultimate.desat);
+  thunderFive.charge(typing?.clip === "pillar-thunder-single" ? typing.typed / typing.letters : null);
   chargeFill.sync(typing, fx.element.id);
   updateTyping(world);
   chargeFill.sync(typing, fx.element.id);
@@ -2420,6 +2445,9 @@ declare global {
       type(slot: SwordSlot | "k7" | "km"): void;
       cast(slot: SwordSlot, tx: number, tz: number): void;
       enemyShot(): void;
+      /** One real light, non-directional herd hit; no channel or projectile. */
+      hit(target?: number): { target: number; x: number; y: number; z: number } | null;
+      bloodRing(): boolean;
       /** Steps `frames` frames of `dt` seconds (default 1/60). */
       step(frames: number, dt?: number): void;
       /** One frame of `dt`; returns [probe frame, caster screen x, y (CSS px, chest height)]. */
@@ -2734,6 +2762,15 @@ void (async () => {
       fx.cast(slot, tx, tz);
     },
     enemyShot,
+    hit(target = herd.nearest(caster.x, caster.z, 100)) {
+      if (!Number.isInteger(target) || target < 0 || target >= herd.size || !herd.alive(target) || herd.isHero(target)) return null;
+      const dx = herd.x(target) - caster.x, dz = herd.z(target) - caster.z;
+      const len = Math.hypot(dx, dz) || 1, rgb = fx.paletteOf("k1").flashHex;
+      const killed = herd.hit(target, dx / len, dz / len, 0.25, rgb);
+      emitImpact("lab-hit", target, dx / len, dz / len, 0.25, "primary", killed, rgb);
+      return { target, x: herd.x(target), y: herd.midY(target), z: herd.z(target) };
+    },
+    bloodRing: () => fx.element.id === "blood" && bloodRingBurst(stage, caster.x, caster.z),
     step(frames: number, dt = 1 / 60) {
       for (let i = 0; i < frames; i += 1) frame(dt);
     },
@@ -2917,7 +2954,7 @@ void (async () => {
       return { metal: crescentOf(stage, "metal").spawned, fire: crescentOf(stage, "fire").spawned };
     },
     showcase(id) {
-      const played = clipSkills.cast(id);
+      const played = castClip8(id);
       refreshClipSlots();
       return { played, ids: showcase.ids() };
     },

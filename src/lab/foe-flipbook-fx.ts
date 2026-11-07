@@ -417,10 +417,16 @@ export class FoeFlipbookFx {
     // Even overlapping entrance + phase layers total <0.9 per RGB channel on one boss.
     o.intensity = c === IRONHIDE ? 0.45 : c === FRENZY ? 0.3 : 0.12;
     // Depth-only negative lift puts the art behind the opaque model, without shifting its projection.
-    o.lift = -Math.max(0.1, p.radius);
+    o.lift = c === VORTEX ? -0.02 : -Math.max(0.1, p.radius);
     const ground = c === GROUND || c === ROAR || c === VORTEX || c === FOG;
-    this.at.set(p.x, ground ? p.groundY ?? 0 : p.y, p.z);
-    pool.spawn(this.at, p.radius * (ground ? 4 : 3) / m.aspect, o);
+    const height = p.radius * (c === VORTEX ? 3.5 : ground ? 4 : 3) / m.aspect;
+    // The portal is upright, unlike the ground auras. Its bottom meets the birth floor
+    // at the lab's 55-degree camera; a centred billboard at y=0 buries half its art.
+    const y = c === VORTEX
+      ? (p.groundY ?? 0) + 0.04 + height * (1 - m.pivot[1]) * Math.cos(55 * Math.PI / 180)
+      : ground ? p.groundY ?? 0 : p.y;
+    this.at.set(p.x, y, p.z);
+    pool.spawn(this.at, height, o);
     a.used = a.busy = this.time;
   }
 

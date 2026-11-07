@@ -27,7 +27,7 @@ export type ElementId = WeaponElement | "dark" | "light" | "poison" | "blood" | 
  * ribbon (a horizontal loop) and the weapon's sheath (a vertical loop), a hit, a big burst, a blow on the ground, the
  * sparkle loop of every phase, the crescent slash and the mark left on the ground (seen from above).
  */
-export type ClipRole = "charge" | "release" | "ribbon" | "sheath" | "impact" | "burst" | "groundImpact" | "sparkle" | "slash" | "groundMark";
+export type ClipRole = "charge" | "release" | "ribbon" | "sheath" | "impact" | "burst" | "groundImpact" | "sparkle" | "slash" | "groundMark" | "ringBurst";
 
 /** VFX_STANDARD §3's five phases. */
 export type ElementPhase = "charge" | "release" | "travel" | "impact" | "aftermath";

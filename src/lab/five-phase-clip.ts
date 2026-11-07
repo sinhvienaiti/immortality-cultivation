@@ -116,6 +116,11 @@ export class FivePhaseClip {
     this.host.hand(this.at); charge.spawn(this.at, 1.6, o);
   }
 
+  /** Only the R2 seal follows the key-8 word; B8 keeps its existing clocks. */
+  charge(progress: number | null): void {
+    this.casterR2?.charge(progress);
+  }
+
   /** A and R overlap: pressing 8 starts a 200 ms charge, and releases on that very call. */
   cast(target: THREE.Vector3): void {
     if (!this.enabled) return;
