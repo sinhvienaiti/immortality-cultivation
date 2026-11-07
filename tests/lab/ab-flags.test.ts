@@ -8,6 +8,7 @@ const cases = [
   { key: "cutinmat", value: "0", defaultOn: true },
   { key: "ambient", value: "0", defaultOn: true },
   { key: "chargefill", value: "0", defaultOn: true },
+  { key: "fivephase", value: "0", defaultOn: true },
   { key: "video", value: "0", defaultOn: true },
   { key: "sigil", value: "code", defaultOn: true },
   { key: "readable", value: "1", defaultOn: false },

@@ -108,6 +108,7 @@ import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from ".
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { SHOWER } from "./meteor-plan";
 import { CrescentSample, FIVE, FIVE_RECIPES, FivePhase, type FiveHost } from "./five-phase";
+import { FivePhaseClip } from "./five-phase-clip";
 import { ChannelSkill, COLLAPSE_S, WORD_S, type ChannelReport } from "./channel-skill";
 import { StreakCounter } from "./streak-counter";
 import { LabWordTags, PLATE } from "./word-tags";
@@ -1135,8 +1136,25 @@ showcase.deferAtlases = expansion.deferAtlases = params.get("atlases") !== "all"
 // key 9 the expansion batch by batch. The strikes land on the clip's frames through the same hit path as keys 0–7
 // (emitImpact, the screen's tier, the kick, the lights).
 const clipTmp = new THREE.Vector3();
+const thunderFive = new FivePhaseClip(view.layers.fx, VFX_BASE, {
+  targets: herd,
+  hand: (out) => caster.hand(out),
+  pose(out) {
+    out.x = caster.x; out.y = caster.root.position.y; out.z = caster.z;
+    out.height = caster.heightM; out.bodyWidth = caster.heightM * 0.35;
+  },
+  glow: (rgb, intensity) => caster.glow(rgb, intensity),
+  release(at) {
+    caster.release("k8");
+    probe.flash();
+    kick.impulse(SCREEN_TIERS.skill.shakePx * 0.2 * KICK_M_PER_PX, 0, -1);
+    lights.flash(at, view.camera.position, "#d9ccff", 3, true);
+  },
+  upload: (texture) => view.stage.renderer.initTexture(texture),
+}, location.search);
 function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
   return {
+    fivePhase: slot === "k8" ? thunderFive : undefined,
     targets: herd,
     layer: view.layers.fx,
     player: stage.flipbooks,
@@ -1848,6 +1866,7 @@ let clipSlot9: string | null | undefined = undefined;
 function refreshClipSlots(): void {
   const id8 = clipSkills.selectedId();
   const id9 = clipSkills9.selectedId();
+  if (id8 === "pillar-thunder-single") thunderFive.prepare();
   // Selection/list changes only: Showcase.current() sorts a new list, so keep it out of the frame loop.
   heroPresencePose.ultimateReady = heroUltimateReady(id8 === null ? undefined : clipSkills.skill(id8)?.damage, id9 === null ? undefined : clipSkills9.skill(id9)?.damage);
   if (bar === null) return;

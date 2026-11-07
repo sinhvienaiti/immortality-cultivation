@@ -18,6 +18,7 @@ import { FlipbookPool, parseFlipbookManifest, type FlipbookMeta, type FlipbookPl
 import type { TargetField } from "../view/skills/targets";
 import type { ImpactRole } from "../view/screen-fx";
 import { VIDEO_FAILED, type Showcase, type VideoHandle } from "./showcase";
+import type { FivePhaseClip } from "./five-phase-clip";
 
 /**
  * How a skill lands: on the densest group (point), on the N densest (multi), on the whole field (field), from the caster
@@ -602,6 +603,8 @@ export function aimClipSkill(skill: ClipSkill, field: TargetField, caster: XZ, c
 
 /** The lab's side of a cast: the same hit path as keys 0–7. */
 export interface ClipSkillHost {
+  /** Only key 8's Thunder Pillar opts into the five-phase sample. */
+  readonly fivePhase?: FivePhaseClip;
   readonly targets: TargetField;
   /** The layer its ground marks join. */
   readonly layer: THREE.Object3D;
@@ -712,6 +715,7 @@ export class ClipSkillRunner {
   private preview(id: string): void {
     const s = this.table.get(id);
     if (s !== undefined) this.marks.prepare(s.element);
+    if (id === "pillar-thunder-single") this.host.fivePhase?.prepare();
     // Its video loads now, so its cast starts at once.
     this.showcase.preload(id);
     this.showcase.caption(id, s !== undefined ? describeClipSkill(s) : undefined, s !== undefined ? this.nav : undefined);
@@ -750,13 +754,15 @@ export class ClipSkillRunner {
       const size = skill.shape === "field" || skill.shape === "ring" || skill.shape === "sweep" ? 6 : Math.max(2.4, Math.min(8, skill.radius * 2.2));
       const from = markS > 0 ? 0 : lead + times[0]!;
       const life = lead + times[0]! - from + Math.max(0.4, skill.linger);
-      for (const p of aim.points) if (this.marks.spawn(skill.element, p.x, p.z, size, from, life)) report.marks += 1;
+      const light = pick === "pillar-thunder-single" && this.host.fivePhase?.enabled ? 0.9 : 1;
+      for (const p of aim.points) if (this.marks.spawn(skill.element, p.x, p.z, size, from, life, light)) report.marks += 1;
     }
     const run: Running = {
       skill, t: 0, clipAt: lead, times, video, handle: null, t0: 0, clipped: false, anchor: new THREE.Vector3(aim.anchor.x, 0, aim.anchor.z), aim,
       beats: [], hits: [], next: 0, colour, report,
     };
     this.host.release(skill, run.anchor, lead + times[0]!);
+    if (pick === "pillar-thunder-single") this.host.fivePhase?.cast(run.anchor);
     if (skill.tagKeep !== undefined) this.keeps.push({ keep: skill.tagKeep, left: lead + TAG_KEEP_S });
     this.running.push(run);
     this.last = report;
@@ -824,13 +830,17 @@ export class ClipSkillRunner {
         if (b.done || ct < b.at - 1e-6) continue;
         b.done = true;
         // A tick bites without the tier's reaction (no stop, no shake).
-        if (!b.tick) this.host.strike(r.skill, r.anchor, b.role, r.colour);
+        if (!b.tick) {
+          this.host.strike(r.skill, r.anchor, b.role, r.colour);
+          if (r.skill.id === "pillar-thunder-single") this.host.fivePhase?.strike(r.anchor);
+        }
       }
       while (r.next < r.hits.length && r.hits[r.next]!.at <= ct + 1e-6) {
         const h = r.hits[r.next]!;
         r.next += 1;
         if (!this.host.targets.alive(h.i)) continue;
         const killed = this.host.blow(r.skill, h.i, h.dx, h.dz, h.power, h.role);
+        if (r.skill.id === "pillar-thunder-single") this.host.fivePhase?.hit(h.i, killed, r.skill.status?.seconds ?? 0);
         if (r.report.firstBlowAt < 0) {
           r.report.firstBlowAt = r.t;
           r.report.firstBlowClip = ct;
@@ -844,6 +854,7 @@ export class ClipSkillRunner {
       }
       if (r.clipped && r.next >= r.hits.length && r.beats.every((b) => b.done)) this.running.splice(k, 1);
     }
+    this.host.fivePhase?.update(dt);
   }
 
   /** Loads `folder`'s ground-mark clip (once): the meteor rain's marks share these. */
@@ -875,6 +886,7 @@ export class ClipSkillRunner {
   }
 
   clear(): void {
+    this.host.fivePhase?.clear();
     this.running.length = 0;
     this.keeps.length = 0;
     if (this.ownsMarks) {
@@ -949,7 +961,7 @@ class GroundMarks {
   }
 
   /** A mark of `folder` at (x, z), `size` m across, shown from `delay` s for `life` s, eroding over its last part. */
-  spawn(folder: string, x: number, z: number, size: number, delay: number, life: number): boolean {
+  spawn(folder: string, x: number, z: number, size: number, delay: number, life: number, light = 1): boolean {
     const pool = this.pools.get(folder);
     if (pool === null || pool === undefined || !pool.ready) return false;
     const meta = pool.meta!;
@@ -961,6 +973,7 @@ class GroundMarks {
     o.delay = delay;
     o.fadeIn = 0.06;
     o.cool = 0.55;
+    o.intensity = light;
     o.occlude = 0.35;
     o.span = size;
     o.lift = 0.05;

@@ -13,6 +13,7 @@ export const AB_FLAGS: readonly AbFlag[] = [
   { key: "cutinmat", label: "Cut-in materials", value: "0", enabledWhenSet: false },
   { key: "ambient", label: "Ambient", value: "0", enabledWhenSet: false },
   { key: "chargefill", label: "Charge layer", value: "0", enabledWhenSet: false },
+  { key: "fivephase", label: "Thunder Pillar five phases", value: "0", enabledWhenSet: false },
   { key: "video", label: "Video clips", value: "0", enabledWhenSet: false },
   { key: "sigil", label: "Painted sigils", value: "code", enabledWhenSet: false },
   { key: "readable", label: "Readability dimming", value: "1", enabledWhenSet: true },
