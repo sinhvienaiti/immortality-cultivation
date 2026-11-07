@@ -56,7 +56,7 @@ for (const hz of [30, 60, 120]) {
     const age = frame / hz, data = mark.mesh.geometry.getAttribute('iData');
     assert.equal(data.getW(0), Math.fround(0.7)); // unrelated spell in the same pool
     if (age < THUNDER_MARK_START_S - 1e-6 || age >= THUNDER_AFTERMATH_END_S - 1e-6) assert.ok(data.getW(1) < 1e-6);
-    if (age > 0.25 && age < 0.45) assert.ok(data.getW(1) > 0.25);
+    if (age > 0.7 && age < 0.75) assert.ok(data.getW(1) > 0.8);
     if (age > 0.8 && age < 1.5) assert.ok(mark.mesh.geometry.getAttribute('iAge').getX(1) > 0);
     const sparks = fx.group.children[0];
     assert.ok(sparks.geometry.instanceCount <= 6);
@@ -71,7 +71,7 @@ for (const hz of [30, 60, 120]) {
   const next = new THREE.Vector3(-2, 0, -6);
   fx.cast(next); mark.spawn(next, 4, { life: 3, rate: 0 }); mark.update(0); fx.present();
   assert.equal(mark.mesh.geometry.getAttribute('iData').getW(1), 0);
-  fx.strike(); fx.update(0); fx.update(0.3); mark.update(0.3); fx.present();
+  fx.strike(); fx.update(0); fx.update(0.75); mark.update(0.75); fx.present();
   assert.ok(mark.mesh.geometry.getAttribute('iData').getW(2) > 0);
   fx.clear(); mark.update(0); fx.present();
   assert.equal(mark.mesh.geometry.getAttribute('iData').getW(2), 0);

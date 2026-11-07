@@ -19,6 +19,7 @@ import type { TargetField } from "../view/skills/targets";
 import type { ImpactRole } from "../view/screen-fx";
 import { VIDEO_FAILED, type Showcase, type VideoHandle } from "./showcase";
 import type { FivePhaseClip } from "./five-phase-clip";
+import { THUNDER_AFTERMATH_END_S } from "./thunder-aftermath-r2";
 
 /**
  * How a skill lands: on the densest group (point), on the N densest (multi), on the whole field (field), from the caster
@@ -750,7 +751,8 @@ export class ClipSkillRunner {
       firstBlowAt: -1, blows: 0, kills: 0, marks: 0, video, peakClip: times[0]!, firstBlowClip: -1,
     };
     // Its marks: on the ground from the key (a mark) or from the first strike (a linger), eroding after it.
-    if (markS > 0 || skill.linger > 0) {
+    const coldThunder = pick === "pillar-thunder-single" && this.host.fivePhase?.aftermathR2 != null;
+    if (!coldThunder && (markS > 0 || skill.linger > 0)) {
       const size = skill.shape === "field" || skill.shape === "ring" || skill.shape === "sweep" ? 6 : Math.max(2.4, Math.min(8, skill.radius * 2.2));
       const from = markS > 0 ? 0 : lead + times[0]!;
       const life = lead + times[0]! - from + Math.max(0.4, skill.linger);
@@ -832,7 +834,12 @@ export class ClipSkillRunner {
         // A tick bites without the tier's reaction (no stop, no shake).
         if (!b.tick) {
           this.host.strike(r.skill, r.anchor, b.role, r.colour);
-          if (r.skill.id === "pillar-thunder-single") this.host.fivePhase?.strike(r.anchor);
+          if (r.skill.id === "pillar-thunder-single") {
+            // R3's hidden-until-cold card starts at the actual strike, so a stalled video cannot consume its tail.
+            if (this.host.fivePhase?.aftermathR2 != null && this.marks.spawn("thunder", r.anchor.x, r.anchor.z,
+              4.8, 0, THUNDER_AFTERMATH_END_S + 1 / 30, 0.9)) r.report.marks += 1;
+            this.host.fivePhase?.strike(r.anchor);
+          }
         }
       }
       while (r.next < r.hits.length && r.hits[r.next]!.at <= ct + 1e-6) {

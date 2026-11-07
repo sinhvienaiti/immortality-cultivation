@@ -11,6 +11,7 @@ import { FlipbookPlayer, parseFlipbookManifest, type FlipbookPool, type FlipOpti
 import type { TargetField } from "../../src/view/skills/targets";
 import { thunderCasterR2Enabled } from "../../src/lab/thunder-caster-r2";
 import { FlashLights } from "../../src/lab/feel";
+import { THUNDER_AFTERMATH_END_S, THUNDER_MARK_START_S } from "../../src/lab/thunder-aftermath-r2";
 
 const clips = [
   ["thunder-charge", "charge", 12], ["thunder-release", "release", 19],
@@ -87,6 +88,33 @@ function runner(search = "", video = false) {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Thunder Pillar five-phase sample", () => {
+  it.each([false, true])("keeps the cold mark for its full strike-relative tail with video=%s", (video) => {
+    const f = runner("?tp2=1", video), off = runner("?tp2=0", video);
+    f.casts.cast(FIVE_CLIP_ID); off.casts.cast(FIVE_CLIP_ID);
+    const source = f.parent.children.find((g) => g.name === "fx-clip-skill-marks")!;
+    const mark = source.children[0] as FlipbookPool["mesh"];
+    const dt = 1 / 60;
+    // A video stall longer than the old mark's entire cast-relative lifetime.
+    if (video) for (let frame = 0; frame < 180; frame++) {
+      f.step(dt); off.step(dt); f.five.aftermathR2!.present();
+      expect(mark.visible).toBe(false); expect(f.blows).toHaveLength(0);
+    }
+    f.clock(0); off.clock(0);
+    let sinceHit = -1, tailFrames = 0;
+    for (let frame = 0; frame < 210; frame++) {
+      f.step(dt); off.step(dt); f.five.aftermathR2!.present();
+      expect(f.blows).toEqual(off.blows); expect(f.statuses).toEqual(off.statuses);
+      if (f.blows.length === 0) continue;
+      sinceHit += 1;
+      const age = sinceHit * dt, alpha = mark.geometry.getAttribute("iData").getW(0);
+      if (age > THUNDER_MARK_START_S + 0.15 && age < THUNDER_AFTERMATH_END_S - 0.05) {
+        expect(mark.visible).toBe(true); expect(alpha).toBeGreaterThan(0.8); tailFrames++;
+      }
+      if (age > THUNDER_AFTERMATH_END_S + 0.1) expect(mark.visible).toBe(false);
+    }
+    expect(tailFrames).toBeGreaterThan(90); expect(f.casts.last!.marks).toBe(1);
+  });
+
   it("starts charge, release and travel on the key; impact and aftermath on the unchanged strike", () => {
     const f = runner(), trace: { phase: string; time: number }[] = [];
     let time = 0;
