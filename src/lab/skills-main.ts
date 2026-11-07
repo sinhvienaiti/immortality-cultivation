@@ -129,10 +129,10 @@ import { keyIcon, SkillBar, type SkillBarState } from "./skill-bar";
 import { QiDragonSwarm } from "../view/skills/qi-dragon-swarm";
 import { QiSwarmLab, skillsLabQuality, type SwarmLabReport } from "./qi-dragon-swarm";
 import { AB_FLAGS, abFlagEnabled, withAbFlag } from "./ab-flags";
-import { installPilotOverrides } from "./pilot-overrides";
+import { installPilotOverrides, pilotStatus } from "./pilot-overrides";
 
 const params = new URLSearchParams(location.search);
-installPilotOverrides(params);
+await installPilotOverrides(params);
 // ?cut=sabre: the lopsided swept swing (kept for the Sabre school) in place of the Sword's symmetric crescent (read once).
 if (params.get("cut") === "sabre") SLASH_STYLE.style = "sabre";
 // ?dark=b: Dark in palette B (black, silver-grey rims) in place of the owner's pick A, to compare them (read once).
@@ -2414,6 +2414,7 @@ declare global {
       skillBar(): SkillBarState | null;
       /** Ticket 258b: GPU checks of FlipbookPool v2 (programs, GPU vs CPU, mask decode); off-screen, no time passes. */
       flipbookProbe(): Promise<FlipbookProbeReport>;
+      pilotStatus(): ReturnType<typeof pilotStatus>;
       /** Load-time GPU uploads/programs for Fire and Metal; reading this does not render or emit. */
       prewarmReport(): ReturnType<ElementStage["prewarm"]>[];
       type(slot: SwordSlot | "k7" | "km"): void;
@@ -2712,6 +2713,7 @@ void (async () => {
   caster.start();
   window.__lab = {
     ready: true,
+    pilotStatus,
     ab: () => ab?.state() ?? null,
     abStart: () => ab?.start(),
     abSettle: async () => { const ok = (await ab?.settle()) ?? false; view.render(0); return ok; },

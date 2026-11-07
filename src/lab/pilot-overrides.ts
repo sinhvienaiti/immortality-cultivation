@@ -94,9 +94,9 @@ export function createPilotOverrides(search: string | URLSearchParams, fetcher: 
   };
   return async (original: Map<string, FlipbookMeta>, base: string): Promise<Map<string, FlipbookMeta>> => {
     if (!enabled) return original;
-    const match = base.match(/^(.*\/art-src\/lab\/)vfx\/(boss|blood|fire|beast)\/$/);
+    const match = base.match(/^(.*\/art-src\/lab\/)vfx\/(boss|blood|fire|beast|hybrid)\/$/);
     if (match === null) return original;
-    const kit = match[2] as keyof typeof PILOT_IDS;
+    const kit = (match[2] === "hybrid" ? "fire" : match[2]) as keyof typeof PILOT_IDS;
     const pilotBase = match[1] + "vfx-pilot-2026-11-07/" + kit + "/";
     let request = requests.get(pilotBase);
     if (request === undefined) {
@@ -123,7 +123,7 @@ export function createPilotOverrides(search: string | URLSearchParams, fetcher: 
     if (overrides === null) return original;
     const result = new Map(original);
     for (const [id, meta] of overrides) {
-      if (original.has(id)) result.set(id, meta);
+      if (id === PILOT_IDS[kit] && original.has(id)) result.set(id, meta);
       else warnOnce(pilotBase, "override id absent from base: " + id);
     }
     if (!overrides.has(PILOT_IDS[kit])) warnOnce(pilotBase, "no override for " + PILOT_IDS[kit]);
@@ -131,6 +131,44 @@ export function createPilotOverrides(search: string | URLSearchParams, fetcher: 
   };
 }
 
-export function installPilotOverrides(search: string | URLSearchParams): void {
-  setFlipbookManifestTransform(new URLSearchParams(search).get("pilot") === "1" ? createPilotOverrides(search) : null);
+export interface PilotSourceStatus {
+  readonly override: boolean;
+  readonly atlasUrl: string | null;
+  readonly textureUrl: string | null;
+  readonly loaded: boolean;
+  /** Successful sprite submissions; ONE_FRAME cards count once per submitted frame. */
+  readonly plays: number;
+}
+type SourceState = PilotSourceStatus & { order: number };
+const sources = new Map<string, SourceState[]>();
+let order = 0;
+export function isPilotSource(meta: FlipbookMeta): boolean { return meta.url.includes(PILOT_ROOT); }
+export function pilotStatus(): Record<string, PilotSourceStatus> {
+  return Object.fromEntries(Object.values(PILOT_IDS).map((id) => {
+    const states = sources.get(id) ?? [];
+    const latest = states.reduce<SourceState | undefined>((a, b) => a === undefined || b.order > a.order ? b : a, undefined);
+    return [id, { override: latest?.override ?? false, atlasUrl: latest?.atlasUrl ?? null, textureUrl: latest?.textureUrl ?? null,
+      loaded: latest?.loaded ?? false, plays: states.reduce((n, s) => n + s.plays, 0) }];
+  }));
+}
+
+export function installPilotOverrides(search: string | URLSearchParams): Promise<void> {
+  sources.clear(); order = 0;
+  const transform = createPilotOverrides(search);
+  return setFlipbookManifestTransform(async (original, base) => {
+    const metas = await transform(original, base);
+    if (!/\/art-src\/lab\/vfx\/(boss|blood|fire|beast|hybrid)\/$/.test(base)) return metas;
+    const result = new Map(metas);
+    for (const id of Object.values(PILOT_IDS)) {
+      const meta = metas.get(id);
+      if (meta === undefined) continue;
+      const state = { override: isPilotSource(meta), atlasUrl: meta.url, textureUrl: null as string | null, loaded: false, plays: 0, order: 0 };
+      const states = sources.get(id) ?? []; states.push(state); sources.set(id, states);
+      result.set(id, { ...meta, trace: {
+        loaded(ready, url) { state.loaded = ready; state.textureUrl = ready ? url : null; if (ready) state.order = ++order; },
+        played() { if (state.loaded) { state.plays += 1; state.order = ++order; } },
+      } });
+    }
+    return result;
+  });
 }

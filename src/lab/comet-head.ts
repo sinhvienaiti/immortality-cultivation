@@ -7,6 +7,7 @@
  * only places, turns and times the clip. One video element per element folder, shared by every meteor in the air; on
  * fixed steps (captures) it is seeked along world time. No allocation per frame.
  */
+import { isPilotSource } from "./pilot-overrides";
 import * as THREE from "three";
 import { FlipbookPool, ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type FlipbookVideo, type FlipOptions } from "../view/skills/flipbook";
 
@@ -68,6 +69,7 @@ interface Layer {
 
 export class CometHead {
   private folder = "";
+  private ownMeta: FlipbookMeta | null = null;
   private rim: Layer | null = null;
   private body: Layer | null = null;
   private videoPool: FlipbookPool;
@@ -106,7 +108,7 @@ export class CometHead {
   /** The element folder's comet from `lib` (call each frame it may be needed; cheap once set). False: it has none (yet). */
   use(folder: string, lib: FlipbookLibrary, upgrade: FlipbookLibrary | null = null): boolean {
     const candidate = this.rim && upgrade?.get(this.rim.meta.id);
-    if (folder !== this.folder || (this.mode !== "video" && !this.fromUpgrade && candidate && !upgrade!.deferred(candidate.meta.id) && candidate.meta.role === "comet" && candidate.meta.comet)) {
+    if ((this.ownMeta !== null && lib.get(this.ownMeta.id)?.meta !== this.ownMeta) || folder !== this.folder || (this.mode !== "video" && !this.fromUpgrade && (this.ownMeta === null || !isPilotSource(this.ownMeta)) && candidate && !upgrade!.deferred(candidate.meta.id) && candidate.meta.role === "comet" && candidate.meta.comet)) {
       this.folder = folder;
       this.drop();
     }
@@ -115,7 +117,7 @@ export class CometHead {
         const own = lib.get(id);
         if (own === null || own.meta.role !== "comet" || own.meta.comet === undefined) continue;
         const better = this.mode !== "video" ? upgrade?.get(id) : null;
-        const useUpgrade = own.meta.layer !== "body" && better != null && better.meta.role === "comet" && better.meta.comet !== undefined && !upgrade!.deferred(id);
+        const useUpgrade = !isPilotSource(own.meta) && own.meta.layer !== "body" && better != null && better.meta.role === "comet" && better.meta.comet !== undefined && !upgrade!.deferred(id);
         const e = useUpgrade ? better! : own;
         const heading = cometHeading(e.meta.comet!.tail);
         const meta: FlipbookMeta = { ...e.meta, heading, pivot: e.meta.comet!.cell ?? e.meta.pivot };
@@ -130,6 +132,7 @@ export class CometHead {
           pool.attach(meta, e.texture, e.controls);
           this.rim = { pool, meta };
           this.headAtlas.attach(meta, e.texture, e.controls);
+          this.ownMeta = own.meta;
           this.video = own.meta.video;
           this.fromUpgrade = useUpgrade;
         }
@@ -284,6 +287,7 @@ export class CometHead {
       l.pool.dispose();
     }
     this.rim = this.body = null;
+    this.ownMeta = null;
     this.videoPool.clear();
     this.headVideo.clear();
     this.headAtlas.clear();

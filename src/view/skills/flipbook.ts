@@ -100,6 +100,8 @@ export interface FlipbookPlayback {
 }
 
 export interface FlipbookMeta {
+  /** Optional host diagnostics; stand-ins never count as loaded. */
+  readonly trace?: { loaded(ready: boolean, url: string | null): void; played(): void };
   readonly playback?: FlipbookPlayback;
   readonly bytes?: number;
   readonly ktx2?: Ktx2Set;
@@ -486,8 +488,18 @@ export function setFlipbookSplitX(px: number): void { SPLIT_X.value = px; }
 
 type ManifestTransform = (metas: Map<string, FlipbookMeta>, base: string) => Promise<Map<string, FlipbookMeta>>;
 let manifestTransform: ManifestTransform | null = null;
-/** The dev lab installs its loader before creating players; normal game loading is unchanged. */
-export function setFlipbookManifestTransform(transform: ManifestTransform | null): void { manifestTransform = transform; }
+const libraries = new Set<WeakRef<FlipbookLibrary>>();
+/** Refresh existing libraries too: imports may warm a player before the lab installs its transform. */
+export function setFlipbookManifestTransform(transform: ManifestTransform | null): Promise<void> {
+  manifestTransform = transform;
+  const pending: Promise<void>[] = [];
+  for (const ref of libraries) {
+    const lib = ref.deref();
+    if (lib === undefined) libraries.delete(ref);
+    else pending.push(lib.refreshTransform());
+  }
+  return Promise.all(pending).then(() => undefined);
+}
 
 /**
  * One element folder's atlases (loaded once; pools attach as they arrive). `defer` names clips whose atlas waits until
@@ -505,8 +517,24 @@ export class FlipbookLibrary {
   private readonly fetching = new Map<string, Promise<boolean>>();
   private stand: THREE.DataTexture | null = null;
   private anisotropy = 4;
+  private transformedBy: ManifestTransform | null = null;
+  private originals: Map<string, FlipbookMeta> | null = null;
 
-  constructor(readonly base: string, private readonly defer: ((meta: FlipbookMeta) => boolean) | null = null) {}
+  constructor(readonly base: string, private readonly defer: ((meta: FlipbookMeta) => boolean) | null = null) {
+    libraries.add(new WeakRef(this));
+  }
+
+  /** Wait for old requests before replacing textures; watchers reattach existing pools. */
+  async refreshTransform(): Promise<void> {
+    if (this.loading === null) return;
+    await this.loading;
+    if (this.transformedBy === manifestTransform || this.originals === null) return;
+    await Promise.all(this.fetching.values());
+    // Another refresh may have finished while the atlas request was pending.
+    if (this.transformedBy === manifestTransform) return;
+    this.loading = null;
+    await this.load(this.anisotropy);
+  }
 
   /** Clip `id` has only its stand-in (a deferred atlas not fetched, or released). */
   deferred(id: string): boolean {
@@ -582,10 +610,17 @@ export class FlipbookLibrary {
     this.loading = (async () => {
       let metas: Map<string, FlipbookMeta>;
       try {
-        const response = await fetch(this.base + "manifest.json", { cache: "no-cache" });
-        if (!response.ok || !(response.headers.get("content-type") ?? "").includes("json")) return;
-        metas = parseFlipbookManifest(await response.json(), this.base);
-        if (manifestTransform !== null) metas = await manifestTransform(metas, this.base);
+        if (this.originals === null) {
+          const response = await fetch(this.base + "manifest.json", { cache: "no-cache" });
+          if (!response.ok || !(response.headers.get("content-type") ?? "").includes("json")) return;
+          this.originals = parseFlipbookManifest(await response.json(), this.base);
+        }
+        metas = this.originals;
+        // A registration during an async manifest request must win before any atlas starts.
+        do {
+          this.transformedBy = manifestTransform;
+          metas = this.transformedBy === null ? this.originals : await this.transformedBy(this.originals, this.base);
+        } while (this.transformedBy !== manifestTransform);
         for (const m of metas.values()) this.declared.set(m.id, m);
       } catch (error) {
         console.warn("[flipbook] no manifest at " + this.base, error);
@@ -594,6 +629,18 @@ export class FlipbookLibrary {
       const loader = new THREE.TextureLoader();
       await Promise.all(
         [...metas.values()].map(async (meta) => {
+          const previous = this.entries.get(meta.id);
+          // Registration must not reload unrelated atlases in an already warm library.
+          if (previous?.meta === meta) return;
+          if (previous !== undefined) {
+            previous.meta.trace?.loaded(false, null);
+            previous.texture.dispose();
+            previous.controls?.a?.dispose();
+            previous.controls?.b?.dispose();
+            previous.controls?.mv?.dispose();
+            this.entries.delete(meta.id);
+            this.standing.delete(meta.id);
+          }
           // A deferred clip arrives with its stand-in (no masks: a masked clip never defers).
           if (this.defer !== null && meta.controlA === undefined && meta.controlB === undefined && this.defer(meta)) {
             this.standing.add(meta.id);
@@ -642,11 +689,14 @@ export class FlipbookLibrary {
   add(meta: FlipbookMeta, texture: THREE.Texture, controls: FlipbookControls | null = null, source: "png" | "ktx2" = "png"): void {
     this.declared.set(meta.id, meta);
     this.entries.set(meta.id, { meta, texture, controls, source });
+    const variant = texture.userData.hybridVariant === "etc1s" ? "etc1s" : "uastc";
+    meta.trace?.loaded(!this.standing.has(meta.id), source === "ktx2" ? ktx2Pick(meta.ktx2, variant)?.url ?? meta.url : meta.url);
     for (const listener of this.listeners) listener(meta.id);
   }
 
   reset(): void {
     for (const entry of this.entries.values()) {
+      entry.meta.trace?.loaded(false, null);
       entry.texture.dispose();
       entry.controls?.a?.dispose();
       entry.controls?.b?.dispose();
@@ -656,6 +706,7 @@ export class FlipbookLibrary {
     this.declared.clear();
     this.standing.clear();
     this.loading = null;
+    this.originals = null;
   }
 }
 
@@ -1617,6 +1668,7 @@ export class FlipbookPool {
       this.dropped += 1;
       return;
     }
+    meta.trace?.played();
     this.cursor = (i + 1) % this.capacity;
     const rate = options.rate ?? 1;
     const fps = meta.fps * rate;
