@@ -56,9 +56,9 @@ for (let frame = 0; frame <= 180; frame++) {
   assert.deepEqual(snapshot(off), snapshot(base));
   if (frame === 0) { assert.equal(data.getW(0), 1); assert.equal(data.getZ(0), 13); }
   assert.equal(ring.visible, frame >= 3 && frame < 24);
-  // Four release sparkles + one target sparkle already exist at R0. The first impact-tail sparkle is delayed.
+  // R2-4 replaces the large impact-tail sparkle; R0's four release sparkles and one target sparkle stay.
   if (frame < 2) assert.equal(pool(f, 'thunder-sparkle').live, 5);
-  if (frame === 2) assert.equal(pool(f, 'thunder-sparkle').live, 6);
+  if (frame === 2) assert.equal(pool(f, 'thunder-sparkle').live, 5);
   if (frame >= 17) assert.equal(core.visible, false);
   const draws = [f.five.casterR2.group, f.five.travelR2.group, f.five.impactR2.group]
     .reduce((n, g) => n + g.children.filter((m) => m.visible && m.geometry.instanceCount > 0).length, 0);
@@ -131,6 +131,6 @@ const bytes = ['thunder-caster-seal', 'thunder-ring-burst'].reduce((n, id) => {
   const m = manifest.flipbooks[id]; return n + m.width * m.height * 4 * 4 / 3;
 }, 0);
 assert.ok(bytes <= 64_000_000);
-console.log(`PASS R2-3: H0 peak; single core; ring H0+3, sparkle H0+2 frames; toggles; off buffers; warm reuse/AST; <=8 extra draws (observed ${maxDraws}); shared textures, R2 total ${bytes} bytes; synchronous damage/event hook.`);
+console.log(`PASS R2-3: H0 peak; single core; ring H0+3; R2-4 replaces the large sparkle tail; toggles; off buffers; warm reuse/AST; <=8 impact/caster/travel draws (observed ${maxDraws}); shared textures, R2 total ${bytes} bytes; synchronous damage/event hook.`);
 // The existing direct R2-2 probe also checks real runner clocks, atlas/video fallback and stalled video.
 await import('./thunder-travel-r2-probe.mjs');

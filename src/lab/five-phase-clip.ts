@@ -6,6 +6,7 @@ import { ChargeFillFx, type ChargeFillPose } from "./charge-fill-fx";
 import { ThunderCasterR2, thunderCasterR2Enabled } from "./thunder-caster-r2";
 import { ThunderTravelR2 } from "./thunder-travel-r2";
 import { ThunderImpactR2, THUNDER_IMPACT_OFFSET_S } from "./thunder-impact-r2";
+import { ThunderAftermathR2 } from "./thunder-aftermath-r2";
 
 export const FIVE_CLIP_ID = "pillar-thunder-single";
 export const FIVE_CLIP_CHARGE_S = 0.2;
@@ -34,6 +35,7 @@ export class FivePhaseClip {
   readonly casterR2: ThunderCasterR2 | null;
   readonly travelR2: ThunderTravelR2 | null;
   readonly impactR2: ThunderImpactR2 | null;
+  readonly aftermathR2: ThunderAftermathR2 | null;
   private readonly cards: Card[] = IDS.map((id) => ({ id, pool: null }));
   private readonly afflictions: Affliction[] = Array.from({ length: 64 }, () => ({ target: -1, left: 0, life: 0 }));
   private readonly afflictionAges = new Float32Array(64);
@@ -57,6 +59,7 @@ export class FivePhaseClip {
     this.casterR2 = this.enabled && thunderCasterR2Enabled(search) ? new ThunderCasterR2(parent, this.player, host) : null;
     this.travelR2 = this.casterR2 === null ? null : new ThunderTravelR2(parent, host);
     this.impactR2 = this.casterR2 === null ? null : new ThunderImpactR2(parent, this.player, search);
+    this.aftermathR2 = this.casterR2 === null ? null : new ThunderAftermathR2(parent, this.impactR2!.sparkles);
   }
 
   prepare(): void {
@@ -84,6 +87,7 @@ export class FivePhaseClip {
   adopt(meta: FlipbookMeta, texture: THREE.Texture): void {
     if (!this.enabled) return;
     this.impactR2?.adopt(meta, texture);
+    this.aftermathR2?.adopt(meta, texture);
     const card = this.cards.find((c) => c.id === meta.id);
     if (card === undefined) return;
     this.player.library("thunder", () => true).add(meta, texture);
@@ -167,6 +171,7 @@ export class FivePhaseClip {
     this.host.hand(this.at);
     this.host.glow(0xd9ccff, 0.9);
     this.casterR2?.cast();
+    this.aftermathR2?.cast(target);
     this.travelR2?.cast(target);
     this.host.release(this.at);
   }
@@ -175,11 +180,12 @@ export class FivePhaseClip {
   strike(target: THREE.Vector3): void {
     if (!this.enabled) return;
     this.travelR2?.strike();
+    this.aftermathR2?.strike();
     this.at.set(target.x, 0.12, target.z);
     if (this.impactR2 !== null) this.impactR2.strike(target);
     else this.burst("thunder-ground-impact", 5, 0.85);
     const sparkle = this.pool("thunder-sparkle");
-    if (sparkle?.meta == null || this.impactR2?.sparkles === false) return;
+    if (sparkle?.meta == null || this.impactR2?.sparkles === false || this.aftermathR2 !== null) return;
     // Phase offsets and decreasing sizes/lifetimes thin out the authored sparkle, with erosion rather than a fast fade.
     for (let i = 0; i < 5; i += 1) {
       const o = this.opts();
@@ -209,6 +215,7 @@ export class FivePhaseClip {
     this.casterR2?.update(dt);
     this.travelR2?.update(dt);
     this.impactR2?.update(dt);
+    this.aftermathR2?.update(dt);
     const affliction = this.pool("thunder-hit-affliction");
     affliction?.clear();
     this.host.pose(this.casterPose);
@@ -260,5 +267,6 @@ export class FivePhaseClip {
     this.casterR2?.clear();
     this.travelR2?.clear();
     this.impactR2?.clear();
+    this.aftermathR2?.clear();
   }
 }

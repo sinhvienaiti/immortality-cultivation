@@ -2374,6 +2374,7 @@ function frame(dt: number): void {
     view.camera.updateMatrixWorld();
     thunderFive.travelR2.present(stage.flipbooks.group);
   }
+  thunderFive.aftermathR2?.present();
   chargeFill.update(dt, chargeFillPose);
   ambient.update(dt);
   placeTags();
