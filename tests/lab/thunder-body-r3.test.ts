@@ -22,14 +22,14 @@ async function herdFixture() {
 }
 
 describe("Thunder R3 body reaction", () => {
-  it.each([[1, 0], [-1, 0], [0, 1], [0, -1], [3, 4], [0, 0]])("tips away from (%s,%s), 10° on H0 and 14° at peak", (dx, dz) => {
+  it.each([[1, 0], [-1, 0], [0, 1], [0, -1], [3, 4], [0, 0]])("tips away from (%s,%s), 12° on H0 and 20° at peak", (dx, dz) => {
     const body = new ThunderBodyReaction(1); body.strike(0, dx, dz); pose(body, 0);
-    expect(q.angleTo(new THREE.Quaternion()) * 180 / Math.PI).toBeCloseTo(10);
+    expect(q.angleTo(new THREE.Quaternion()) * 180 / Math.PI).toBeCloseTo(12);
     const top = new THREE.Vector3(0, 2, 0).applyQuaternion(q);
     if (dx !== 0 || dz !== 0) expect(top.x * dx + top.z * dz).toBeGreaterThan(0);
     else expect(top.z).toBeLessThan(0);
-    pose(body, 0.04);
-    expect(q.angleTo(new THREE.Quaternion()) * 180 / Math.PI).toBeCloseTo(14);
+    pose(body, 0.05);
+    expect(q.angleTo(new THREE.Quaternion()) * 180 / Math.PI).toBeCloseTo(20);
     expect(p.x).toBe(0); expect(p.z).toBe(0);
   });
 
@@ -70,7 +70,7 @@ describe("Thunder R3 body reaction", () => {
     expect(read()).toEqual(before); // Hit dispatch is after the first herd draw.
     herd.update(0); old.update(0); // skills-main flushes once after all clip blows on this frame.
     expect(read()).not.toEqual(before); expect(read()).not.toEqual(old.group.children.map((m) => Array.from((m as THREE.InstancedMesh).instanceMatrix.array)));
-    for (let f = 0; f < 18; f++) { herd.update(1 / 60); old.update(1 / 60); }
+    for (let f = 0; f < Math.round(THUNDER_BODY_RETURN_S * 60); f++) { herd.update(1 / 60); old.update(1 / 60); }
     meshes.forEach((m, k) => {
       expect(m.instanceMatrix.array).toBe(buffers[k]);
       Array.from(m.instanceMatrix.array).forEach((v, n) => expect(v).toBeCloseTo((old.group.children[k] as THREE.InstancedMesh).instanceMatrix.array[n]!, 5));

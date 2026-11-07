@@ -6,7 +6,7 @@ import { layFlat } from "../view/skills/element-clips";
 export const THUNDER_IMPACT_OFFSET_S = 3 / 60;
 export const THUNDER_HIT_RGB = 0xd9ccff;
 export const THUNDER_HIT_RIM_S = 0.1;
-export const THUNDER_BODY_RETURN_S = 0.3;
+export const THUNDER_BODY_RETURN_S = 0.45;
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 
 /** View-only, foot-pivot reaction. Fixed storage and scratch transforms; no new draw or shader. */
@@ -36,11 +36,12 @@ export class ThunderBodyReaction {
     const age = this.age[i]! + Math.max(0, dt);
     this.age[i] = age;
     if (age >= THUNDER_BODY_RETURN_S - 1e-8) { this.clear(i); return; }
-    // H0 already tips 10°; peak 14° at 40 ms, then ease home by 300 ms, even while stunned.
-    const rise = smooth(Math.min(1, age / 0.04));
-    const home = smooth(Math.max(0, (age - 0.04) / (THUNDER_BODY_RETURN_S - 0.04)));
+    // H0 already tips 12°; peak 20° at 50 ms, still about 11° at 230 ms, home by 450 ms, even while stunned.
+    // R3-1 retry (blind verdict 07/11): 10–14° over 300 ms did not read at the play camera.
+    const rise = smooth(Math.min(1, age / 0.05));
+    const home = smooth(Math.max(0, (age - 0.05) / (THUNDER_BODY_RETURN_S - 0.05)));
     this.axis.set(this.dz[i]!, 0, -this.dx[i]!).normalize();
-    this.turn.setFromAxisAngle(this.axis, (10 + 4 * rise) * Math.PI / 180 * (1 - home));
+    this.turn.setFromAxisAngle(this.axis, (12 + 8 * rise) * Math.PI / 180 * (1 - home));
     q.premultiply(this.turn);
     // Compress about the feet, then rebound by 80 ms. Height scales the hop for every species.
     const rebound = smooth(Math.min(1, Math.max(0, (age - 0.025) / 0.055)));
