@@ -271,6 +271,11 @@ describe("late impact and mapped shadow programs (ticket 286)", () => {
     f.render.mockImplementation((mesh: THREE.Mesh) => {
       expect(f.getTarget()).not.toBeNull();
       expect(mesh.material).toBe(sample.material);
+      const output = f.getTarget()!;
+      expect([output.width, output.height]).toEqual([1, 1]);
+      for (const name of names) {
+        expect(sample.material.uniforms[name]!.value).not.toBe(output.texture);
+      }
     });
     try {
       expect(f.screen.prewarm(f.renderer)).toEqual([f.burst, f.slash]);

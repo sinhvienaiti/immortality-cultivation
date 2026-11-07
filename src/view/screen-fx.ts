@@ -533,6 +533,7 @@ class ImpactPass extends Pass {
   /** Compiles the mask's and the frame's programs before the first hit (a first-use compile is a frame hitch). */
   prewarm(renderer: THREE.WebGLRenderer): void {
     const target = renderer.getRenderTarget();
+    const output = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false, stencilBuffer: false });
     const samplers = [this.uniforms.tDiffuse, this.uniforms.tMask, this.uniforms.tShapeA, this.uniforms.tShapeB];
     const saved = samplers.map((u) => u.value);
     const geometry = new THREE.PlaneGeometry(2, 2);
@@ -542,19 +543,22 @@ class ImpactPass extends Pass {
     scene.add(mesh);
     try {
       if (this.drawMask !== null) this.drawMask(renderer, this.mask);
+      else renderer.setRenderTarget(this.mask);
       this.uniforms.tDiffuse.value = this.mask.texture;
       this.uniforms.tMask.value = this.mask.texture;
       this.uniforms.tShapeA.value ??= this.mask.texture;
       this.uniforms.tShapeB.value ??= this.mask.texture;
-      // The last enabled composer pass draws to the display: the mask target only warms the linear variant.
+      // The last enabled composer pass draws to the display; the scratch target warms the linear variant.
       // Use the quad's light/fog-free scene, and never draw the warmup onto the display.
       renderer.setRenderTarget(null);
       renderer.compile(scene, camera);
-      renderer.setRenderTarget(this.mask);
+      // The quad samples this.mask: drawing back into it would form a framebuffer feedback loop.
+      renderer.setRenderTarget(output);
       this.quad.render(renderer);
     } finally {
       samplers.forEach((u, i) => { u.value = saved[i]!; });
       renderer.setRenderTarget(target);
+      output.dispose();
       scene.remove(mesh);
       geometry.dispose();
     }
