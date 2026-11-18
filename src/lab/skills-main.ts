@@ -107,6 +107,10 @@ import { bloodRingBurst, clipAudit, crescentOf, SLASH_STYLE, type ClipAudit } fr
 import { EXPANSION_SHOWCASE, Showcase, ULT_SHOWCASE, type ShowcaseHost } from "./showcase";
 import { MeteorRain, type MeteorReport } from "./meteor-rain";
 import { SHOWER } from "./meteor-plan";
+import { FiveThunder, type ThunderReport } from "./five-thunder";
+import { CameraModes, VIEW_LABELS, VIEW_MODES, type ViewMode } from "./camera-modes";
+import { DRAGON_PATTERNS, DragonPaths, type DragonPattern } from "./dragon-path";
+import { fireflyGain } from "./sound-tiers";
 import { CrescentSample, FIVE, FIVE_RECIPES, FivePhase, type FiveHost } from "./five-phase";
 import { FivePhaseClip } from "./five-phase-clip";
 import { THUNDER_HIT_RGB, THUNDER_HIT_RIM_S } from "./thunder-impact-r2";
@@ -115,6 +119,18 @@ import { StreakCounter } from "./streak-counter";
 import { LabWordTags, PLATE } from "./word-tags";
 import { TAG_KEEP, TagMask } from "../view/skills/tag-mask";
 import type { Grade } from "../content/types";
+import { ICE_ULT_ID, IceUltLayered, iceUltLayeredDefault, type IceUltReport } from "./ice-ult-layered";
+import { WOOD_ULT_ID, WoodUltLayered, type WoodUltReport } from "./wood-ult-layered";
+import { woodUltSound } from "./wood-ult-sound";
+import { METAL_ULT_ID, MetalUltLayered, type MetalUltReport } from "./metal-ult-layered";
+import { metalUltSound } from "./metal-ult-sound";
+import { VOID_ULT_ID, VoidUltLayered, type VoidUltReport } from "./void-ult-layered";
+import { voidUltSound } from "./void-ult-sound";
+import { StarUltLayered, STAR_ULT_ID, type StarReport } from "./star-ult-layered";
+import { starUltSound } from "./star-ult-sound";
+import { VoidBlackhole } from "./void-blackhole-ult";
+import { THUNDER_ULT_ID, ThunderUltChain, thunderUltChainDefault, type ThunderChainReport, type ThunderChainSound } from "./thunder-ult-chain";
+import { LIGHT_ULT_ID, LightUltFan, type LightUltReport, type LightSound } from "./light-ult-fan";
 import { ClipSkillRunner, describeClipSkill, KEY8_NAV, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipCastReport, type ClipSkill, type ClipSkillHost } from "./clip-skills";
 import { AURA_LAYERS, AURA_NAMES, auraIdOf, SwordAura, type AuraId } from "../view/skills/sword-aura";
 import { WindSilkMantle } from "../view/skills/aura-mantle";
@@ -131,6 +147,9 @@ import { QiDragonSwarm } from "../view/skills/qi-dragon-swarm";
 import { QiSwarmLab, skillsLabQuality, type SwarmLabReport } from "./qi-dragon-swarm";
 import { AB_FLAGS, abFlagEnabled, withAbFlag } from "./ab-flags";
 import { installPilotOverrides, pilotStatus } from "./pilot-overrides";
+import { installAnimR1, type AnimR1Lab } from "./anim-r1-lab";
+import { installAnimR4, type AnimR4Lab } from "./anim-r4-seals";
+import { installCloudVolumeLab } from "./cloud-volume-lab";
 
 const params = new URLSearchParams(location.search);
 await installPilotOverrides(params);
@@ -284,6 +303,10 @@ const zoom = new CameraZoom();
 const freeOrbit = new LabOrbit(view.stage.renderer.domElement);
 /** A fixed camera set by __lab.camera (not "play"): the zoom leaves it alone until "play" again. */
 let customCamera = false;
+/** The three views (camera-modes.ts; Alt+1 top, Alt+2 behind, Alt+3 side, Alt+4 behind at 25°). View only. */
+const camModes = new CameraModes();
+/** The beasts' road's middle (m), where the side view aims. */
+const ROAD_Z = -5;
 const kick = new CameraKick();
 // Screen effects by tier (canon D58 (3), POWER_RESEARCH.md): trauma shake, punch, hit-stop, slow motion,
 // darkening, flash and edge split in one pass before the OutputPass. Made before any other overlay, so its
@@ -408,8 +431,10 @@ let ultDarkEnd = -1;
 bus.on((e) => {
   if (e.kind === "release") {
     screen.release(e.tier, localOnly(e.slot));
-  } else if (e.kind === "impact" && e.role !== "secondary") {
-    // Primary blows take one local graphic frame where they land (an inverted burst), never the whole screen.
+  } else if (e.kind === "impact" && e.role !== "secondary" && e.slot !== "kg") {
+    // Primary blows take one local graphic frame where they land (an inverted burst), never the whole screen. Not key
+    // G's (owner 12/11 10:1x: the shader-drawn violet spiked star at the landing, "style thuần nhìn xấu quá"): its
+    // landing is its own ivory burst, ring and crack.
     screen.localFlash(e.x, e.y, e.z, e.tier, 1, e.dx, e.dz);
     lastHit.x = e.x;
     lastHit.y = e.y;
@@ -481,7 +506,7 @@ function emitRelease(slot: string, tx: number, tz: number): void {
   // Every typed word (keys 0–7) feeds the channel (key C) while it runs and counts on the streak, with its grade.
   if (slot === "auto" || slot === "k1" || slot === "k2" || slot === "guard" || slot === "dash" || slot === "k4" || slot === "k5" || slot === "k7") wordTyped(wordGrade);
   wordGrade = "perfect";
-  if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9" && slot !== "km" && slot !== "kc") {
+  if (slot !== "auto" && slot !== "k5" && slot !== "k8" && slot !== "k9" && slot !== "km" && slot !== "kc" && slot !== "kg") {
     const c = bus.callout;
     c.slot = slot;
     c.tier = r.tier;
@@ -612,6 +637,8 @@ fx.setAura(swordAura);
 /** The weapon in the caster's hand (after load: it hangs off Lam's hand bone) and the body it keeps out of. */
 let handSword: HandSword | null = null;
 let bodyProxy: BodyProxy | null = null;
+let animR1: AnimR1Lab | null = null;
+let animR4: AnimR4Lab | null = null;
 /** ?grip=tilt,roll,yaw,x,y,z (degrees, metres); an empty or missing field keeps DEFAULT_GRIP's. */
 function gripFromParams(): GripPose {
   const parts = (params.get("grip") ?? "").split(",");
@@ -630,6 +657,9 @@ void ribbonNoise;
 // Elegant serif numerals (Cormorant Garamond, OFL; loaded before the atlas is painted at the first number).
 const numbers = createSkillNumbers(view, 140, 'italic 700 54px "Cormorant Garamond", "Be Vietnam Pro", serif');
 const compiler = new DamageCompiler(numbers);
+// Key G's numbers: 60 % of the size (round 15), on their own field.
+const thunderNumbers = createSkillNumbers(view, 60, 'italic 700 32px "Cormorant Garamond", "Be Vietnam Pro", serif');
+const thunderCompiler = new DamageCompiler(thunderNumbers);
 const realmG = Math.pow(1.12, Math.max(0, Number(params.get("realm") ?? "0") || 0));
 const W_HP = 90 * realmG;
 /** Canon §12.1 per blow, in W (key 7 is not in the canon yet: a stand-in). */
@@ -660,6 +690,8 @@ function skillRgb(slot: string): number {
   if (slot === "k8" || slot === "k9") return clipRgb;
   // The meteor rain (key M) and the channel (key C) in the element's slot-1 colour.
   if (slot === "km" || slot === "kc") return skillRgb("k1");
+  // Ngũ Lôi Oanh Đỉnh (key G): its own ivory numbers.
+  if (slot === "kg") return THUNDER_RGB;
   let v = numberRgb[slot];
   if (v === undefined) {
     // Key 7 takes its element's number tint (Metal: Clear Wind's jade-cyan).
@@ -694,8 +726,10 @@ bus.on((e) => {
     castDamage[e.slot] = (castDamage[e.slot] ?? 0) + dmg;
     castHits[e.slot] = (castHits[e.slot] ?? 0) + 1;
     // Key 7 is an area attack: its blows on small beasts add up per 8 m cell over 1 s (about 70 % fewer numbers).
-    compiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, e.y, e.z, skillRgb(e.slot), e.beastTier, 0.15, e.role === "finisher" || e.power >= 0.9, e.slot === "k7");
-    if (e.role === "finisher") compiler.finisher(attackOf[e.slot] ?? 0);
+    // Key G's numbers sit 1.2 m over the struck beast's head (round 15).
+    if (e.slot === "kg") thunderCompiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, herd.midY(e.target) / 0.55 + 1.2, e.z, skillRgb(e.slot), e.beastTier, 0.15, e.role === "finisher" || e.power >= 0.9, false);
+    else compiler.add(attackOf[e.slot] ?? 0, e.target, dmg, crit, e.x, e.y, e.z, skillRgb(e.slot), e.beastTier, 0.15, e.role === "finisher" || e.power >= 0.9, e.slot === "k7");
+    if (e.role === "finisher") (e.slot === "kg" ? thunderCompiler : compiler).finisher(attackOf[e.slot] ?? 0);
   }
 });
 // Deaths that change the silhouette: a light burst, spirit threads and ink flecks on the death event's frame.
@@ -762,6 +796,8 @@ const foeFx = new FoeFlipbookFx(view.layers.fx, "/art-src/lab/vfx/", {
   sound: (id, x) => { sound.sprint(id, { pan: Math.max(-1, Math.min(1, x / 22)) }); },
   priority(p) { foeScreen.set(p.x, p.y, p.z).project(view.camera); return foeScreen.x * foeScreen.x + foeScreen.y * foeScreen.y; },
   legacy(e, painted) {
+    // Key G's kills draw no sprite orb and ring (code-placed glow sprites): the painted death clip or nothing.
+    if (e.rgb === THUNDER_RGB) return;
     if (e.ink) deathFx.dissolve(e.x, e.y, e.z, e.dx, e.dz, e.beastTier, painted);
     else deathFx.spawn(e.x, e.y, e.z, e.dx, e.dz, e.rgb, e.beastTier, painted);
   },
@@ -843,6 +879,9 @@ bus.on((e) => {
   if (e.kind === "release") victims.cast(e.slot);
   else if (e.kind === "impact") victims.impact(e, frameNo);
   else if (e.kind === "death" && !herd.isHero(e.target)) {
+    // Key G's kills are its own (five-thunder.ts death: arcs round the body, ash, dust, arcs on where it fell): no
+    // grey ink smoke, no sprite orb.
+    if (e.rgb === THUNDER_RGB) { foeFx.stop(e.target); return; }
     if (!foeFx.old) {
       herdFoePose(e.target, foePose);
       foeFx.queueDeath(e, foePose);
@@ -872,7 +911,8 @@ bus.on((e) => {
 bus.on((e) => {
   if (e.kind === "impact") {
     herdFoePose(e.target, foePose);
-    foeFx.queueImpact(e, foePose);
+    // Key G's blows have no ink hit burst: the bolt's ivory burst is the hit.
+    if (e.slot !== "kg") foeFx.queueImpact(e, foePose);
     if (e.killed) foeFx.stop(e.target);
   }
 });
@@ -1125,7 +1165,15 @@ const showcaseHost: ShowcaseHost = {
   // Keys 8 and 9's Firefly files through the lab's mix: each at its class's level, two big voices at most.
   sound: (file, cls) => sound.playFirefly(file, cls),
 };
-const showcase = new Showcase(stage.flipbooks, showcaseHost, ULT_SHOWCASE);
+// Ticket 408: Void immediately follows Ice in the local key-8 selector.
+const woodRows = ULT_SHOWCASE.items.filter(row => row.id === WOOD_ULT_ID);
+const metalRows = ULT_SHOWCASE.items.filter(row => row.id === METAL_ULT_ID);
+const voidRows = ULT_SHOWCASE.items.filter(row => row.id === VOID_ULT_ID);
+const key8Items = ULT_SHOWCASE.items.filter(row => row.id !== METAL_ULT_ID && row.id !== WOOD_ULT_ID && row.id !== VOID_ULT_ID)
+  .flatMap(row => row.id === ICE_ULT_ID ? [row, ...woodRows] : [row])
+  .flatMap(row => row.id === ICE_ULT_ID ? [row, ...metalRows] : [row])
+  .flatMap(row => row.id === ICE_ULT_ID ? [row, ...voidRows] : [row]);
+const showcase = new Showcase(stage.flipbooks, showcaseHost, { ...ULT_SHOWCASE, items: key8Items });
 const expansion = new Showcase(stage.flipbooks, showcaseHost, EXPANSION_SHOWCASE);
 // Their video cards play in real time; with fixed steps (captures) they are seeked along world time (one bank for both).
 showcase.driven = fixed;
@@ -1210,6 +1258,213 @@ function clipHost(slot: "k8" | "k9", sc: Showcase): ClipSkillHost {
 }
 const clipSkills = new ClipSkillRunner(showcase, clipHost("k8", showcase), KEY8_SKILLS, KEY8_NAV);
 const clipSkills9 = new ClipSkillRunner(expansion, clipHost("k9", expansion), KEY9_SKILLS, KEY9_NAV, clipSkills);
+// Key 8's Ice ultimate rebuilt from layered components (ice-ult-layered.ts, ult-ice-layered-demo.md): Y toggles it
+// against the old scene video; ?ultIce=video starts on the video.
+const ICE_ULT_ROW = KEY8_SKILLS.find((s) => s.id === ICE_ULT_ID)!;
+/** A short note at the top of the view when Y toggles the Ice ultimate. */
+function iceUltNote(text: string): void {
+  let el = document.getElementById("ice-ult-note");
+  if (el === null) {
+    el = document.createElement("div");
+    el.id = "ice-ult-note";
+    el.style.cssText = "position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:30;padding:6px 14px;border-radius:8px;background:rgba(8,14,24,.82);color:#dff3ff;font:600 15px system-ui;pointer-events:none;transition:opacity .4s";
+    document.body.append(el);
+  }
+  el.textContent = text;
+  el.style.opacity = "1";
+  window.setTimeout(() => { if (el !== null && el.textContent === text) el.style.opacity = "0"; }, 2200);
+}
+const ICE_RIM = 0x9fd8ff;
+const iceUlt = new IceUltLayered(view.layers.fx, VFX_BASE, {
+  targets: herd,
+  hand: (out) => caster.hand(out),
+  caster: (out) => out.set(caster.x, 0, caster.z),
+  release(at, firstS) {
+    clipSkillNow = ICE_ULT_ROW;
+    sound.preDuck(firstS, "ult");
+    caster.release("k8");
+    emitRelease("k8", at.x, at.z);
+    sound.playFirefly("tt-sfx-ult-ice-silence/take1.wav", "ult");
+  },
+  freeze(i, seconds) {
+    herd.status(i, "frozen", seconds, ICE_RIM);
+    herd.holdBeast(i, seconds);
+  },
+  blow(i, dx, dz, power, role) {
+    clipSkillNow = ICE_ULT_ROW;
+    clipRgb = ICE_RIM;
+    const killed = herd.hit(i, dx, dz, power, ICE_RIM);
+    clipDeath = true;
+    emitImpact("k8", i, dx, dz, power, role, killed, ICE_RIM);
+    clipDeath = false;
+    return killed;
+  },
+  strike(at, role) {
+    clipSkillNow = ICE_ULT_ROW;
+    screen.impact("ultimate", role);
+    kick.impulse(5 * KICK_M_PER_PX, 0, -1);
+    lights.flash(clipTmp.set(at.x, 1.5, at.z), view.camera.position, "#e8f6ff", 9, true);
+  },
+  cold(k) {
+    screen.holdDark(0.22 * k, 0.35 * k);
+    if (k >= 0.999) lights.flash(clipTmp.set(caster.x, 2, caster.z - 4), view.camera.position, "#8fcfff", 7, true);
+  },
+  upload: (t) => view.stage.renderer.initTexture(t),
+}, iceUltLayeredDefault(location.search));
+const WOOD_ULT_ROW = KEY8_SKILLS.find(s => s.id === WOOD_ULT_ID)!;
+const WOOD_RIM = 0x9edb80;
+const woodUlt = new WoodUltLayered(view.layers.fx, VFX_BASE, {
+  targets: herd,
+  hand: out => caster.hand(out),
+  caster: out => out.set(caster.x, 0, caster.z),
+  release(at, firstS) {
+    clipSkillNow = WOOD_ULT_ROW; sound.preDuck(firstS, "ult");
+    caster.release("k8"); emitRelease("k8", at.x, at.z);
+  },
+  bind(i, seconds) { herd.holdBeast(i, seconds); },
+  blow(i, dx, dz, power, role) {
+    clipSkillNow = WOOD_ULT_ROW; clipRgb = WOOD_RIM;
+    const killed = herd.hit(i, dx, dz, power, WOOD_RIM);
+    clipDeath = true; emitImpact("k8", i, dx, dz, power, role, killed, WOOD_RIM); clipDeath = false;
+    return killed;
+  },
+  strike(at, role) {
+    screen.impact("ultimate", role); kick.impulse(5 * KICK_M_PER_PX, 0, -1);
+    lights.flash(clipTmp.set(at.x, 1.5, at.z), view.camera.position, "#c4eda2", 7, true);
+  },
+  upload: t => view.stage.renderer.initTexture(t),
+  sound: woodUltSound(sound),
+});
+woodUlt.layered = params.get("ultWood") !== "video";
+const METAL_ULT_ROW = KEY8_SKILLS.find(s => s.id === METAL_ULT_ID)!;
+const METAL_RIM = 0xe3c57a;
+const metalUlt = new MetalUltLayered(view.layers.fx, VFX_BASE, {
+  targets: herd,
+  hand: out => caster.hand(out),
+  caster: out => out.set(caster.x, 0, caster.z),
+  release(at, firstS) {
+    clipSkillNow = METAL_ULT_ROW; sound.preDuck(firstS, "ult");
+    caster.release("k8"); emitRelease("k8", at.x, at.z);
+  },
+  bind(i, seconds) { herd.holdBeast(i, seconds); },
+  blow(i, dx, dz, power, role) {
+    clipSkillNow = METAL_ULT_ROW; clipRgb = METAL_RIM;
+    const killed = herd.hit(i, dx, dz, power, METAL_RIM);
+    clipDeath = true; emitImpact("k8", i, dx, dz, power, role, killed, METAL_RIM); clipDeath = false;
+    return killed;
+  },
+  strike(at, role) {
+    screen.impact("ultimate", role); kick.impulse(5 * KICK_M_PER_PX, 0, -1);
+  },
+  upload: t => view.stage.renderer.initTexture(t),
+  sound: metalUltSound(sound),
+});
+metalUlt.layered = params.get("ultMetal") !== "video";
+const VOID_ULT_ROW = KEY8_SKILLS.find(s => s.id === VOID_ULT_ID)!;
+const VOID_RIM = 0xb497e8;
+const voidUlt = new VoidUltLayered(view.layers.fx, VFX_BASE, {
+  targets: herd,
+  hand: out => caster.hand(out),
+  caster: out => out.set(caster.x, 0, caster.z),
+  release(at, firstS) {
+    clipSkillNow = VOID_ULT_ROW; sound.preDuck(firstS, "ult");
+    caster.release("k8"); emitRelease("k8", at.x, at.z);
+  },
+  bind(i, seconds) { herd.holdBeast(i, seconds); },
+  blow(i, dx, dz, power, role) {
+    clipSkillNow = VOID_ULT_ROW; clipRgb = VOID_RIM;
+    const killed = herd.hit(i, dx, dz, power, VOID_RIM);
+    clipDeath = true; emitImpact("k8", i, dx, dz, power, role, killed, VOID_RIM); clipDeath = false;
+    return killed;
+  },
+  strike(at, role) {
+    screen.impact("ultimate", role); kick.impulse(5 * KICK_M_PER_PX, 0, -1);
+  },
+  upload: t => view.stage.renderer.initTexture(t),
+  sound: voidUltSound(sound),
+});
+voidUlt.layered = params.get("ultVoid") !== "video";
+// Ticket 447: opt-in replacement ahead of both retained Void branches.
+const blackhole = params.get("blackhole") === "1" ? new VoidBlackhole(view.layers.fx, VFX_BASE, {
+  targets: herd, camera: view.camera, sound,
+  release(at) { clipSkillNow = VOID_ULT_ROW; caster.release("k8"); emitRelease("k8", at.x, at.z); },
+  pull(x, z, radius, seconds) { herd.pull(x, z, radius, seconds); },
+  consume(i) { herd.hitFromSim(i, 0, 0, 1, 0xd7a957, 0); herd.dieOver(i, .12); },
+  upload(t) { view.stage.renderer.initTexture(t); },
+}) : null;
+if (blackhole !== null) void blackhole.prepare();
+// Ticket 434: key 8's Thunder uses component art and nearest-neighbour arcs; ?thunderUlt=old keeps the scene clip.
+const THUNDER_ULT_ROW = KEY8_SKILLS.find(s => s.id === THUNDER_ULT_ID)!;
+const thunderChainOn = thunderUltChainDefault(location.search);
+const thunderChainTakes = {
+  gather: { file: "tt-sfx-ult-thunder-edict/take1.wav", target: -24, end: 0.42, fade: 0.18 },
+  jump: { file: "tt-sfx-pillar-thunder/take1.wav", target: -26, end: 0.11, fade: 0.1 },
+  climax: { file: "tt-sfx-pillar-thunder/take1.wav", target: -15, end: 0.7, fade: 0.4 },
+  tail: { file: "tt-sfx-ult-thunder-edict/take1.wav", target: -30, end: 0.4, fade: 0.3 },
+} satisfies Record<ThunderChainSound, { file: string; target: number; end: number; fade: number }>;
+const thunderChainAudio = Object.fromEntries(Object.entries(thunderChainTakes).map(([event, row]) => [event,
+  { file: row.file, gain: fireflyGain(row.file, row.target, "world"), onset: 0, fade: [row.end, row.fade] as const },
+])) as Record<ThunderChainSound, import("./sound").FireflyTake>;
+sound.registerTakes(Object.values(thunderChainAudio));
+const thunderUlt = new ThunderUltChain(view.layers.fx, VFX_BASE, {
+  targets: herd, camera: view.camera,
+  caster: out => out.set(caster.x, 0, caster.z), hand: out => caster.hand(out),
+  release(at) {
+    clipSkillNow = THUNDER_ULT_ROW; caster.release("k8"); emitRelease("k8", at.x, at.z);
+  },
+  stun(i, seconds, dx, dz) {
+    herd.holdBeast(i, seconds); herd.status(i, "shocked", seconds, 0xc2a5ed);
+    herd.thunderImpact(i, dx, dz); thunderBodyDirty = true;
+  },
+  blow(i, dx, dz, power, role) {
+    clipSkillNow = THUNDER_ULT_ROW; clipRgb = 0xc2a5ed;
+    const killed = herd.hit(i, dx, dz, power, clipRgb);
+    clipDeath = true; emitImpact("k8", i, dx, dz, power, role, killed, clipRgb); clipDeath = false;
+    return killed;
+  },
+  strike(at) {
+    screen.shake(2, 0.16, 0.1); screen.warm(0.12, 0.06);
+    lights.flash(clipTmp.set(at.x, 1.5, at.z), view.camera.position, "#c2a5ed", 5, true);
+  },
+  sound(event, at) {
+    if (event === "gather") sound.preDuck(0.6, "ult");
+    sound.playTake(thunderChainAudio[event], { bus: "world", send: event === "climax" ? 0.35 : 0.15,
+      group: event === "climax" ? "big" : "impact", pan: THREE.MathUtils.clamp(at.x / 22, -1, 1) });
+  },
+  upload: t => view.stage.renderer.initTexture(t),
+}, location.search);
+// Ticket 439: held lens, world-space light fan, one focused finisher; existing sound only.
+const lightTakes = {
+  gather: { file: "tt-sfx-ult-light/take1.wav", gain: fireflyGain("tt-sfx-ult-light/take1.wav", -28, "world"), onset: 0, fade: [0.4, 0.2] as const },
+  release: { file: "tt-sfx-ult-light/take1.wav", gain: fireflyGain("tt-sfx-ult-light/take1.wav", -22, "world"), onset: 0.5, fade: [1.3, 0.3] as const },
+  focus: { file: "tt-sfx-ult-light/take1.wav", gain: fireflyGain("tt-sfx-ult-light/take1.wav", -16, "world"), onset: 1.4, fade: [2.2, 0.6] as const },
+} satisfies Record<LightSound, import("./sound").FireflyTake>;
+sound.registerTakes(Object.values(lightTakes));
+const lightUlt = new LightUltFan(view.layers.fx, VFX_BASE, {
+  camera: view.camera, targets: herd, caster: () => caster,
+  release(at) { caster.release("k8"); emitRelease("k8", at.x, at.z); },
+  hit(i, dx, dz, final) { herd.hit(i, dx, dz, final ? 0.8 : 0.13, 0xffd88b); herd.holdBeast(i, final ? 0.45 : 0.12); },
+  focus(at) { screen.shake(1.2, 0.13, 0.08); lights.flash(clipTmp.set(at.x, 1.2, at.z), view.camera.position, "#ffe1a0", 2, true); },
+  sound(event, at, delay) { sound.playTake(lightTakes[event], { delay, bus: "world", send: 0.18, group: event === "focus" ? "big" : "impact", pan: THREE.MathUtils.clamp(at.x / 22, -1, 1) }); },
+  upload: t => view.stage.renderer.initTexture(t),
+});
+// 454: the existing ult-star row now dispatches the component recipe. F is its direct lab key.
+const STAR_ULT_ROW = KEY8_SKILLS.find(s => s.id === STAR_ULT_ID)!;
+const starUlt = new StarUltLayered(view.layers.fx, VFX_BASE, {
+  camera: view.camera, targets: herd,
+  hand: out => caster.hand(out), caster: out => out.set(caster.x, 0, caster.z),
+  anticipate(progress) { caster.charge("k5", progress, 0, -9, Math.max(1, Math.ceil((1-progress)*4))); },
+  release(at, firstS) { clipSkillNow = STAR_ULT_ROW; sound.preDuck(firstS, "ult"); caster.release("k5"); emitRelease("k8", at.x, at.z); },
+  bind(i, seconds) { herd.holdBeast(i, seconds); },
+  blow(i, dx, dz, power, role) {
+    clipSkillNow = STAR_ULT_ROW; clipRgb = 0xe9ce90;
+    const killed = herd.hit(i, dx, dz, power, clipRgb);
+    clipDeath = true; emitImpact("k8", i, dx, dz, power, role, killed, clipRgb); clipDeath = false;
+    return killed;
+  },
+  strike() { screen.hitStop(60); screen.shake(2, .25, .1); kick.impulse(3 * KICK_M_PER_PX, 0, -1); },
+  upload: t => view.stage.renderer.initTexture(t), sound: starUltSound(sound),
+});
 // Key C: the typing-sustained channel (canon D61, channel-skill.ts) in the element E has on; every word feeds it.
 const channelAt = new THREE.Vector3();
 const channel = new ChannelSkill({
@@ -1277,7 +1532,7 @@ function placeTags(): void {
     return;
   }
   // The mask's share: the lab's, or less while a skill whose peak still drowns a tag plays (ClipSkill.tagKeep, key M).
-  tagMask.keep = tagMaskOn ? Math.min(tagKeepBase, clipSkills.tagKeep(), clipSkills9.tagKeep(), meteor.active || crescentTagLeft > 0 ? METEOR_TAG_KEEP : 1) : 1;
+  tagMask.keep = tagMaskOn ? Math.min(tagKeepBase, clipSkills.tagKeep(), clipSkills9.tagKeep(), thunderUlt.active ? 0.12 : 1, woodUlt.active ? 0.12 : 1, metalUlt.active ? 0.12 : 1, voidUlt.active ? 0.12 : 1, meteor.active || crescentTagLeft > 0 ? METEOR_TAG_KEEP : 1) : 1;
   view.camera.updateMatrixWorld();
   tagHost.count = herd.size;
   const boxes = wordTags.update(tagHost, innerWidth, innerHeight);
@@ -1486,6 +1741,100 @@ function fiveSet(): { five: FivePhase; crescent: CrescentSample } | null {
   }
   return f;
 }
+// Key G: Ngũ Lôi Oanh Đỉnh (five-thunder.ts; docs/work/tasks/five-thunder-lab.md), the thunder direction of 11/11, on
+// the lab's herd, caster, screen and sound, in any element (its own ivory stills).
+const thunderAt = new THREE.Vector3();
+const THUNDER_RGB = 0xfff0cf;
+const THUNDER_TAKE = { file: "tt-sfx-pillar-thunder/take1.wav", gain: fireflyGain("tt-sfx-pillar-thunder/take1.wav", -11.5, "world"), onset: 0 } as const;
+const fiveThunder = new FiveThunder({
+  layer: view.layers.fx,
+  camera: view.camera,
+  inCircle: (x, z, r, out) => herd.inCircle(x, z, r, out),
+  x: (i) => herd.x(i),
+  z: (i) => herd.z(i),
+  blow(i, dx, dz, power, role) {
+    // The struck beast flashes for 4 frames.
+    const killed = herd.hit(i, dx, dz, power, THUNDER_RGB, 4 / 60);
+    // A beast killed by lightning fades over 0.4 s (the ticket), under its arcs, ash and dust.
+    if (killed) herd.dieOver(i, 0.4);
+    emitImpact("kg", i, dx, dz, power, role, killed, THUNDER_RGB);
+    return killed;
+  },
+  status: (i, seconds) => herd.status(i, "shocked", seconds, THUNDER_RGB),
+  size: (i) => herd.radius(i),
+  shove: (i, dx, dz, metres) => herd.shove(i, dx, dz, metres),
+  strike(at, joltPx, joltS, stopMs, flash, light) {
+    if (stopMs > 0) screen.hitStop(stopMs);
+    if (joltPx > 0) screen.jolt(joltPx, joltS, stopMs > 0 ? SCREEN_TIERS.ultimate.rollDeg : 0);
+    // The ivory flash for two frames, whole on the landing frame (screen.warm carries the element's accent).
+    if (flash > 0) { thunderTint(true); screen.warm(flash, 0.05); }
+    lights.flash(thunderAt.set(at.x, 1.2, at.z), view.camera.position, "#fff0d8", light, true);
+  },
+  sound: (rate, gain) => { sound.playTake(THUNDER_TAKE, { bus: "world", send: 0.35, rate, gain }); },
+  glow: (k) => caster.glow(THUNDER_RGB, k),
+  hand: (out) => caster.hand(out),
+  dark: (k) => { if (!ultDark && !myriad.running) screen.holdDark(k, k * 0.5); },
+  reduced: resolveReducedMotion("system", typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches, params.get("motion")),
+  // Quy Nhất's one accent: key 8's Thunder Pillar (its cleaned video, else its atlas) scaled up on the centre.
+  pillar: (at, scale, lifeS) => { showcase.play("pillar-thunder-single", { at, scale, life: lifeS, feel: false, quiet: true, footFade: true, soundClass: "heavy" }); },
+  alive: (i) => herd.alive(i),
+});
+// Ngũ Lôi's finisher: Quy Nhất (owner 15/11), or round 37's eight runs with ?finisher=eight.
+if (params.get("finisher") === "eight") fiveThunder.finisher = "eightRuns";
+/** Energy dragons along curves (dragon-path.ts; key J cycles the four sample paths, Shift+J clears). View only. */
+const dragons = new DragonPaths(view.layers.fx, view.camera, "/art-src/lab/firefly-sprint-2026-11-05/stills/skills/");
+/** How many dragons each sample path shows by default. */
+const DRAGON_COUNT: Record<DragonPattern, number> = { around: 2, dash: 3, radial: 8, spiral: 3 };
+/** The live beasts' middle on the ground (the dash's target, the radial's centre). */
+function herdMiddle(): [number, number] {
+  let x = 0;
+  let z = 0;
+  let n = 0;
+  for (let i = 0; i < herd.size; i += 1) {
+    if (!herd.alive(i)) continue;
+    x += herd.x(i);
+    z += herd.z(i);
+    n += 1;
+  }
+  return n > 0 ? [x / n, z / n] : [0, -13];
+}
+function startDragons(pattern: DragonPattern, count = DRAGON_COUNT[pattern]): void {
+  const [tx, tz] = herdMiddle();
+  dragons.start(pattern, count, caster.x, caster.z, tx, tz);
+}
+/** The element's screen accent as last set (key G borrows the whole-frame flash in its own ivory, then gives it back). */
+let kitWarm: readonly number[] | null = null;
+let kitFrames: Parameters<typeof screen.setAccent>[1] = null;
+let thunderTinted = false;
+/** Key G's whole-frame flash: warm ivory (canon D65, the platinum set) gain per channel at full strength (the element's own is violet for Thunder, none for Metal). */
+const THUNDER_WARM = [0.56, 0.5, 0.36] as const;
+function thunderTint(on: boolean): void {
+  if (on === thunderTinted) return;
+  thunderTinted = on;
+  screen.setAccent(on ? THUNDER_WARM : kitWarm, kitFrames);
+}
+/** The thunder's centre: the densest group of beasts (within 4 m), else the field's middle. */
+function thunderCentre(): [number, number] {
+  let best = -1;
+  let most = 0;
+  for (let i = 0; i < herd.size; i += 1) {
+    if (!herd.alive(i) || herd.isHero(i)) continue;
+    const n = herd.inCircle(herd.x(i), herd.z(i), 4, thunderNear);
+    if (n > most) { most = n; best = i; }
+  }
+  return best < 0 ? [0, -8] : [herd.x(best), herd.z(best)];
+}
+const thunderNear = new Int32Array(256);
+function castFiveThunder(seed = 1111): void {
+  if (cutin.active) return;
+  const [cx, cz] = thunderCentre();
+  probe.lastKey("kg");
+  screen.cut();
+  caster.face(cx - caster.x, cz - caster.z);
+  caster.release("k1", cx, cz);
+  emitRelease("kg", cx, cz);
+  fiveThunder.cast(cx, cz, seed);
+}
 /** Key 2's sample: the crescent off the sword at the key 2 target (the release on this frame). */
 function castCrescentSample(): void {
   const f = fiveSet();
@@ -1541,7 +1890,10 @@ async function setElement(id: string): Promise<boolean> {
   // The screen accent, the herd's hit silhouette and the hero victims' plants follow the element (Metal: their own).
   const flash = kit.screen.flash;
   // A frame palette with its own roles is another program: compile it now, not on the first blow.
-  if (screen.setAccent(flash === null ? null : [flash.tint[0] * flash.strength, flash.tint[1] * flash.strength, flash.tint[2] * flash.strength], kit.screen.frames ?? null)) screen.prewarm(view.stage.renderer);
+  kitWarm = flash === null ? null : [flash.tint[0] * flash.strength, flash.tint[1] * flash.strength, flash.tint[2] * flash.strength];
+  kitFrames = kit.screen.frames ?? null;
+  thunderTinted = false;
+  if (screen.setAccent(kitWarm, kitFrames)) screen.prewarm(view.stage.renderer);
   const metal = kit.attach === undefined;
   const t = myriad.tone;
   // A hit carries the attacker's colour and a kill burns away in it when the element says so (Fire, round 3: its
@@ -1655,6 +2007,54 @@ const TARGET: Record<SwordSlot, [number, number]> = { auto: [0, -8], k1: [0, -8]
  */
 let typedMode = params.get("typed") === "1";
 
+/** Key 8: component recipes, including Thunder's chain; otherwise the retained scene-video runner. */
+function castKey8(id?: string): string | null {
+  blackhole?.clear();
+  const pick = id ?? clipSkills.selectedId();
+  starUlt.clear();
+  if (pick === STAR_ULT_ID) {
+    clipSkills.select(pick); clipSkills.clear(); lightUlt.clear(); thunderUlt.clear(); iceUlt.clear(); woodUlt.clear(); metalUlt.clear(); voidUlt.clear();
+    starUlt.cast(); return pick;
+  }
+  lightUlt.clear();
+  if (pick === LIGHT_ULT_ID) {
+    clipSkills.select(pick); clipSkills.clear(); thunderUlt.clear(); iceUlt.clear(); woodUlt.clear(); metalUlt.clear(); voidUlt.clear();
+    lightUlt.cast(); return pick;
+  }
+  thunderUlt.clear();
+  if (pick === THUNDER_ULT_ID && thunderChainOn) {
+    clipSkills.select(pick); clipSkills.clear(); iceUlt.clear(); woodUlt.clear(); metalUlt.clear(); voidUlt.clear();
+    thunderUlt.cast();
+    return pick;
+  }
+  if (pick === VOID_ULT_ID) {
+    clipSkills.select(pick); clipSkills.clear(); iceUlt.clear(); woodUlt.clear(); metalUlt.clear(); voidUlt.clear();
+    if (blackhole !== null) { blackhole.cast(); return pick; }
+    if (!voidUlt.layered) return castClip8(pick);
+    voidUlt.cast();
+    return pick;
+  }
+  voidUlt.clear();
+  if (pick === METAL_ULT_ID) {
+    clipSkills.select(pick); clipSkills.clear(); iceUlt.clear(); woodUlt.clear(); metalUlt.clear();
+    if (!metalUlt.layered) return castClip8(pick);
+    metalUlt.cast();
+    return pick;
+  }
+  metalUlt.clear();
+  if (pick === WOOD_ULT_ID && woodUlt.layered) {
+    clipSkills.select(pick); clipSkills.clear(); iceUlt.clear();
+    woodUlt.cast();
+    return pick;
+  }
+  woodUlt.clear();
+  if (pick === ICE_ULT_ID && iceUlt.layered) {
+    clipSkills.select(pick);
+    iceUlt.cast();
+    return pick;
+  }
+  return castClip8(id);
+}
 /** The Thunder Pillar lab word uses the existing WPM/letter clock. */
 function castClip8(id?: string): string | null {
   const pick = id ?? clipSkills.selectedId();
@@ -1844,6 +2244,8 @@ function updateTyping(dt: number): void {
 }
 
 function reset(): void {
+  animR1?.reset();
+  animR4?.reset();
   typing = null;
   chargeFill.clear();
   greybox?.reset();
@@ -1864,10 +2266,22 @@ function reset(): void {
   victims.reset();
   compiler.reset();
   numbers.clear();
+  thunderCompiler.reset();
+  thunderNumbers.clear();
   myriad.reset();
   clipSkills.clear();
   clipSkills9.clear();
+  starUlt.clear();
+  lightUlt.clear();
+  thunderUlt.clear();
+  iceUlt.clear();
+  woodUlt.clear();
+  metalUlt.clear();
+  voidUlt.clear();
+  blackhole?.clear();
   meteor.reset();
+  fiveThunder.reset();
+  thunderTint(false);
   for (const f of fives.values()) {
     f.five.reset();
     f.crescent.reset();
@@ -1904,6 +2318,11 @@ function refreshClipSlots(): void {
   const id8 = clipSkills.selectedId();
   const id9 = clipSkills9.selectedId();
   if (id8 === "pillar-thunder-single") thunderFive.prepare();
+  if (id8 === THUNDER_ULT_ID && thunderChainOn) void thunderUlt.prepare();
+  if (id8 === WOOD_ULT_ID) woodUlt.prepare();
+  if (id8 === STAR_ULT_ID) void starUlt.prepare();
+  if (id8 === METAL_ULT_ID) metalUlt.prepare();
+  if (id8 === VOID_ULT_ID) voidUlt.prepare();
   // Selection/list changes only: Showcase.current() sorts a new list, so keep it out of the frame loop.
   heroPresencePose.ultimateReady = heroUltimateReady(id8 === null ? undefined : clipSkills.skill(id8)?.damage, id9 === null ? undefined : clipSkills9.skill(id9)?.damage);
   if (bar === null) return;
@@ -1920,11 +2339,31 @@ showcase.onList(refreshClipSlots);
 expansion.onList(refreshClipSlots);
 refreshClipSlots();
 
+// Ticket 438: a URL-gated cloud sample, separate from every thunder skill.
+const cloudLab438 = installCloudVolumeLab({
+  scene: view.scene, parent: view.layers.fx, renderer: view.stage.renderer, camera: view.camera,
+  time: () => labTime,
+  view: mode => { customCamera = false; if (freeOrbit.enabled) freeOrbit.toggle(); zoom.set(0); camModes.set(mode); },
+  foes: () => { let n = 0; for (let i = 0; i < herd.size; i++) if (herd.alive(i)) n++; return n; },
+}, params);
 const KEYS: Record<string, LabSlot> = { "0": "auto", "1": "k1", "2": "k2", "3": "guard", "4": "dash", "5": "k4", "6": "k5", "7": "k7" };
 window.addEventListener("keydown", (e) => {
   // Keys typed into the panel (the WPM field, the sword list's type-ahead) are not lab hotkeys.
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.target instanceof HTMLElement && (e.target.isContentEditable || e.target instanceof HTMLTextAreaElement)) return;
+  if (cloudLab438?.key(e)) return;
+  if (animR4?.key(e)) return;
+  if (animR1?.key(e)) {
+    if (e.key.length === 1 && !e.repeat && !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey) sound.key("key");
+    return;
+  }
   lastKeyStamp = e.timeStamp;
+  // Alt+1/2/3/4: the views (1–7 are the skill keys).
+  if (e.altKey && /^Digit[1-4]$/.test(e.code)) {
+    camModes.set(VIEW_MODES[Number(e.code.slice(5)) - 1]!);
+    e.preventDefault();
+    return;
+  }
   if (!e.ctrlKey && !e.metaKey && (e.key.length === 1 || e.key === "Backspace" || e.key === "Enter")) heroPresence.typed();
   // Every typed key clicks (Typing Feel), on its own bus: no skill, hush or pre-duck ever takes it down.
   if (e.key.length === 1 && !e.repeat && !e.ctrlKey && !e.metaKey) sound.key(e.key === " " ? "space" : "key");
@@ -1938,7 +2377,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Digit8" || e.key === "8" || e.key === "*") {
     if (e.shiftKey || e.key === "*") clipSkills.selectNext();
     else {
-      castClip8();
+      castKey8();
       bar?.flash("8");
     }
     refreshClipSlots();
@@ -1951,6 +2390,15 @@ window.addEventListener("keydown", (e) => {
       bar?.flash("9");
     }
     refreshClipSlots();
+  }
+  else if (e.code === "KeyF") { castKey8(STAR_ULT_ID); refreshClipSlots(); }
+  // G: Ngũ Lôi Oanh Đỉnh on the densest group of beasts (five-thunder.ts).
+  else if (e.key === "g" || e.key === "G") { castFiveThunder(); bar?.flash("G"); }
+
+  else if (e.key === "j" || e.key === "J") {
+    // J: the next sample path of the energy dragons; Shift+J: clear.
+    if (e.shiftKey) dragons.clear();
+    else startDragons(DRAGON_PATTERNS[(DRAGON_PATTERNS.indexOf(dragons.pattern ?? "spiral") + 1) % DRAGON_PATTERNS.length]!);
   }
   // M the slanted meteor rain in the element on (E).
   else if (e.key === "m" || e.key === "M") type("km");
@@ -1972,6 +2420,27 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "b" || e.key === "B") enemyShot();
   else if (e.key === "r" || e.key === "R") reset();
   else if (e.key === "w" || e.key === "W") { sound.uiCue("confirm"); cycleWeapon(); }
+  // Y toggles the selected Ice/Void/Metal/Wood recipe. P plays the old Metal video; U plays old Wood.
+  else if (e.key === "y" || e.key === "Y") {
+    const recipe = clipSkills.selectedId() === VOID_ULT_ID ? voidUlt : clipSkills.selectedId() === METAL_ULT_ID ? metalUlt : clipSkills.selectedId() === WOOD_ULT_ID ? woodUlt : iceUlt;
+    recipe.layered = !recipe.layered;
+    recipe.clear(); clipSkills.clear();
+    sound.uiCue("confirm");
+    const element = recipe === voidUlt ? "Void" : recipe === metalUlt ? "Metal" : recipe === woodUlt ? "Wood" : "Ice";
+    iceUltNote(`${element} ultimate: ${recipe.layered ? "LAYERED (components on the real field)" : "OLD scene video"}`);
+  }
+  else if (e.key === "p" || e.key === "P") {
+    voidUlt.clear(); metalUlt.clear(); woodUlt.clear(); iceUlt.clear(); clipSkills.clear();
+    showcase.videos = true;
+    clipSkills.cast(METAL_ULT_ID); refreshClipSlots();
+    iceUltNote("Metal ultimate: OLD scene video · 8: selected version · Y: toggle version · P: old video");
+  }
+  else if (e.key === "u" || e.key === "U") {
+    voidUlt.clear(); metalUlt.clear(); woodUlt.clear(); iceUlt.clear(); clipSkills.clear();
+    showcase.videos = true;
+    clipSkills.cast(WOOD_ULT_ID); refreshClipSlots();
+    iceUltNote("Wood ultimate: OLD scene video · 8: selected version · Y: toggle version");
+  }
   else if (e.key === "e" || e.key === "E") { sound.uiCue("confirm"); cycleElement(); }
   else if (e.key === "=" || e.key === "+") zoom.zoomIn();
   else if (e.key === "-" || e.key === "_") zoom.zoomOut();
@@ -1998,6 +2467,19 @@ window.addEventListener(
 
 // Panel.
 if (params.get("ui") !== "0" && AB_SCENE === null) {
+  // The view switch (top right).
+  const views = document.createElement("div");
+  views.style.cssText = "position:fixed;right:12px;top:12px;z-index:10;display:flex;gap:4px;font:12px system-ui";
+  for (const m of VIEW_MODES) {
+    const b = document.createElement("button");
+    b.textContent = VIEW_LABELS[m];
+    b.title = "Alt+" + (VIEW_MODES.indexOf(m) + 1);
+    b.style.cssText = "padding:4px 8px;border-radius:6px;border:1px solid #556;background:#1c2230;color:#e6e9ef;cursor:pointer";
+    b.addEventListener("click", () => camModes.set(m));
+    views.append(b);
+  }
+  // Round 38: Five Thunders' colour switch (also key U).
+  document.body.append(views);
   const panel = document.createElement("div");
   panel.style.cssText = "position:fixed;left:12px;top:12px;z-index:10;width:240px;max-height:calc(100vh - 24px);overflow-y:auto;display:flex;flex-direction:column;gap:4px;font:12px system-ui;color:#e6e9ef";
   panel.dataset.labPanel = "1";
@@ -2035,6 +2517,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     ["8", "Tung cột trụ hoặc tuyệt kỹ đang chọn lên bầy quái (Shift+8 chọn mục kế; không hồi chiêu) · Pillars and ultimates"],
     ["9", "Tung kỹ năng mới đang chọn (diện rộng, thần thú…; mục chưa có thông số chỉ phát video; Shift+9 chọn mục kế) · Skills expansion"],
     ["M", "Mưa sao băng nghiêng theo hệ đang chọn (E): ấn đánh dấu, rơi chéo 20°, đất cháy sau đòn · Slanted meteor rain"],
+    ["G", "Ngũ Lôi Oanh Đỉnh: xoáy mây tụ lực trên vùng đánh, 12–20 tia sét dồn dập, đòn kết năm tia, đất nứt cháy đen · Five Thunders Smite the Crown"],
     ["K", "Bộ đếm chuỗi từ (góc trên trái): K là một từ sạch (Chớp), Shift+K là từ Ẩu, đứt chuỗi; mọi từ của phím 0–7 cũng đếm · Word streak"],
     ["C", "Chiêu duy trì: C mở luồng vào con gần nhất, mỗi từ gõ xong (phím 0–7 hoặc C) nuôi luồng; Shift+C là từ Ẩu, đứt luồng; dừng quá 2,5 s cũng đứt · Channel"],
     ["B", "Enemy blow (test the guard)"],
@@ -2046,6 +2529,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     ["A", "Sword aura on / off"],
     ["T", "Word tags over the herd on / off (readability check; skills dim only behind them)"],
     ["I", "Icon style: ink-gold / jewel-crest"],
+    ["P", "Metal ultimate: play the old scene video for comparison"],
     ["H", "Panel: collapse / expand"],
   ];
   if (simSwarm) names[2] = ["2", "Twin Dragons, One Burning Pearl · real swarm sim (" + quality + ")"];
@@ -2065,6 +2549,7 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
     "8": "Pillars & ultimates",
     "9": "Skills expansion",
     M: "Meteor rain",
+    G: "Five Thunders",
     K: "Word streak",
     C: "Channel",
     B: "Enemy blow",
@@ -2207,10 +2692,13 @@ if (params.get("ui") !== "0" && AB_SCENE === null) {
   };
   showcaseList("Kỹ năng (8)", showcase, "— chọn cột trụ hoặc tuyệt kỹ để tung —", { pillar: "Cột trụ", ultimate: "Tuyệt kỹ" }, {
     cast: (id) => {
-      castClip8(id);
+      castKey8(id);
       refreshClipSlots();
     },
     detail: (id) => {
+      if (id === VOID_ULT_ID) return "30 m rift wave · 3 s bind · Y: layered/video";
+      if (id === METAL_ULT_ID) return "30 m sword wave · 3 s bind · Y: layered/video · P: old video";
+      if (id === WOOD_ULT_ID) return "30 m root wave · 3 s bind · Y: layered/video · U: old video";
       const sk = clipSkills.skill(id);
       return sk !== undefined ? describeClipSkill(sk) : undefined;
     },
@@ -2281,6 +2769,9 @@ function updateFive(world: number): void {
     g.crescent.update(world);
     g.five.update(world);
   }
+  fiveThunder.update(world);
+  dragons.update(world);
+  if (thunderTinted && !fiveThunder.active) thunderTint(false);
 }
 
 // Loop.
@@ -2311,6 +2802,8 @@ function frame(dt: number): void {
   herd.update(world);
   if (qiSwarm !== null) { qiSwarm.advance(world); sound.swarmFrame(qiPresenter!.timeline.slots, qiSwarm.world.tick - 1); herd.update(0); }
   caster.update(world);
+  animR1?.afterBody(world > 0);
+  animR4?.afterBody(world);
   flushTyping();
   // The real dt too: timelines on sim ticks (the K4 beats) do not slow in a hit-stop.
   stage.begin();
@@ -2319,8 +2812,16 @@ function frame(dt: number): void {
   myriad.update(world);
   clipSkills.update(world);
   clipSkills9.update(world);
+  thunderUlt.update(world);
+  starUlt.update(world);
+  lightUlt.update(world);
   // The herd was drawn before clip dispatch: flush all new thunder poses together on H0, without ageing them.
   if (thunderBodyDirty) { herd.update(0); thunderBodyDirty = false; }
+  iceUlt.update(world);
+  woodUlt.update(world);
+  metalUlt.update(world);
+  voidUlt.update(world);
+  blackhole?.update(world);
   meteor.update(world);
   ab?.update(dt);
   channel.update(world);
@@ -2348,6 +2849,8 @@ function frame(dt: number): void {
   // Numbers are UI: they compile and float on real time (through a hit-stop or the cut-in).
   compiler.update(dt);
   numbers.update(dt);
+  thunderCompiler.update(dt);
+  thunderNumbers.update(dt);
   sound.update(dt);
   enemyBolt.update(world);
   // Camera kick (a damped spring along the blow) and shake (strikes), in metres, on real time: they play through a hit-stop.
@@ -2360,8 +2863,16 @@ function frame(dt: number): void {
     zoom.update(view.camera, view.fit, 0, caster.x, caster.z, dt);
     // O: re-aim the zoom's pose round the field before the kick and the shake are added on top (owner preview, 03/11).
     freeOrbit.apply(view.camera, dt);
+    camModes.apply(view.camera, caster.x, caster.z, 0, ROAD_Z, dt);
     camBase.copy(view.camera.position);
   } else if (camBase.lengthSq() === 0) camBase.copy(view.camera.position);
+  {
+    // The view's effect profile (view only): the thunder's flat cards tipped toward the camera, its upright ones
+    // bigger; a thin rim on bosses and elites.
+    const pf = camModes.profile;
+    fiveThunder.setView(pf.flatLiftM, pf.flatTilt, pf.uprightK, camModes.toCam.x, camModes.toCam.y);
+    herd.tierRim = pf.tierRim;
+  }
   kick.update(dt);
   screen.update(dt, view.camera);
   lights.update(dt);
@@ -2385,8 +2896,10 @@ function frame(dt: number): void {
   thunderFive.aftermathR2?.present();
   chargeFill.update(dt, chargeFillPose);
   ambient.update(dt);
+  animR1?.beforeDraw();
   placeTags();
   view.render(dt);
+  animR1?.afterDraw();
   greybox?.afterRender();
   // After the draw: world matrices are fresh and the probe reads what was shown.
   if (probeOn) {
@@ -2527,6 +3040,12 @@ declare global {
        */
       clip(folder: string, id: string, x: number, y: number, z: number, sizeM: number, mode?: FlipbookMode): Promise<boolean>;
       /** "play" (the game's fixed camera) or "close" on (x, z) at 55° from `distanceM`. */
+      /** Energy dragons (dragon-path.ts): start `pattern` with `count` (its default without), or clear (null); stats. */
+      dragons(pattern?: DragonPattern | null, count?: number): { ready: boolean; dragons: number; quads: number; draws: number };
+      /** The view (camera-modes.ts): set it (eased over 0.4 s), read it. */
+      viewMode(mode?: ViewMode): ViewMode;
+      /** The live beasts inside the frame: count, smallest and largest on screen (px tall). */
+      beastsOnScreen(): { n: number; minPx: number; maxPx: number; w: number; h: number; boxes: [number, number, number, number][] };
       camera(mode: "play" | "close", x?: number, z?: number, distanceM?: number): void;
       /** Canon D57 zoom: with a value 0 (whole field) to 1 (close view on Lam) jumps there; returns the shown zoom. */
       zoom(value?: number): number;
@@ -2556,6 +3075,15 @@ declare global {
       showcase(id?: string): { played: string | null; ids: string[] };
       /** The last key-8 (or key-9) cast: its aim, its strikes' times (the clip's frames), its first blow, blows and kills. */
       clipSkill(key?: 8 | 9): (ClipCastReport & { active: number }) | null;
+      /** Key 8's Ice ultimate: "layered" (ice-ult-layered.ts) or "video" (the old scene video); its last cast. */
+      iceUlt(mode?: "layered" | "video"): { layered: boolean; active: boolean; last: IceUltReport | null };
+      woodUlt(mode?: "layered" | "video"): { layered: boolean; ready: boolean; active: boolean; last: WoodUltReport | null };
+      blackhole(view?: "overhead"): { enabled: boolean; ready: boolean; active: boolean; last: Record<string, unknown> | null };
+      voidUlt(mode?: "layered" | "video"): { layered: boolean; ready: boolean; active: boolean; last: VoidUltReport | null };
+      metalUlt(mode?: "layered" | "video"): { layered: boolean; ready: boolean; active: boolean; last: MetalUltReport | null };
+      thunderUlt(): { mode: "chain" | "old"; ready: boolean; active: boolean; live: number; last: ThunderChainReport | null };
+      starUlt(): { ready: boolean; active: boolean; last: StarReport | null; hide(part: string, on: boolean): void };
+      lightUlt(action?: "hideLens" | "showLens" | "hideLight" | "showLight"): { ready: boolean; active: boolean; live: number; last: LightUltReport | null };
       /** The streak counter (streak-counter.ts): `n` words of `grade` (none: just read it); its count, best, tier, grades, box. */
       streak(grade?: Grade, n?: number): { count: number; best: number; tier: number; grades: Record<Grade, number>; rect: { left: number; top: number; width: number; height: number } };
       /** Key C (channel-skill.ts): "start" (C), "feed" a word, "sloppy" (Shift+C), or none: what it has done. */
@@ -2571,6 +3099,10 @@ declare global {
       setTyped(on: boolean): void;
       /** Key M (meteor-rain.ts): casts the slanted meteor rain (cast true; dry: its light alone, no blows) or reads the last one. */
       meteor(cast?: boolean, dry?: boolean): (MeteorReport & { active: boolean }) | null;
+      /** Ngũ Lôi's finisher: set it ("quyNhat" | "eightRuns"), read it. */
+      thunderFinisher(f?: string): string;
+      /** Key G (five-thunder.ts): casts Ngũ Lôi Oanh Đỉnh from `seed` (cast true) or reads the last one; `ready`: its stills are in. */
+      thunder(cast?: boolean, seed?: number): { ready: boolean; active: boolean; live: number; audit: Record<string, number>; last: ThunderReport | null };
       /** Key 9 (clip-skills.ts, SKILLS_EXPANSION): casts new skill `id` (none: the selected; one without its row plays as its video); what it cast and every id it has. */
       expansion(id?: string): { played: string | null; ids: string[] };
       /** Shows only fx meshes with this name prefix, keeping their own visibility; null restores them. No time passes. */
@@ -2761,6 +3293,29 @@ void (async () => {
     else probe.event(kind, detail);
   };
   caster.start();
+  let r1Prop = handSword?.enabled ?? true;
+  let r1PropHidden = false;
+  animR1 = installAnimR1(caster, {
+    available: () => !cutin.active && !qiSwarm?.paused,
+    cutStop: () => {
+      if (typing && typing.slot !== "k8") fx.setCharge(typing.slot, -1, typing.tx, typing.tz);
+      typing = null; pending.charge = false; pending.cast = false; screen.cut();
+    },
+    prop: visible => {
+      if (handSword === null) return;
+      if (!visible && !r1PropHidden) { r1Prop = handSword.enabled; handSword.enabled = false; r1PropHidden = true; }
+      else if (visible && r1PropHidden) { handSword.enabled = r1Prop; r1PropHidden = false; }
+    },
+    charge: (progress, tx, tz) => fx.setCharge("k1", progress, tx, tz),
+    release: (tx, tz) => {
+      emitRelease("k1", tx, tz);
+      fx.cast("k1", tx, tz);
+      const dx = tx - caster.x, dz = tz - caster.z, len = Math.hypot(dx, dz) || 1;
+      kick.impulse(0.012, dx / len, dz / len);
+    },
+  }, { camera: view.camera, fx: view.layers.fx });
+  animR4 = installAnimR4(caster.root);
+  bus.on(event => { if (event.kind === "impact" && event.slot === "k1") animR1?.hit(event.target); });
   window.__lab = {
     ready: true,
     pilotStatus,
@@ -2924,6 +3479,44 @@ void (async () => {
       });
       return out;
     },
+    dragons(pattern, count) {
+      if (pattern === null) dragons.clear();
+      else if (pattern !== undefined) startDragons(pattern, count);
+      dragons.load();
+      return { ready: dragons.ready, ...dragons.stats };
+    },
+    viewMode(mode?: ViewMode) {
+      if (mode !== undefined) camModes.set(mode);
+      return camModes.mode;
+    },
+    /** The live beasts in the frame now: how many, and the smallest and largest of them on screen (px tall at the canvas size). */
+    beastsOnScreen() {
+      const h = innerHeight;
+      const w = innerWidth;
+      let n = 0;
+      let min = Infinity;
+      let max = 0;
+      const boxes: [number, number, number, number][] = [];
+      for (let i = 0; i < herd.size; i += 1) {
+        if (!herd.alive(i)) continue;
+        screenV.set(herd.x(i), 0, herd.z(i)).project(view.camera);
+        if (screenV.z > 1 || Math.abs(screenV.x) > 1 || Math.abs(screenV.y) > 1) continue;
+        const y0 = screenV.y;
+        screenV.set(herd.x(i), herd.midY(i) * 2, herd.z(i)).project(view.camera);
+        const px = Math.abs(screenV.y - y0) * 0.5 * h;
+        n += 1;
+        min = Math.min(min, px);
+        max = Math.max(max, px);
+        // Its box on screen (px): the foot to twice its body's middle, as wide as its radius each side.
+        const fx = (screenV.x * 0.5 + 0.5) * w;
+        const top = (-screenV.y * 0.5 + 0.5) * h;
+        const foot = (-y0 * 0.5 + 0.5) * h;
+        screenV.set(herd.x(i) + herd.radius(i), herd.midY(i), herd.z(i)).project(view.camera);
+        const half = Math.max(2, Math.abs((screenV.x * 0.5 + 0.5) * w - fx) * 1.4);
+        boxes.push([Math.round(fx - half), Math.round(top), Math.round(fx + half), Math.round(foot)]);
+      }
+      return { n, minPx: n > 0 ? Math.round(min) : 0, maxPx: Math.round(max), w, h, boxes };
+    },
     camera(mode, x = 0, z = -6, distanceM = 15) {
       customCamera = mode !== "play";
       zoom.set(0);
@@ -2972,7 +3565,7 @@ void (async () => {
       return { metal: crescentOf(stage, "metal").spawned, fire: crescentOf(stage, "fire").spawned };
     },
     showcase(id) {
-      const played = castClip8(id);
+      const played = castKey8(id);
       refreshClipSlots();
       return { played, ids: showcase.ids() };
     },
@@ -3002,9 +3595,52 @@ void (async () => {
       const r = meteor.last;
       return r === null ? null : { ...r, impactAt: [...r.impactAt], markAt: [...r.markAt], points: r.points.map((p) => ({ ...p })), active: meteor.active };
     },
+    thunderFinisher(f) {
+      if (f === "quyNhat" || f === "eightRuns") fiveThunder.finisher = f;
+      return fiveThunder.finisher;
+    },
+    thunder(cast = false, seed = 1111) {
+      if (cast) castFiveThunder(seed);
+      else fiveThunder.load();
+      const r = fiveThunder.last;
+      return { ready: fiveThunder.ready, active: fiveThunder.active, live: fiveThunder.live, audit: { ...fiveThunder.audit },
+        last: r === null ? null : { ...r, bolts: r.bolts.map((b) => ({ ...b })), firstK: [...r.firstK] } };
+    },
     project(x, y, z) {
       const q = new THREE.Vector3(x, y, z).project(view.camera);
       return { x: (q.x * 0.5 + 0.5) * innerWidth, y: (-q.y * 0.5 + 0.5) * innerHeight };
+    },
+    iceUlt(mode) {
+      if (mode !== undefined) iceUlt.layered = mode === "layered";
+      return { layered: iceUlt.layered, active: iceUlt.active, last: iceUlt.last === null ? null : { ...iceUlt.last } };
+    },
+    starUlt() { if (!starUlt.ready) void starUlt.prepare(); return { ready: starUlt.ready, active: starUlt.active, last: starUlt.last,
+      hide: (part: string, on: boolean) => { if (on) starUlt.hidden.add(part); else starUlt.hidden.delete(part); starUlt.redraw(); } }; },
+    lightUlt(action) {
+      if (action === "hideLight" || action === "showLight") { lightUlt.group.visible = action === "showLight"; view.render(0); }
+      else if (action !== undefined) { lightUlt.lens.root.visible = action === "showLens"; view.render(0); }
+      return lightUlt.report();
+    },
+    thunderUlt() {
+      if (thunderChainOn && !thunderUlt.ready) void thunderUlt.prepare();
+      return { mode: thunderChainOn ? "chain" : "old", ready: thunderUlt.ready, active: thunderUlt.active,
+        live: thunderUlt.live, last: thunderUlt.last === null ? null : { ...thunderUlt.last, hops: [...thunderUlt.last.hops] } };
+    },
+    blackhole(reviewView) { if(reviewView === "overhead" && blackhole !== null) { blackhole.captureOverhead(); view.render(0); } return { enabled: blackhole !== null, ready: blackhole?.ready ?? false, active: blackhole?.active ?? false, last: blackhole?.last ?? null }; },
+    voidUlt(mode) {
+      if (mode !== undefined) voidUlt.layered = mode === "layered";
+      if (!voidUlt.ready) voidUlt.prepare();
+      return { layered: voidUlt.layered, ready: voidUlt.ready, active: voidUlt.active, last: voidUlt.last === null ? null : { ...voidUlt.last } };
+    },
+    metalUlt(mode) {
+      if (mode !== undefined) metalUlt.layered = mode === "layered";
+      if (!metalUlt.ready) metalUlt.prepare();
+      return { layered: metalUlt.layered, ready: metalUlt.ready, active: metalUlt.active, last: metalUlt.last === null ? null : { ...metalUlt.last } };
+    },
+    woodUlt(mode) {
+      if (mode !== undefined) woodUlt.layered = mode === "layered";
+      if (!woodUlt.ready) woodUlt.prepare();
+      return { layered: woodUlt.layered, ready: woodUlt.ready, active: woodUlt.active, last: woodUlt.last === null ? null : { ...woodUlt.last } };
     },
     clipSkill(key = 8) {
       const runner = key === 9 ? clipSkills9 : clipSkills;
