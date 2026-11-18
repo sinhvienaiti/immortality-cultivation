@@ -1,16 +1,11 @@
 /**
- * Procedural ground (canon §8.1, §21.1): the 40 × 26 m field tinted on dó
- * paper with soft patches, the corridors beasts walk from each ground gate to
- * the Trận Tâm painted lighter, a faint 1 m grid, ink decals (one instanced
- * draw), a darker surround for the misty margin, and the field's ink border.
- * No models, no image files: vertex colours, lines and a procedural shader.
- * Deterministic from the stage and a seed (view only, never read by the sim).
- * Owner: Lane 6.
+ * Thanh Thạch tiles (387b): a single splat-blended field and skirt, with
+ * distances baked from the sim's authored lane points. View only.
  */
 import * as THREE from "three";
 import { FIELD } from "../content/rules";
 import type { StageDef } from "../content/types";
-import { CORRIDOR_HALF_M } from "../ui/screen-zones";
+import { corridorHalfM } from "../ui/screen-zones";
 
 export const GROUND_COLOURS = {
   earth: "#b3ab95",
@@ -35,8 +30,13 @@ export function fieldBox(stage: StageDef): { readonly minX: number; readonly max
   return { minX: f.minXMm / 1000, maxX: f.maxXMm / 1000, minZ: f.minZMm / 1000, maxZ: f.maxZMm / 1000 };
 }
 
-/** One corridor per ground gate, from the gate to the heart edge (beasts walk the flow field inside it, canon §8.1). */
+/** Authored lane segments; stages without a lane keep gate-to-heart corridors. */
 export function corridors(stage: StageDef): Corridor[] {
+  const lane = stage.field.lane;
+  if (lane) return lane.pointsMm.slice(1).map((b, i) => {
+    const a = lane.pointsMm[i]!;
+    return { ax: a.xMm / 1000, az: a.zMm / 1000, bx: b.xMm / 1000, bz: b.zMm / 1000 };
+  });
   const edge = FIELD.heartEdgeMm / 1000;
   return stage.field.gates
     .filter((gate) => gate.ground)
@@ -57,74 +57,153 @@ export function segmentDistance(px: number, pz: number, ax: number, az: number, 
 }
 
 /** 0 (plain earth) … 1 (inside a corridor): full inside the drawn half-width, fading over 1.2 m. */
-export function corridorWeight(x: number, z: number, list: readonly Corridor[]): number {
+export function corridorWeight(x: number, z: number, list: readonly Corridor[], halfM = 2.2): number {
   let near = Infinity;
   for (const c of list) near = Math.min(near, segmentDistance(x, z, c.ax, c.az, c.bx, c.bz));
-  const inner = CORRIDOR_HALF_M - 0.6;
-  const outer = CORRIDOR_HALF_M + 0.6;
+  const inner = halfM - 0.6;
+  const outer = halfM + 0.6;
   if (near <= inner) return 1;
   if (near >= outer) return 0;
   const k = (outer - near) / (outer - inner);
   return k * k * (3 - 2 * k);
 }
 
-/** Soft patches 0–1 (deterministic, view only). */
-function patchAt(x: number, z: number): number {
-  return 0.5 + 0.25 * Math.sin(x * 0.31 + z * 0.17) + 0.25 * Math.sin(z * 0.43 - x * 0.11);
+/** Tile URLs are also the loader's manifest; media stays outside Git. */
+export const GROUND_TEXTURE_URLS = {
+  lane: "/assets/immortality-cultivation/ground/thanh-thach/lane-paving.v2.webp",
+  court: "/assets/immortality-cultivation/ground/thanh-thach/court-paving.v2.webp",
+  cracked: "/assets/immortality-cultivation/ground/thanh-thach/court-cracked.v2.webp",
+  formation: "/assets/immortality-cultivation/ground/thanh-thach/formation-worn.v2.webp",
+  moss: "/assets/immortality-cultivation/ground/thanh-thach/moss-patch.v2.webp",
+  rubble: "/assets/immortality-cultivation/ground/thanh-thach/rubble-edge.v2.webp",
+} as const;
+
+export const GROUND_EXTENT = { minX: -40, maxX: 40, minZ: -60, maxZ: 16 } as const;
+export const GROUND_TILE_M = 4;
+
+export interface GroundTextureLoader {
+  load(url: string): THREE.Texture;
 }
 
-/** The field plane with vertex colours: earth, patches, corridors. */
-function groundPlane(stage: StageDef): THREE.Mesh {
-  const box = fieldBox(stage);
+export function loadGroundTextures(loader: GroundTextureLoader): Record<keyof typeof GROUND_TEXTURE_URLS, THREE.Texture> {
+  const textures = {} as Record<keyof typeof GROUND_TEXTURE_URLS, THREE.Texture>;
+  for (const key of Object.keys(GROUND_TEXTURE_URLS) as (keyof typeof GROUND_TEXTURE_URLS)[]) {
+    const texture = loader.load(GROUND_TEXTURE_URLS[key]);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = 8;
+    textures[key] = texture;
+  }
+  return textures;
+}
+
+/** Bake distance once on a 0.5 m grid, rather than scanning 50 segments per fragment. */
+export function groundGeometry(stage: StageDef): THREE.PlaneGeometry {
+  const box = GROUND_EXTENT;
   const width = box.maxX - box.minX;
   const depth = box.maxZ - box.minZ;
-  const geometry = new THREE.PlaneGeometry(width, depth, Math.round(width * 2), Math.round(depth * 2));
+  const geometry = new THREE.PlaneGeometry(width, depth, width * 2, depth * 2);
   geometry.rotateX(-Math.PI / 2);
   geometry.translate((box.minX + box.maxX) / 2, 0, (box.minZ + box.maxZ) / 2);
   const position = geometry.getAttribute("position");
-  const colours = new Float32Array(position.count * 3);
-  const earth = new THREE.Color(GROUND_COLOURS.earth);
-  const corridor = new THREE.Color(GROUND_COLOURS.corridor);
-  const dark = new THREE.Color(GROUND_COLOURS.dark);
-  const c = new THREE.Color();
+  const distance = new Float32Array(position.count);
   const list = corridors(stage);
   for (let i = 0; i < position.count; i += 1) {
-    const x = position.getX(i);
-    const z = position.getZ(i);
-    c.copy(earth).lerp(dark, patchAt(x, z) * 0.55);
-    c.lerp(corridor, corridorWeight(x, z, list) * 0.85);
-    colours[i * 3] = c.r;
-    colours[i * 3 + 1] = c.g;
-    colours[i * 3 + 2] = c.b;
+    let nearest = 1000;
+    for (const c of list) nearest = Math.min(nearest, segmentDistance(position.getX(i), position.getZ(i), c.ax, c.az, c.bx, c.bz));
+    distance[i] = nearest;
   }
-  geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  geometry.setAttribute("laneDistance", new THREE.BufferAttribute(distance, 1));
+  return geometry;
+}
+
+function stageSeed(stage: StageDef): number {
+  let seed = 2166136261;
+  for (let i = 0; i < stage.id.length; i += 1) seed = Math.imul(seed ^ stage.id.charCodeAt(i), 16777619);
+  return (seed >>> 0) % 65536;
+}
+
+const GROUND_VERTEX = /* glsl */ `
+attribute float laneDistance;
+varying vec2 vGround;
+varying float vLaneDistance;
+#include <fog_pars_vertex>
+void main() {
+  vGround = position.xz;
+  vLaneDistance = laneDistance;
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}`;
+
+const GROUND_FRAGMENT = /* glsl */ `
+uniform sampler2D uLane;
+uniform sampler2D uCourt;
+uniform sampler2D uCracked;
+uniform sampler2D uFormation;
+uniform sampler2D uMoss;
+uniform sampler2D uRubble;
+uniform float uSeed;
+uniform float uHalfM;
+uniform float uTileM;
+uniform vec3 uSurround;
+varying vec2 vGround;
+varying float vLaneDistance;
+#include <fog_pars_fragment>
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7)) + uSeed) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+void main() {
+  vec2 uv = vGround / uTileM;
+  float wear = smoothstep(0.25, 0.8, noise(vGround / 5.0));
+  vec3 court = mix(texture2D(uCourt, uv).rgb, texture2D(uCracked, uv).rgb, wear * 0.6) * 0.85;
+  vec3 lane = texture2D(uLane, uv).rgb * 1.12;
+  // A one-metre shoulder straddles the authoritative lane boundary.
+  float inside = 1.0 - smoothstep(uHalfM - 0.5, uHalfM + 0.5, vLaneDistance);
+  float shoulder = 1.0 - smoothstep(0.0, 0.5, abs(vLaneDistance - uHalfM));
+  vec3 edge = mix(texture2D(uRubble, uv).rgb, texture2D(uMoss, uv).rgb, 0.2 + wear * 0.35);
+  vec3 colour = mix(court, lane, inside);
+  colour = mix(colour, edge, shoulder * 0.85);
+  float formation = 1.0 - smoothstep(8.5, 9.0, length(vGround));
+  colour = mix(colour, texture2D(uFormation, uv).rgb, formation);
+  // The abyss remains a subdued version of the established surround palette.
+  colour = mix(colour, uSurround * 0.35, smoothstep(22.0, 40.0, abs(vGround.x)));
+  gl_FragColor = vec4(colour, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}`;
+
+function groundPlane(stage: StageDef, options: GroundOptions): THREE.Mesh {
+  // Node scene tests have no image DOM; injected loaders test the exact manifest.
+  const loader = options.textureLoader ?? (typeof document === "undefined" ? { load: () => new THREE.Texture() } : new THREE.TextureLoader());
+  const textures = loadGroundTextures(loader);
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      uLane: { value: textures.lane }, uCourt: { value: textures.court },
+      uCracked: { value: textures.cracked }, uFormation: { value: textures.formation },
+      uMoss: { value: textures.moss }, uRubble: { value: textures.rubble },
+      uSeed: { value: options.seed ?? stageSeed(stage) },
+      uHalfM: { value: corridorHalfM(stage) }, uTileM: { value: GROUND_TILE_M },
+      uSurround: { value: new THREE.Color(GROUND_COLOURS.surround) },
+    },
+    vertexShader: GROUND_VERTEX,
+    fragmentShader: GROUND_FRAGMENT,
+    fog: true,
+  });
+  // StageView already disposes materials; textures need their own release.
+  material.addEventListener("dispose", () => {
+    for (const texture of Object.values(textures)) texture.dispose();
+  });
+  const mesh = new THREE.Mesh(groundGeometry(stage), material);
   mesh.name = "ground-field";
   return mesh;
-}
-
-/** The misty surround (canon D48: a margin of mountain mist round the field). */
-function surround(stage: StageDef): THREE.Mesh {
-  const box = fieldBox(stage);
-  const geometry = new THREE.PlaneGeometry(130, 100);
-  geometry.rotateX(-Math.PI / 2);
-  geometry.translate((box.minX + box.maxX) / 2, -0.05, (box.minZ + box.maxZ) / 2 - 8);
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color: GROUND_COLOURS.surround }));
-  mesh.name = "ground-surround";
-  return mesh;
-}
-
-/** A faint 1 m grid (one draw call). */
-function grid(stage: StageDef): THREE.LineSegments {
-  const box = fieldBox(stage);
-  const points: number[] = [];
-  for (let x = Math.ceil(box.minX); x <= box.maxX; x += 1) points.push(x, 0.015, box.minZ, x, 0.015, box.maxZ);
-  for (let z = Math.ceil(box.minZ); z <= box.maxZ; z += 1) points.push(box.minX, 0.015, z, box.maxX, 0.015, z);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
-  const lines = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: GROUND_COLOURS.grid, transparent: true, opacity: 0.14, depthWrite: false }));
-  lines.name = "ground-grid";
-  return lines;
 }
 
 /** The field's ink border (one line loop). */
@@ -160,7 +239,7 @@ export function decalSpots(stage: StageDef, count: number, seed: number): Float3
     for (let tries = 0; tries < 8; tries += 1) {
       x = box.minX + 1.5 + random() * (box.maxX - box.minX - 3);
       z = box.minZ + 1.5 + random() * (box.maxZ - box.minZ - 3);
-      if (corridorWeight(x, z, list) < 0.5 && Math.hypot(x, z) > FIELD.heartEdgeMm / 1000 + 1) break;
+      if (corridorWeight(x, z, list, corridorHalfM(stage)) < 0.5 && Math.hypot(x, z) > FIELD.heartEdgeMm / 1000 + 1) break;
     }
     out[k * 5] = x;
     out[k * 5 + 1] = z;
@@ -171,89 +250,17 @@ export function decalSpots(stage: StageDef, count: number, seed: number): Float3
   return out;
 }
 
-const DECAL_VERTEX = /* glsl */ `
-attribute vec4 iDecal;
-attribute float iSeed;
-varying vec2 vUv;
-varying float vSeed;
-#include <fog_pars_vertex>
-void main() {
-  vUv = uv;
-  vSeed = iSeed;
-  float c = cos(iDecal.w);
-  float s = sin(iDecal.w);
-  vec2 p = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * iDecal.z;
-  vec4 mvPosition = modelViewMatrix * vec4(iDecal.x + p.x, 0.02, iDecal.y + p.y, 1.0);
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
-}`;
-
-const DECAL_FRAGMENT = /* glsl */ `
-varying vec2 vUv;
-varying float vSeed;
-#include <fog_pars_fragment>
-float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + vSeed * 91.7) * 43758.5453); }
-float n(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y);
-}
-void main() {
-  vec2 p = vUv - 0.5;
-  float d = length(p) * 2.0 + (n(vUv * 6.0) - 0.5) * 0.55 + (n(vUv * 17.0) - 0.5) * 0.18;
-  float a = (1.0 - smoothstep(0.55, 0.95, d)) * 0.3;
-  if (a < 0.01) discard;
-  gl_FragColor = vec4(0.1, 0.11, 0.14, a);
-  #include <fog_fragment>
-}`;
-
-/** Ink decals (canon §21.1 "decal mực trên đất"): one instanced draw. */
-function decals(stage: StageDef, count: number, seed: number): THREE.Mesh {
-  const spots = decalSpots(stage, count, seed);
-  const data = new Float32Array(count * 4);
-  const seeds = new Float32Array(count);
-  for (let k = 0; k < count; k += 1) {
-    data.set(spots.subarray(k * 5, k * 5 + 4), k * 4);
-    seeds[k] = spots[k * 5 + 4]!;
-  }
-  const base = new THREE.PlaneGeometry(1, 1);
-  const geometry = new THREE.InstancedBufferGeometry();
-  geometry.index = base.index;
-  geometry.setAttribute("position", base.getAttribute("position"));
-  geometry.setAttribute("uv", base.getAttribute("uv"));
-  geometry.setAttribute("iDecal", new THREE.InstancedBufferAttribute(data, 4));
-  geometry.setAttribute("iSeed", new THREE.InstancedBufferAttribute(seeds, 1));
-  geometry.instanceCount = count;
-  const material = new THREE.ShaderMaterial({
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog]),
-    vertexShader: DECAL_VERTEX,
-    fragmentShader: DECAL_FRAGMENT,
-    transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    fog: true,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.frustumCulled = false;
-  mesh.name = "ground-decals";
-  return mesh;
-}
-
 export interface GroundOptions {
-  /** Decal seed (view only; default 7). */
+  /** View-only wear seed; defaults to a stable hash of the stage id. */
   readonly seed?: number;
-  /** Ink decals (default 36). */
-  readonly decals?: number;
+  /** Image loader injection for tests and previews. */
+  readonly textureLoader?: GroundTextureLoader;
 }
 
-/** The ground of `stage`: surround, field plane, grid, decals, border (5 draw calls). Add it to renderer.layers.ground. */
+/** Authored tiles cover field and skirt in one draw; the ink border stays. */
 export function createGround(stage: StageDef, options: GroundOptions = {}): THREE.Object3D {
   const group = new THREE.Group();
   group.name = "ground";
-  group.add(surround(stage), groundPlane(stage), grid(stage), decals(stage, options.decals ?? 36, options.seed ?? 7), border(stage));
+  group.add(groundPlane(stage, options), border(stage));
   return group;
 }

@@ -325,7 +325,7 @@ const SCRATCH_A: Rect = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
  * kit/feedback's NumberField with a box as big as what the sprites draw (Rồng
  * number-field.ts: the kit's box() counts the digits' advances and one font
  * size of height, but italic glyphs' ink reaches past their advance, glyph
- * quads are 1.25 font sizes tall and the "HOÀN HẢO" label is wider than the
+ * quads are 1.25 font sizes tall and the "PERFECT" label is wider than the
  * digits; settle() runs until no two boxes touch). Kit drift: the box belongs
  * in shared/game-kit feedback/numbers.ts.
  */

@@ -111,6 +111,16 @@ describe("bench cases (canon §20.3)", () => {
     expect([e.skinned, e.steps]).toEqual([10, ["L1", "L3"]]);
   });
 
+  it("opts into the lane map, keeps count 90 and round-trips it in bench URLs", () => {
+    const c = parseBenchCase("?case=crowd-proc&map=lane&count=90") as BenchCase;
+    expect([c.map, c.count, c.seed]).toEqual(["lane", 90, 20_261_025]);
+    expect((parseBenchCase("?case=crowd-proc") as BenchCase).map).toBeUndefined();
+    expect((parseBenchCase("?case=crowd-proc&map=other") as BenchCase).map).toBeUndefined();
+    const url = benchUrl("http://h", { id: c.id, quality: c.quality, count: c.count, map: c.map });
+    expect((parseBenchCase(new URL(url).search) as BenchCase).map).toBe("lane");
+    expect(new URL(benchUrl("http://h", { id: c.id, quality: c.quality })).searchParams.has("map")).toBe(false);
+  });
+
   it("reads ladder steps (L2 lowers the swords one notch) and a baked VAT for the confirmation pass", () => {
     const c = parseBenchCase("?case=vankiem&q=high&count=60&steps=l2,L3&vat=/assets/bench-vat/x-{q}.vat.json") as BenchCase;
     expect(c.steps).toEqual(["L2", "L3"]);
@@ -196,6 +206,13 @@ describe("ic-bench.mjs (self-contained scenario)", () => {
     // The baked VAT is for VAT crowds only.
     expect(new URL(caseUrl("http://h", "base", "low", 0, env)).searchParams.get("vat")).toBeNull();
     expect(new URL(caseUrl("http://h", "crowd-proc", "low", 60, env)).searchParams.get("vat")).toBeNull();
+  });
+
+  it("passes EXTRA URL parameters through the bench scenario", async () => {
+    const { caseUrl } = await scenario();
+    const url = caseUrl("http://h", "crowd-proc", "high", 90, { seconds: 10, warmup: 2, extra: "map=lane&seed=37" });
+    const c = parseBenchCase(new URL(url).search) as BenchCase;
+    expect([c.map, c.count, c.seed]).toEqual(["lane", 90, 37]);
   });
 
   it("splits a sampling heap profile into game, bench driver, kit and three.js bytes", async () => {

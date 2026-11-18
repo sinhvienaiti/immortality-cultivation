@@ -28,7 +28,7 @@ const cursorOn = (model: MenuModel, id: string): void => {
 
 describe("the pause menu", () => {
   it("lists Tiếp tục, Tốc độ gõ, Giảm chuyển động, Cỡ chữ, Đổi phím, Rút lui (M0A_PLAN §6.6)", () => {
-    expect(MENU_ITEMS.map((item) => item.label)).toEqual(["Tiếp tục", "Tốc độ gõ", "Giảm chuyển động", "Cỡ chữ", "Đổi phím", "Rút lui"]);
+    expect(MENU_ITEMS.map((item) => item.label)).toEqual(["Resume", "Typing speed", "Reduce motion", "Text size", "Key bindings", "Retreat"]);
   });
 
   it("moves with ↑ ↓ (wrapping), continues on Enter or Esc, opens the speed card", () => {
@@ -62,7 +62,7 @@ describe("the pause menu", () => {
     expect(t.settings().motion).toBe("full");
     t.model.handleAction("arrow-left", 0);
     expect(t.settings().motion).toBe("reduce");
-    expect(t.model.valueOf("motion")).toBe("Bật");
+    expect(t.model.valueOf("motion")).toBe("On");
     cursorOn(t.model, "text");
     const seen: number[] = [];
     for (let k = 0; k < 3; k += 1) {
@@ -79,7 +79,7 @@ describe("the pause menu", () => {
     cursorOn(t.model, "retreat");
     t.model.handleAction("enter", 1000);
     expect(t.calls).toEqual([]);
-    expect(t.model.hint).toContain("Enter lần nữa");
+    expect(t.model.hint).toContain("Enter again");
     t.model.handleAction("enter", 1000 + SHOP_MODE.confirmMs + 1);
     expect(t.calls).toEqual([]);
     t.model.handleAction("enter", 1000 + SHOP_MODE.confirmMs + 2);
@@ -112,7 +112,7 @@ describe("Đổi phím (canon §5.1: every command key but the letters)", () => 
     expect(t.model.remapping).toBe(true);
     expect(t.model.bindKey("KeyQ")).toBe(true);
     expect(t.model.remapping).toBe(true);
-    expect(t.model.hint).toContain("Phím chữ");
+    expect(t.model.hint).toContain("Letters are for typing");
     t.model.bindKey("Semicolon");
     expect(t.model.remapping).toBe(false);
     expect(t.settings().keymap).toEqual({ shop: "Semicolon" });

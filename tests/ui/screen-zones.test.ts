@@ -4,6 +4,7 @@ import type { Projector, ScreenPoint } from "../../src/app/contracts";
 import { THANH_THACH_AI } from "../../src/content/data/stage-m0a";
 import { chooseSpot, overlapArea, publishZones, quyetBand, screenZones, segmentInside, spotCost, viewInsets, zonesFor, type Rect, type ScreenZones } from "../../src/ui/screen-zones";
 import { fitCamera, projectPoint } from "../../src/view/renderer";
+import { fieldLandmarks } from "../../src/ui/coverage";
 
 /** canon §21.1, §24, M0A_PLAN §6.6: the DOM never covers the Bàn Quyết; floating cards keep off the routes and slots. */
 
@@ -17,6 +18,24 @@ const VIEWS = [
 const rectOf = (zone: { x: number; y: number; width: number; height: number }): Rect => ({ x: zone.x, y: zone.y, w: zone.width, h: zone.height });
 
 describe("fixed DOM zones", () => {
+  it.each([[1280, 720], [1920, 1080]])("keeps prep/combat panels off every slot, core and gate at %i × %i", (width, height) => {
+    const camera = new THREE.PerspectiveCamera();
+    const scratch = new THREE.Vector3();
+    for (const scale of [100, 125, 150]) {
+      const insets = viewInsets(width, height, scale);
+      fitCamera(camera, width / height, { insetTop: insets.top / height, insetBottom: insets.bottom / height });
+      const project: Projector = (x, y, z, out) => projectPoint(camera, width, height, x, y, z, out, scratch);
+      const landmarks = fieldLandmarks(THANH_THACH_AI, project);
+      for (const phase of ["prep", "combat"]) {
+        const panels = screenZones(width, height, scale).filter(zone => phase === "prep" || (zone.id !== "card" && zone.id !== "shop"));
+        panels.push({ id: "posture", x: 256, y: 34, width: 220, height: 27 });
+        for (const panel of panels) for (const keep of landmarks) {
+          expect(overlapArea(rectOf(panel), keep), `${phase} ${scale}% ${panel.id} / ${keep.name}`).toBe(0);
+        }
+      }
+    }
+  });
+
   it("never reach into the Bàn Quyết band, stay on screen and do not overlap each other", () => {
     for (const [width, height] of VIEWS) {
       for (const scale of [100, 125, 150]) {
@@ -35,10 +54,11 @@ describe("fixed DOM zones", () => {
         // No two panels share room: the HUD bottom left, the shop centred beside it, the Trận Lực bar and the wave card on top.
         const [hud, top, card, shop, notices] = ["hud", "top", "card", "shop", "notices"].map((id) => rectOf(zones.find((zone) => zone.id === id)!));
         for (const [a, b] of [[hud, top], [hud, card], [hud, shop], [top, card], [shop, card], [notices, card], [notices, hud]] as const) expect(overlapArea(a!, b!), width + "×" + height + " " + scale + " %").toBe(0);
-        // The HUD sits on the Bàn Quyết band's top edge, bottom left.
+        // Status stays at the top edge; the shop is a separate right drawer.
         expect(hud!.x).toBeLessThan(width / 4);
         expect(hud!.y + hud!.h).toBeLessThanOrEqual(quyet.y);
-        expect(hud!.y + hud!.h).toBeGreaterThan(quyet.y - 40);
+        expect(hud!.y + hud!.h).toBeLessThanOrEqual(32);
+        expect(shop!.x).toBeGreaterThan(width / 2);
       }
     }
   });
@@ -46,7 +66,7 @@ describe("fixed DOM zones", () => {
   it("asks the renderer to keep the Bàn Quyết band clear, more at larger text (canon §24)", () => {
     const small = viewInsets(1920, 1080, 100);
     const large = viewInsets(1920, 1080, 150);
-    expect(small.top).toBe(0);
+    expect(small.top).toBe(64);
     expect(small.bottom).toBe(quyetBand(1920, 1080, 100));
     expect(large.bottom).toBeGreaterThan(small.bottom);
   });
@@ -60,18 +80,18 @@ describe("field zones a floating card keeps off", () => {
     return (x: number, y: number, z: number, out: ScreenPoint) => projectPoint(camera, width, height, x, y, z, out, scratch);
   }
 
-  it("publishes both ground corridors, both sky routes, the 6 slots, the heart and the Tâm nhãn, all on screen", () => {
+  it("publishes every lane segment, both sky routes, the 6 slots, the heart and the Tâm nhãn", () => {
     const root = {} as HTMLElement;
     expect(zonesFor(root)).toBeNull();
     const zones = publishZones(root, THANH_THACH_AI, projector(1920, 1080));
     expect(zonesFor(root)).toBe(zones);
-    expect(zones.lanes).toHaveLength(4);
+    expect(zones.lanes).toHaveLength(THANH_THACH_AI.field.lane!.pointsMm.length - 1 + 2);
     expect(zones.slots).toHaveLength(THANH_THACH_AI.field.mechSlots.length + 1 + THANH_THACH_AI.field.nodes.length);
     for (const lane of zones.lanes) {
       for (const [x, y] of [[lane.ax, lane.ay], [lane.bx, lane.by]]) {
         expect(x).toBeGreaterThanOrEqual(0);
         expect(x).toBeLessThanOrEqual(1920);
-        expect(y).toBeGreaterThanOrEqual(0);
+        expect(Number.isFinite(y)).toBe(true);
         expect(y).toBeLessThanOrEqual(1080 - quyetBand(1920, 1080));
       }
       expect(lane.half).toBeGreaterThanOrEqual(6);

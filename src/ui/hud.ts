@@ -6,10 +6,10 @@
  * (wave start, boss, phá thế, node taken, Linh Dịch, a cracked Trận Trụ,
  * down, Trận Lực under 30 %, a rejected shop or đan phù command). Sinh lực,
  * khiên and down come from the `local` layer (FrameInfo.local), never the
- * world. DOM over the canvas: Trận Lực, Thế and the notices top centre;
- * Sinh lực, Chân Nguyên and Linh Sa bottom left just above the Bàn Quyết
- * (screen-zones.ts), so the far corners with the gates and sky entries stay
- * clear (canon D48); never over the Bàn Quyết; it never shakes. The view
+ * world. DOM over the canvas: player status and gold at the top left,
+ * Core and Posture on the next row; notices and one wave chip at the right.
+ * The centre top edge stays clear for slot 0 (screen-zones.ts).
+ * Never over the Bàn Quyết; it never shakes. The view
  * model `hudView` is pure and tested in node.
  * Thế bar target (canon names "the nearest"; this round's reading, đề xuất
  * của vòng này, chờ chủ dự án xác nhận): the Thú Vương while it lives, else
@@ -18,9 +18,6 @@
  * Owner: Lane 6.
  */
 import type { FrameInfo, Presenter } from "../app/contracts";
-import { BEASTS, GENERALS } from "../content/data/beasts";
-import { BOSSES } from "../content/data/boss";
-import { ELITE_TRAITS } from "../content/data/elites";
 import { CHAN_NGUYEN, PLAYER, SIM } from "../content/rules";
 import type { BeastState, LocalState, SimCommandType, SimEvent, SpeciesId, World } from "../content/types";
 import { el, setClass, setShown, setText, setVar, viNumber } from "./skin";
@@ -55,11 +52,11 @@ export interface HudView {
   readonly linhSa: number;
 }
 
-const NAMES = { ...BEASTS, ...GENERALS, ...BOSSES } as Partial<Record<SpeciesId, { name: string }>>;
 
 /** A species' display name (data tables of Lane 5). */
 export function speciesName(species: SpeciesId): string {
-  return NAMES[species]?.name ?? species;
+  const names: Partial<Record<SpeciesId, string>> = { "thach-thu": "Stone swarm", "phong-lang": "Wind wolf", "hoa-nha": "Fire crow", "nham-vien": "Rock ape", "thiet-giap-tru": "Armored boar", "lang-dau-dan": "Pack leader", "thiet-boi-lang-vuong": "Thiết Bối Lang Vương" };
+  return names[species] ?? "Beast";
 }
 
 /** The beast whose Thế the HUD shows (see the file comment), or null. */
@@ -91,7 +88,7 @@ export function postureTarget(world: World, seat: number): BeastState | null {
 /** The name on the Thế bar: "Phong Lang · Cuồng" for an elite. */
 export function postureName(beast: BeastState): string {
   const base = speciesName(beast.species);
-  return beast.elite !== null ? base + " · " + (ELITE_TRAITS[beast.elite]?.name ?? beast.elite) : base;
+  return beast.elite !== null ? base + " · " + ({ cuong: "Frenzied", "thiet-bi": "Ironhide", "hoi-nguyen": "Regenerating" }[beast.elite]) : base;
 }
 
 /** What the HUD shows for `seat` now (pure: reads the world and the local layer). */
@@ -127,58 +124,42 @@ export interface NoticeText {
 }
 
 /** Commands whose rejection the player should hear about (the rest are routine, e.g. đánh nền out of range). */
-const TOLD: ReadonlySet<SimCommandType> = new Set(["buy", "place", "upgrade", "sell", "consumable", "start", "continue", "loadout"]);
+const TOLD: ReadonlySet<SimCommandType> = new Set(["buy", "place", "upgrade", "sell", "consumable", "start", "continue", "loadout", "ultimate"]);
 
 /** Reasons of `rejected` in Vietnamese (Lane 4's sim/shop.ts and sim/consumables.ts name them; unknown ones get a plain line). */
 const REASONS: Readonly<Record<string, string>> = {
-  phase: "Chưa làm được lúc này",
-  money: "Không đủ Linh Sa",
-  "linh-sa": "Không đủ Linh Sa",
-  funds: "Không đủ Linh Sa",
-  cooldown: "Đan phù đang hồi",
-  down: "Đang gục",
-  empty: "Ô trống",
-  full: "Ô đan phù đã đầy",
-  occupied: "Ô đã có cơ quan",
-  taken: "Ô đã có cơ quan",
-  slot: "Ô không hợp",
-  kind: "Cơ quan này không đặt được ở ô này",
-  item: "Không có món này",
-  target: "Không có đích trong tầm",
-  "max-level": "Đã nâng tối đa",
-  max: "Đã nâng tối đa",
-  level: "Đã nâng tối đa",
-  stack: "Đã đủ 3 viên",
-  seat: "Ghế không hợp lệ",
+  phase: "Unavailable during combat", money: "Not enough gold", "linh-sa": "Not enough gold", funds: "Not enough gold",
+  cooldown: "Item cooling down", down: "You are down", empty: "Empty slot", full: "Item slots full", occupied: "Slot occupied", taken: "Slot occupied",
+  slot: "Invalid slot", kind: "Requires a different slot", item: "Item unavailable", target: "No target", "max-level": "Maximum level", max: "Maximum level", level: "Maximum level", stack: "Maximum stack: 3", seat: "Invalid player",
 };
-
-const PILLAR_NAMES: Readonly<Record<string, string>> = { west: "Tây", east: "Đông" };
+const PILLAR_NAMES: Readonly<Record<string, string>> = { west: "West", east: "East" };
 
 /** The notice an event earns for `seat` (null: none). */
 export function noticeFor(event: SimEvent, seat: number): NoticeText | null {
   switch (event.type) {
     case "wave-start":
-      return { text: "Đợt " + event.wave + " / " + event.waves, kind: "info" };
+      // The persistent wave chip already shows this; avoid a duplicate below it.
+      return null;
     case "phase":
-      if (event.phase === "lull") return { text: "Lặng trước Thú Vương", kind: "info" };
-      if (event.phase === "boss") return { text: "Thú Vương xuất hiện", kind: "warn" };
+      if (event.phase === "lull") return { text: "Boss approaching", kind: "info" };
+      if (event.phase === "boss") return { text: "Boss arrived", kind: "warn" };
       return null;
     case "posture":
-      return event.stage === "break" ? { text: "Phá thế! Sát thương × 1,5", kind: "good" } : null;
+      return event.stage === "break" ? { text: "Posture broken! Damage × 1.5", kind: "good" } : null;
     case "formation":
-      if (event.what === "node-off") return { text: "Tâm nhãn bị chiếm: gõ Tẩy", kind: "warn" };
-      if (event.what === "node-on") return { text: "Tâm nhãn sáng lại", kind: "good" };
-      if (event.what === "linh-dich") return { text: "Linh Dịch: Trận Lực hồi", kind: "good" };
+      if (event.what === "node-off") return { text: "Node captured: type Cleanse", kind: "warn" };
+      if (event.what === "node-on") return { text: "Node restored", kind: "good" };
+      if (event.what === "linh-dich") return { text: "Spirit surge: core recovering", kind: "good" };
       return null;
     case "pillar":
-      return event.stage === "crack" ? { text: "Trận Trụ " + (PILLAR_NAMES[event.pillar] ?? event.pillar) + " đã nứt", kind: "warn" } : null;
+      return event.stage === "crack" ? { text: "Pillar " + (PILLAR_NAMES[event.pillar] ?? event.pillar) + " cracked", kind: "warn" } : null;
     case "player-down":
-      return event.seat === seat ? { text: "Gục: dậy ở Trận Tâm sau " + PLAYER.downMs / 1000 + " s", kind: "warn" } : null;
+      return event.seat === seat ? { text: "Down: revive at core in " + PLAYER.downMs / 1000 + " s", kind: "warn" } : null;
     case "player-up":
-      return event.seat === seat ? { text: "Đã đứng dậy", kind: "soft" } : null;
+      return event.seat === seat ? { text: "Revived", kind: "soft" } : null;
     case "rejected":
       if (!TOLD.has(event.command)) return null;
-      return { text: REASONS[event.reason] ?? "Không làm được: " + event.reason, kind: "soft" };
+      return { text: REASONS[event.reason] ?? "Unavailable: " + event.reason, kind: "soft" };
     default:
       return null;
   }
@@ -186,7 +167,7 @@ export function noticeFor(event: SimEvent, seat: number): NoticeText | null {
 
 /** Seconds a notice stays (wall time). */
 export const NOTICE_S = { info: 2.2, warn: 3, good: 2.2, soft: 1.8 } as const;
-const NOTICE_MAX = 3;
+const NOTICE_MAX = 1;
 
 // ── The HUD ────────────────────────────────────────────────────────────────
 
@@ -233,23 +214,23 @@ export function createHud(host: HTMLElement, seat: number): HudPresenter {
   const left = el(doc, "div", "ic-hud__left");
   const self = el(doc, "section", "ic-panel ic-hud__self");
   self.dataset.keepout = "";
-  self.setAttribute("aria-label", "Người chơi");
-  const life = bar(doc, "Sinh lực", PALETTE.life, true);
-  const chan = bar(doc, "Chân Nguyên", PALETTE.chanNguyen);
+  self.setAttribute("aria-label", "Player");
+  const life = bar(doc, "Health", PALETTE.life, true);
+  const chan = bar(doc, "Energy", PALETTE.chanNguyen);
   const down = el(doc, "div", "ic-hud__down");
   self.append(life.root, chan.root, down);
   const money = el(doc, "div", "ic-panel ic-hud__money");
   money.dataset.keepout = "";
   const coin = el(doc, "span", "ic-coin");
   const moneyText = el(doc, "span", "", "0");
-  money.append(coin, el(doc, "span", "", "Linh Sa"), moneyText);
+  money.append(coin, el(doc, "span", "", "Gold"), moneyText);
   left.append(self, money);
   const top = el(doc, "div", "ic-hud__top");
   const heartPanel = el(doc, "section", "ic-panel ic-hud__heart");
   heartPanel.dataset.keepout = "";
   const heartHead = el(doc, "div", "ic-hud__head");
   const heartNum = el(doc, "span", "ic-hud__num");
-  heartHead.append(el(doc, "span", "ic-hud__label", "Trận Lực"), heartNum);
+  heartHead.append(el(doc, "span", "ic-hud__label", "Core"), heartNum);
   const heartTrack = el(doc, "div", "ic-bar");
   const heartFill = el(doc, "div", "ic-bar__fill");
   heartFill.style.setProperty("--c", PALETTE.heart);
@@ -270,7 +251,9 @@ export function createHud(host: HTMLElement, seat: number): HudPresenter {
   notices.setAttribute("role", "status");
   notices.setAttribute("aria-live", "polite");
   top.append(heartPanel, posturePanel, notices);
-  root.append(left, top);
+  const wave = el(doc, "div", "ic-panel ic-hud__wave");
+  wave.dataset.keepout = "";
+  root.append(left, top, wave);
   host.append(root);
 
   let last: HudView | null = null;
@@ -300,7 +283,7 @@ export function createHud(host: HTMLElement, seat: number): HudPresenter {
       return last;
     },
     linhSaAnchor() {
-      const r = coin.getBoundingClientRect();
+      const r = moneyText.getBoundingClientRect();
       return r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
     },
     notify(text: string, kind: NoticeKind = "info"): void {
@@ -317,23 +300,24 @@ export function createHud(host: HTMLElement, seat: number): HudPresenter {
       nowS = info.now / 1000;
       const view = hudView(world, info.local, seat);
       last = view;
+      setText(wave, world.phase === "boss" ? "Boss" : "Wave " + Math.max(1, world.waves.index) + "/" + world.waves.total);
       setVar(life.fill, "--v", ratio(view.hp, view.hpMax));
       if (life.over) setVar(life.over, "--s", ratio(view.shield, view.hpMax));
       setText(life.num, view.shield > 0 ? view.hp + " +" + view.shield : String(view.hp));
       setVar(chan.fill, "--v", ratio(view.chanNguyen, CHAN_NGUYEN.full));
       setText(chan.num, view.chanNguyen + "/" + CHAN_NGUYEN.full);
       setClass(self, "is-down", view.down);
-      setText(down, view.down ? "Gục · dậy sau " + view.downLeftS + " s" : "");
+      setText(down, view.down ? "Revive in " + view.downLeftS + " s" : "");
       setVar(heartFill, "--v", ratio(view.heart, view.heartMax));
       setVar(heartFill, "--c", view.heartLow ? PALETTE.heartLow : PALETTE.heart);
       setText(heartNum, viNumber(view.heart) + " / " + viNumber(view.heartMax));
       setClass(heartPanel, "is-low", view.heartLow);
-      if (view.heartLow && !wasLow) push("Trận Lực dưới " + HEART_LOW_PCT + " %", "warn");
+      if (view.heartLow && !wasLow) push("Core below " + HEART_LOW_PCT + " %", "warn");
       wasLow = view.heartLow;
       setShown(posturePanel, view.posture !== null);
       if (view.posture !== null) {
-        setText(postureName, "Thế · " + view.posture.name);
-        setText(postureNum, view.posture.broken ? "Phá thế" : view.posture.value + "/" + view.posture.max);
+        setText(postureName, "Posture · " + view.posture.name);
+        setText(postureNum, view.posture.broken ? "Broken" : view.posture.value + "/" + view.posture.max);
         setVar(postureFill, "--v", view.posture.broken ? "1" : ratio(view.posture.value, view.posture.max));
         setVar(postureFill, "--c", view.posture.broken ? PALETTE.postureBroken : PALETTE.posture);
         setClass(posturePanel, "is-broken", view.posture.broken);

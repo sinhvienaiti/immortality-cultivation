@@ -78,6 +78,13 @@ const hit = (over: Partial<Extract<SimEvent, { type: "hit" }>> = {}): SimEvent =
 const skill = (stage: Extract<SimEvent, { type: "skill-fx" }>["stage"], seat = 0, count = 1): SimEvent => ({ tick: 100, type: "skill-fx", seat, skill: "kiem", stage, x: 0, z: 2, toX: 4, toZ: -8, count });
 
 describe("the feedback profile (canon §21.1, D44: local, numbers and timing only)", () => {
+  it("overrides the combat label in the game profile for both motion settings without mutating the kit", () => {
+    expect(feedbackFor(false).numbers.label).toBe("PERFECT");
+    expect(feedbackFor(true).numbers.label).toBe("PERFECT");
+    expect(DRAGON.numbers.label).not.toBe("PERFECT");
+    expect(IC_FEEDBACK_PROFILE.numbers).not.toBe(DRAGON.numbers);
+  });
+
   it("keeps the kit frame with id 'dragon' and overrides T0–T5: only T3+ stops the world", () => {
     expect(IC_FEEDBACK_PROFILE.id).toBe("dragon");
     expect(IC_FEEDBACK_PROFILE.stopScale).toBe(DRAGON.stopScale);

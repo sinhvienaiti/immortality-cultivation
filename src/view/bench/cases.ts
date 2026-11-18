@@ -60,6 +60,8 @@ export interface BenchCase {
   /** Crowd triangles per beast: the tier's LOD budget (canon §20.2). */
   readonly lodTris: number;
   readonly seed: number;
+  /** Use the authored Map 1 lane and camera (off for legacy cases). */
+  readonly map?: "lane";
   /** A baked VAT (JSON URL) for B and C instead of the in-page bake (confirmation pass). */
   readonly vat: string | null;
   /** Ladder steps on (empty: full 3D). */
@@ -83,7 +85,7 @@ function num(value: string | null, fallback: number, min: number, max: number): 
 /**
  * The case named by `?case=` (null without one: the page shows its menu).
  * `?q=low|medium|high|ultra` (default high), `?count=`, `?seconds=`, `?warmup=`,
- * `?swords=`, `?skinned=`, `?motion=`, `?seed=`, `?tris=`, `?vat=`, `?steps=L1,L3`.
+ * `?swords=`, `?skinned=`, `?motion=`, `?seed=`, `?tris=`, `?vat=`, `?steps=L1,L3`, `?map=lane`.
  * An unknown case id or step is an error.
  */
 export function parseBenchCase(search: string): BenchCase | { readonly error: string } | null {
@@ -119,13 +121,14 @@ export function parseBenchCase(search: string): BenchCase | { readonly error: st
     seed: int(params.get("seed"), 20_261_025, 1, 2_147_483_647),
     vat: vat !== null && vat.trim() !== "" ? vat.trim() : null,
     steps,
+    ...(params.get("map") === "lane" ? { map: "lane" as const } : {}),
   };
 }
 
 /** The page URL of a case (scenario and menu). */
 export function benchUrl(
   base: string,
-  c: { id: BenchCaseId; quality: Quality; count?: number; seconds?: number; warmup?: number; motion?: MotionParam; skinned?: number; vat?: string; steps?: readonly LadderStep[] },
+  c: { id: BenchCaseId; quality: Quality; count?: number; seconds?: number; warmup?: number; motion?: MotionParam; skinned?: number; vat?: string; steps?: readonly LadderStep[]; map?: "lane" },
 ): string {
   const params = new URLSearchParams({ case: c.id, q: c.quality });
   if (c.count !== undefined && c.id !== "base") params.set("count", String(c.count));
@@ -134,6 +137,7 @@ export function benchUrl(
   if (c.skinned !== undefined) params.set("skinned", String(c.skinned));
   if (c.vat !== undefined) params.set("vat", c.vat);
   if (c.steps !== undefined && c.steps.length > 0) params.set("steps", c.steps.join(","));
+  if (c.map === "lane") params.set("map", c.map);
   params.set("motion", c.motion ?? "full");
   return base.replace(/\/$/, "") + "/bench.html?" + params.toString();
 }

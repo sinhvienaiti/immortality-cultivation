@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewQuestion } from "../../src/app/learning";
 import { imeHint } from "../../src/ui/ime-banner";
-import { LEARN_AHEAD_MS, LearnAheadModel } from "../../src/ui/learn-ahead";
 import { CARD_MS, FrameModel, shortMeaning, type FrameWord } from "../../src/ui/learning-frame";
 import { ReviewModel } from "../../src/ui/review-card";
 import { wordBookSections } from "../../src/ui/word-book";
@@ -38,41 +37,6 @@ describe("the learning frame (canon §17, HC7)", () => {
     expect(shortMeaning("tốt; hay")).toBe("tốt");
     expect(shortMeaning("có thể (xảy ra/tồn tại)")).toBe("có thể");
     expect(shortMeaning("một nghĩa rất rất rất dài quá mức")).toBe("một nghĩa rất rất rất…");
-  });
-});
-
-describe("Học trước (canon §17, §14.2)", () => {
-  const words = [
-    { wordId: "river", text: "river", vi: "con sông", ipa: "" },
-    { wordId: "garden", text: "garden", vi: "khu vườn", ipa: "" },
-  ];
-
-  it("answers a right copy at once and waits on a slip for Backspace or Enter", () => {
-    const model = new LearnAheadModel(words);
-    expect(model.start(0)).toBe(true);
-    for (const letter of "rive") expect(model.letter(letter, 100).kind).toBe("none");
-    expect(model.letter("r", 900)).toEqual({ kind: "answered", word: words[0], correct: true, typed: "river", responseMs: 900 });
-    expect(model.letter("x", 950).kind).toBe("none");
-    model.next(1000);
-    for (const letter of "gardan") model.letter(letter, 1100);
-    expect(model.slip).toBe(true);
-    model.backspace();
-    model.backspace();
-    expect(model.typed).toBe("gard");
-    expect(model.enter(2000)).toMatchObject({ kind: "answered", correct: false, typed: "gard", responseMs: 1000 });
-    model.next(2100);
-    expect(model.open).toBe(false);
-    expect(model.results).toEqual([{ wordId: "river", correct: true }, { wordId: "garden", correct: false }]);
-  });
-
-  it("skips a word on one Esc, closes on two", () => {
-    const model = new LearnAheadModel(words);
-    model.start(0);
-    expect(model.escape(1000).kind).toBe("skipped");
-    expect(model.word?.wordId).toBe("garden");
-    expect(model.escape(1000 + LEARN_AHEAD_MS.doubleEsc).kind).toBe("closed");
-    expect(model.results).toEqual([]);
-    expect(new LearnAheadModel([]).start(0)).toBe(false);
   });
 });
 
@@ -113,7 +77,7 @@ describe("Sổ Từ and the IME banner (canon §17, §5.2)", () => {
       { wordId: "b", text: "b", kind: "new" },
       { wordId: "c", text: "c", kind: "new" },
     ]);
-    expect(sections.map((section) => [section.title, section.entries.length])).toEqual([["Mới học", 2], ["Cần ôn", 1]]);
+    expect(sections.map((section) => [section.title, section.entries.length])).toEqual([["New words", 2], ["Due for review", 1]]);
   });
 
   it("says how to switch to English typing per platform", () => {

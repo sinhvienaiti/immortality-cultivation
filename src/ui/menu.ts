@@ -38,34 +38,35 @@ export interface MenuCallbacks {
 export type MenuItemId = "continue" | "pace" | "motion" | "text" | "keys" | "retreat";
 
 export const MENU_ITEMS: readonly { readonly id: MenuItemId; readonly label: string }[] = [
-  { id: "continue", label: "Tiếp tục" },
-  { id: "pace", label: "Tốc độ gõ" },
-  { id: "motion", label: "Giảm chuyển động" },
-  { id: "text", label: "Cỡ chữ" },
-  { id: "keys", label: "Đổi phím" },
-  { id: "retreat", label: "Rút lui" },
+  { id: "continue", label: "Resume" },
+  { id: "pace", label: "Typing speed" },
+  { id: "motion", label: "Reduce motion" },
+  { id: "text", label: "Text size" },
+  { id: "keys", label: "Key bindings" },
+  { id: "retreat", label: "Retreat" },
 ];
 
 const MOTIONS: readonly MotionSetting[] = ["system", "reduce", "full"];
-export const MOTION_LABELS: Readonly<Record<MotionSetting, string>> = { system: "Theo máy", reduce: "Bật", full: "Tắt" };
+export const MOTION_LABELS: Readonly<Record<MotionSetting, string>> = { system: "System", reduce: "On", full: "Off" };
 
 /** Command actions the player may remap (letters never, canon §5.1), in table order, once each. */
 export const REMAPPABLE: readonly KeyAction[] = KEYS.map((binding) => binding.action).filter((action, k, all) => all.indexOf(action) === k);
 
 export const ACTION_LABELS: Readonly<Record<KeyAction, string>> = {
-  backspace: "Xóa một chữ",
-  escape: "Nhả khóa, đóng bảng, menu",
-  enter: "Bắt đầu đợt, trả lời",
-  "item-1": "Đan phù 1",
-  "item-2": "Đan phù 2",
-  "item-3": "Đan phù 3",
-  shop: "Chế độ cửa hàng",
-  "arrow-up": "Đi lên",
-  "arrow-down": "Đi xuống",
-  "arrow-left": "Sang trái",
-  "arrow-right": "Sang phải",
-  upgrade: "Nâng cơ quan",
-  sell: "Bán cơ quan",
+  ultimate: "Release ultimate",
+  backspace: "Delete letter",
+  escape: "Unlock, close, pause",
+  enter: "Start wave, submit",
+  "item-1": "Item 1",
+  "item-2": "Item 2",
+  "item-3": "Item 3",
+  shop: "Shop mode",
+  "arrow-up": "Move up",
+  "arrow-down": "Move down",
+  "arrow-left": "Move left",
+  "arrow-right": "Move right",
+  upgrade: "Upgrade mechanism",
+  sell: "Sell mechanism",
 };
 
 /** The key an action uses now (override or the table's first). */
@@ -130,7 +131,7 @@ export class MenuModel {
       return true;
     }
     if (!bindable(code)) {
-      this.hint = code.startsWith("Key") ? "Phím chữ chỉ để gõ: chọn phím khác" : "Phím này không dùng được: chọn phím khác";
+      this.hint = code.startsWith("Key") ? "Letters are for typing: choose another key" : "Key unavailable: choose another";
       return true;
     }
     const action = REMAPPABLE[this.keyCursor]!;
@@ -179,7 +180,7 @@ export class MenuModel {
         return true;
       case "enter":
         this.remapping = true;
-        this.hint = "Bấm phím mới cho " + ACTION_LABELS[REMAPPABLE[this.keyCursor]!] + " (Esc: hủy)";
+        this.hint = "Press a new key for " + ACTION_LABELS[REMAPPABLE[this.keyCursor]!] + " (Esc: cancel)";
         return true;
       case "escape":
         this.page = "main";
@@ -221,7 +222,7 @@ export class MenuModel {
       case "keys":
         this.page = "keys";
         this.keyCursor = 0;
-        this.hint = "↑ ↓ chọn, Enter đổi, Esc quay lại";
+        this.hint = "↑ ↓ select, Enter rebind, Esc back";
         return;
       case "retreat":
         if (this.retreatUntil >= 0 && now <= this.retreatUntil) {
@@ -230,7 +231,7 @@ export class MenuModel {
           return;
         }
         this.retreatUntil = now + SHOP_MODE.confirmMs;
-        this.hint = "Enter lần nữa để rút lui (giữ 50 % Thú Hạch, kết quả học không mất)";
+        this.hint = "Enter again to retreat (keep 50 % Beast Cores; learning is saved)";
         return;
     }
   }
@@ -252,8 +253,8 @@ export function createMenu(host: HTMLElement, options: MenuOptions = {}): PauseM
   veil.hidden = true;
   const panel = el(doc, "section", "ic-panel ic-menu");
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Tạm dừng");
-  const title = el(doc, "h2", "ic-menu__title", "Tạm dừng");
+  panel.setAttribute("aria-label", "Paused");
+  const title = el(doc, "h2", "ic-menu__title", "Paused");
   const list = el(doc, "div", "ic-menu__list");
   const keys = el(doc, "div", "ic-menu__keys");
   const hint = el(doc, "div", "ic-menu__hint");
@@ -265,7 +266,7 @@ export function createMenu(host: HTMLElement, options: MenuOptions = {}): PauseM
     setShown(veil, model.isOpen);
     if (!model.isOpen) return;
     const s = model.settings();
-    setText(title, model.page === "keys" ? "Đổi phím" : "Tạm dừng");
+    setText(title, model.page === "keys" ? "Key bindings" : "Paused");
     setShown(list, model.page === "main");
     setShown(keys, model.page === "keys");
     if (model.page === "main") {
@@ -295,7 +296,7 @@ export function createMenu(host: HTMLElement, options: MenuOptions = {}): PauseM
       );
     }
     setText(hint, model.hint);
-    setClass(hint, "is-confirm", model.hint.startsWith("Enter lần nữa"));
+    setClass(hint, "is-confirm", model.hint.startsWith("Enter again"));
   };
 
   return {

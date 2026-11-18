@@ -45,9 +45,9 @@ describe("the shop's stock and rows (canon §8.3, §12.3, §14.3)", () => {
     const rows = shopRows(shopWorld({ built: [[2, "loi-phu-tru", 2]] }), 0);
     expect(rows.map((row) => row.kind)).toEqual(["mech", "mech", "mech", "mech", "mech", "mech", "item", "item"]);
     expect(rows.slice(0, 6).map((row) => row.slotKind)).toEqual(THANH_THACH_AI.field.mechSlots.map((slot) => slot.kind));
-    expect(rowLabel(rows[2]!)).toContain("cấp 2");
+    expect(rowLabel(rows[2]!)).toContain("level 2");
     expect(rowLabel(rows[6]!)).toContain("× 2");
-    expect(rowLabel(rows[7]!)).toContain("trống");
+    expect(rowLabel(rows[7]!)).toContain("empty");
   });
 
   it("opens in prep and breaks only; refunds 70 %, 100 % in the same break; 3 levels", () => {
@@ -59,6 +59,22 @@ describe("the shop's stock and rows (canon §8.3, §12.3, §14.3)", () => {
 });
 
 describe("shop mode by keys (canon §5.1, D45)", () => {
+  it("closes at wave warning and rejects stale keyboard and mouse purchase intents", () => {
+    const w = shopWorld();
+    const t = setup(w);
+    t.model.open();
+    w.phase = "warning";
+    t.model.setWorld(w);
+    expect(t.model.isOpen).toBe(false);
+    expect(t.cursor.at(-1)).toBe(-1);
+    t.model.open();
+    t.model.handleAction("enter");
+    const strip = new ShopStripModel(t.model);
+    strip.clickItem(itemIndex("hoi-xuan-dan"));
+    expect(t.model.isOpen).toBe(false);
+    expect(t.commands).toEqual([]);
+  });
+
   it("drops letters, moves both cursors with wrap, and tells the stage which slot to light", () => {
     const t = setup();
     t.model.open();
@@ -89,7 +105,7 @@ describe("shop mode by keys (canon §5.1, D45)", () => {
     t.model.pick(itemIndex("loi-phu-tru"));
     t.model.handleAction("enter");
     expect(t.commands).toHaveLength(1);
-    expect(t.model.message).toContain("trụ");
+    expect(t.model.message).toContain("post");
     t.model.pick(itemIndex("hoi-xuan-dan"));
     t.model.handleAction("enter");
     expect(t.commands.at(-1)).toEqual({ type: "buy", seat: 0, item: "hoi-xuan-dan" });
@@ -106,7 +122,7 @@ describe("shop mode by keys (canon §5.1, D45)", () => {
     t.model.point(1);
     t.model.handleAction("upgrade");
     expect(t.commands).toEqual([]);
-    expect(t.model.message).toContain("Bấm = lần nữa");
+    expect(t.model.message).toContain("Press = again");
     t.advance(SHOP_MODE.confirmMs - 1);
     t.model.handleAction("upgrade");
     expect(t.commands).toEqual([{ type: "upgrade", seat: 0, slot: 1 }]);
@@ -127,7 +143,7 @@ describe("shop mode by keys (canon §5.1, D45)", () => {
     t.model.handleAction("upgrade");
     t.model.handleAction("upgrade");
     expect(t.commands).toHaveLength(2);
-    expect(t.model.message).toContain("tối đa");
+    expect(t.model.message).toContain("maximum level");
     // An empty slot: nothing to upgrade or sell.
     t.model.point(0);
     t.model.handleAction("sell");

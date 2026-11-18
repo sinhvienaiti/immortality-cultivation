@@ -71,7 +71,7 @@ describe("HUD values (canon §6.6)", () => {
 
   it("names the bar and marks phá thế and the 15 s immunity", () => {
     const elite = beast(0, { elite: "thiet-bi", species: "thiet-giap-tru", posture: posture(0, 40, 900, 1800) });
-    expect(postureName(elite)).toBe("Thiết Giáp Trư · Thiết Bì");
+    expect(postureName(elite)).toBe("Armored boar · Ironhide");
     expect(speciesName("thiet-boi-lang-vuong")).toBe("Thiết Bối Lang Vương");
     const view = hudView(hudWorld([elite]), local(), 0);
     expect(view.posture).toMatchObject({ value: 0, max: 40, broken: true, immune: true, boss: false });
@@ -80,7 +80,7 @@ describe("HUD values (canon §6.6)", () => {
 
 describe("HUD notices", () => {
   const tick = 1;
-  it("tells the wave, the boss, phá thế, the node, Linh Dịch, a cracked pillar and the seat's own fall", () => {
+  it("leaves wave numbering to the persistent chip, tells the boss, posture, nodes and the seat's own fall", () => {
     const events: SimEvent[] = [
       { tick, type: "wave-start", wave: 3, waves: 6, gates: ["A", "B", "sky"] },
       { tick, type: "phase", phase: "boss", wave: 6, endsAtTick: -1 },
@@ -91,21 +91,21 @@ describe("HUD notices", () => {
       { tick, type: "player-down", seat: 0, x: 0, z: 0 },
     ];
     expect(events.map((event) => noticeFor(event, 0)?.text)).toEqual([
-      "Đợt 3 / 6",
-      "Thú Vương xuất hiện",
-      "Phá thế! Sát thương × 1,5",
-      "Tâm nhãn bị chiếm: gõ Tẩy",
-      "Linh Dịch: Trận Lực hồi",
-      "Trận Trụ Tây đã nứt",
-      "Gục: dậy ở Trận Tâm sau 8 s",
+      undefined,
+      "Boss arrived",
+      "Posture broken! Damage × 1.5",
+      "Node captured: type Cleanse",
+      "Spirit surge: core recovering",
+      "Pillar West cracked",
+      "Down: revive at core in 8 s",
     ]);
     expect(noticeFor({ tick, type: "player-down", seat: 1, x: 0, z: 0 }, 0)).toBeNull();
   });
 
   it("says a rejected shop or đan phù command softly, never a routine one", () => {
-    expect(noticeFor({ tick, type: "rejected", command: "buy", reason: "money" }, 0)).toEqual({ text: "Không đủ Linh Sa", kind: "soft" });
-    expect(noticeFor({ tick, type: "rejected", command: "consumable", reason: "cooldown" }, 0)?.text).toBe("Đan phù đang hồi");
-    expect(noticeFor({ tick, type: "rejected", command: "place", reason: "who-knows" }, 0)?.text).toBe("Không làm được: who-knows");
+    expect(noticeFor({ tick, type: "rejected", command: "buy", reason: "money" }, 0)).toEqual({ text: "Not enough gold", kind: "soft" });
+    expect(noticeFor({ tick, type: "rejected", command: "consumable", reason: "cooldown" }, 0)?.text).toBe("Item cooling down");
+    expect(noticeFor({ tick, type: "rejected", command: "place", reason: "who-knows" }, 0)?.text).toBe("Unavailable: who-knows");
     expect(noticeFor({ tick, type: "rejected", command: "auto", reason: "range" }, 0)).toBeNull();
     expect(noticeFor({ tick, type: "rejected", command: "key", reason: "phase" }, 0)).toBeNull();
   });

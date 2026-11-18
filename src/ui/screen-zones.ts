@@ -3,9 +3,9 @@
  * Screen zones: where HUD, wave card, shop and learning panels may sit so the
  * Bàn Quyết is never covered (canon §21.1 layers: the DOM lies over the
  * canvas, the Bàn Quyết at the bottom, outside it).
- * - `screenZones(width, height)`: the fixed DOM layout in CSS px (HUD top
- *   left, Trận Lực and Thế top centre, notices under them, the wave card top
- *   right, the shop above the Bàn Quyết band, the Bàn Quyết band itself);
+ * - `screenZones(width, height)`: the fixed DOM layout in CSS px (status top
+ *   left, Core/Posture on its next row, notices on the right, a preparation
+ *   card at a clear side, the shop drawer and the Bàn Quyết band);
  *   `viewInsets` gives the renderer the band to keep the field out of.
  * - `publishZones(root, stage, project)`: what a floating card must not cover
  *   on the field: the ground corridors gate → heart, the sky routes, the 6
@@ -44,6 +44,10 @@ export const ZONE_PX = {
   notices: { width: 520, height: 76 },
   card: { width: 340, height: 230 },
   shop: { width: 980, height: 156 },
+  /** Keep the drawer to the right of slot 5, including at 1280 × 720. */
+  drawer: { minWidth: 260, maxWidth: 400, viewWidth: .21 },
+  /** The centre top edge contains slot 0 in Camera B. Use the left second row. */
+  heart: { x: 8, y: 34, width: 240, height: 26 },
 } as const;
 
 /** The Bàn Quyết band height in CSS px for a viewport and text scale (100 / 125 / 150). */
@@ -52,41 +56,26 @@ export function quyetBand(width: number, height: number, textScale = 100): numbe
   return Math.round((ZONE_PX.quyet + ZONE_PX.quyetPerScale * Math.max(0, textScale / 100 - 1)) * ui);
 }
 
-/**
- * The fixed DOM layout for a `width` × `height` CSS px view: "hud" (Sinh lực,
- * Chân Nguyên, Linh Sa) bottom left just above the Bàn Quyết, on the near
- * side of the field behind the Trận Tâm where no route runs (the far corners
- * hold the gates and the sky entries, canon D48); "top" (Trận Lực, Thế) and
- * "notices" top centre; "card" top right; "shop" centred above the band and
- * never as wide as to reach the HUD; "quyet" (the Bàn Quyết band, full width).
- * No zone but "quyet" reaches into the band.
- */
+/** Fixed edge layout: status above, preparation card at a side, shop right, words below. */
 export function screenZones(width: number, height: number, textScale = 100): readonly ScreenZone[] {
   const ui = uiScale(width, height);
-  const m = Math.round(ZONE_PX.margin * ui);
   const quyet = quyetBand(width, height, textScale);
-  const sized = (w: number, h: number): [number, number] => [Math.min(width - 2 * m, Math.round(w * ui)), Math.round(h * ui)];
-  const [hudW, hudH] = sized(ZONE_PX.hud.width, ZONE_PX.hud.height);
-  const [topW, topH] = sized(ZONE_PX.top.width, ZONE_PX.top.height);
-  const [noteW, noteH] = sized(ZONE_PX.notices.width, ZONE_PX.notices.height);
-  const [cardW, cardH] = sized(ZONE_PX.card.width, ZONE_PX.card.height);
-  const [shopFullW, shopH] = sized(ZONE_PX.shop.width, ZONE_PX.shop.height);
-  const shopW = Math.max(0, Math.min(shopFullW, width - 2 * (hudW + 2 * m)));
-  const shopY = Math.max(m, height - quyet - m - shopH);
-  const hudY = Math.max(m, height - quyet - m - hudH);
+  const hudW = Math.round(Math.min(width * .31, 420) + 76);
+  const cardW = Math.round(340 * ui);
+  const shopW = Math.max(ZONE_PX.drawer.minWidth, Math.min(ZONE_PX.drawer.maxWidth, width * ZONE_PX.drawer.viewWidth));
   return [
-    { id: "hud", x: m, y: hudY, width: hudW, height: Math.min(hudH, height - quyet - m - hudY) },
-    { id: "top", x: Math.round((width - topW) / 2), y: Math.round(10 * ui), width: topW, height: topH },
-    { id: "notices", x: Math.round((width - noteW) / 2), y: Math.round(10 * ui) + topH + m, width: noteW, height: noteH },
-    { id: "card", x: width - m - cardW, y: m, width: cardW, height: cardH },
-    { id: "shop", x: Math.round((width - shopW) / 2), y: shopY, width: shopW, height: Math.min(shopH, height - quyet - m - shopY) },
+    { id: "hud", x: 8, y: 4, width: hudW, height: 26 },
+    { id: "top", ...ZONE_PX.heart },
+    { id: "notices", x: width - 268, y: 34, width: 260, height: 24 },
+    { id: "card", x: 8, y: 68, width: cardW, height: Math.round(230 * ui) },
+    { id: "shop", x: width - 8 - shopW, y: 68, width: shopW, height: Math.max(0, height - quyet - 76) },
     { id: "quyet", x: 0, y: height - quyet, width, height: quyet },
   ];
 }
 
-/** CSS px the renderer keeps clear at the top and bottom (renderer.setViewInsets): the Bàn Quyết band below; nothing above (the HUD floats over the far margin). */
+/** Reserve the thin edge HUD and the word band so field landmarks stay clear. */
 export function viewInsets(width: number, height: number, textScale = 100): { readonly top: number; readonly bottom: number } {
-  return { top: 0, bottom: quyetBand(width, height, textScale) };
+  return { top: 64, bottom: quyetBand(width, height, textScale) };
 }
 
 // ── Field zones a floating card keeps off ───────────────────────────────────
@@ -120,7 +109,7 @@ const SLOT_MARGIN_M = 0.6;
 const HEART_M = FIELD.heartEdgeMm / 1000;
 const NODE_M = 0.9;
 /** A ground corridor's drawn half-width (view/ground.ts) and a sky route's (a flyer's body). */
-export const CORRIDOR_HALF_M = 2.2;
+export const corridorHalfM = (stage: StageDef): number => (stage.field.lane?.halfWidthMm ?? 2200) / 1000;
 const SKY_HALF_M = 1.6;
 
 const registry = new WeakMap<HTMLElement, ScreenZones>();
@@ -164,9 +153,16 @@ export function publishZones(root: HTMLElement, stage: StageDef, project: Projec
     out.slots.push({ x: a.x - rx, y: a.y - ry, w: rx * 2, h: ry * 2 });
   };
   const field = stage.field;
-  for (const gate of field.gates) {
+  if (field.lane) {
+    const points = field.lane.pointsMm;
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1]!;
+      const b = points[i]!;
+      addSegment(a.xMm / 1000, a.zMm / 1000, b.xMm / 1000, b.zMm / 1000, 0.3, corridorHalfM(stage));
+    }
+  } else for (const gate of field.gates) {
     if (!gate.ground) continue;
-    addSegment(gate.at.xMm / 1000, gate.at.zMm / 1000, 0, 0, 0.3, CORRIDOR_HALF_M);
+    addSegment(gate.at.xMm / 1000, gate.at.zMm / 1000, 0, 0, 0.3, corridorHalfM(stage));
   }
   for (const entry of field.skyEntries) addSegment(entry.xMm / 1000, entry.zMm / 1000, 0, 0, FLY_DRAW_M, SKY_HALF_M);
   for (const slot of field.mechSlots) addSpot(slot.at.xMm / 1000, slot.at.zMm / 1000, SLOT_SIZE_M[slot.kind] / 2 + SLOT_MARGIN_M);

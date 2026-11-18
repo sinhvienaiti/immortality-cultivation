@@ -2,7 +2,7 @@
  * Wave card (canon §4.1, §13.3; M0A_PLAN §6.6): what the next wave brings,
  * gate by gate (A, B, the sky route): each family's silhouette icon (shape
  * before colour, canon §24) and head count; marks: wing = flyer, hammer =
- * node capture (Thiết Giáp Trư), crown = thú tướng, horn = Thú Vương; a peak
+ * node capture (Thiết Giáp Trư), crown = thú tướng, horn = Boss; a peak
  * strip (the wave's peaks as bright blocks, each group's start as a tick).
  * Shown in prep, the wave warning, breaks (the next wave) and the lull (the
  * Vương's card); hidden while a wave runs. The footer says when it starts
@@ -17,8 +17,9 @@ import { BEASTS, GENERALS } from "../content/data/beasts";
 import { BOSSES } from "../content/data/boss";
 import { PRESETS, SIM } from "../content/rules";
 import type { BeastDef, GateId, Gait, Phase, SimEvent, SpeciesId, StageDef, World } from "../content/types";
+import { speciesName } from "./hud";
 import { CROWD_LOOKS } from "../view/crowd";
-import { chooseSpot, keepoutRects, publishZones, screenZones, type Rect } from "./screen-zones";
+import { chooseSpot, keepoutRects, overlapArea, publishZones, screenZones, type Rect } from "./screen-zones";
 import { el, icon, setShown, setText, type CardMark } from "./skin";
 
 // ── Pure summary ────────────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ export interface GateTally {
 }
 
 export interface WaveSummary {
-  /** Wave number (1-based); 0 is the Thú Vương's card. */
+  /** Wave number (1-based); 0 is the Boss's card. */
   readonly n: number;
   readonly waves: number;
   readonly gates: readonly GateTally[];
@@ -54,9 +55,9 @@ export interface WaveSummary {
   readonly beats: readonly number[];
 }
 
-export const GATE_LABELS: Readonly<Record<GateId, string>> = { A: "Cổng A", B: "Cổng B", sky: "Đường trời" };
+export const GATE_LABELS: Readonly<Record<GateId, string>> = { A: "Gate A", B: "Gate B", sky: "Sky route" };
 const MARK_ORDER: readonly CardMark[] = ["wing", "hammer", "crown", "horn"];
-export const MARK_TITLES: Readonly<Record<CardMark, string>> = { wing: "Thú bay", hammer: "Chiếm nhãn", crown: "Thú tướng", horn: "Thú Vương" };
+export const MARK_TITLES: Readonly<Record<CardMark, string>> = { wing: "Flying", hammer: "Node capture", crown: "General", horn: "Boss" };
 
 function defOf(species: SpeciesId): BeastDef | undefined {
   return ({ ...BEASTS, ...GENERALS, ...BOSSES } as Partial<Record<SpeciesId, BeastDef>>)[species];
@@ -76,7 +77,7 @@ function tallyOf(species: SpeciesId): FoeTally {
   const def = defOf(species);
   return {
     species,
-    name: def?.name ?? species,
+    name: speciesName(species),
     gait: def?.placeholder.gait ?? "quadruped",
     // The colour the crowd draws the family in (one colour per family, canon D27).
     colour: CROWD_LOOKS[species]?.colour ?? def?.placeholder.colour ?? "#cccccc",
@@ -113,7 +114,7 @@ export function summarizeWave(stage: StageDef, n: number): WaveSummary | null {
   return finish(n, stage.waves.length, gates, wave.durationMs, wave.peaks, beats);
 }
 
-/** The Thú Vương's card (canon §10.5: it walks in from gate A after the lull); null on a stage without one. */
+/** The Boss's card (canon §10.5: it walks in from gate A after the lull); null on a stage without one. */
 export function summarizeBoss(stage: StageDef): WaveSummary | null {
   if (stage.boss === null) return null;
   const gate: GateTally = { gate: "A", label: GATE_LABELS.A, foes: [tallyOf(stage.boss)], count: 1 };
@@ -126,11 +127,11 @@ export function cardWave(phase: Phase, waveIndex: number, total: number): number
   switch (phase) {
     case "prep":
       return 1;
-    case "warning":
     case "break":
       return waveIndex + 1 <= total ? waveIndex + 1 : -1;
+    case "warning":
     case "lull":
-      return 0;
+      return -1;
     default:
       return -1;
   }
@@ -152,13 +153,13 @@ export function footerText(world: Pick<World, "phase" | "phaseEndsAt" | "tick" |
   const waits = PRESETS[world.preset]?.breakMs === "enter";
   switch (world.phase) {
     case "prep":
-      return { when: left >= 0 ? "Bắt đầu sau " + left + " s" : "", enter: "Enter: bắt đầu ngay" };
+      return { when: left >= 0 ? "Starts in " + left + " s" : "", enter: "Enter: start now" };
     case "warning":
-      return { when: left >= 0 ? "Thú tới sau " + left + " s" : "", enter: "" };
+      return { when: left >= 0 ? "Enemies in " + left + " s" : "", enter: "" };
     case "break":
-      return { when: left >= 0 ? (waits ? "Tự tiếp sau " + left + " s" : "Đợt kế sau " + left + " s") : "", enter: waits ? "Enter: tiếp" : "" };
+      return { when: left >= 0 ? (waits ? "Auto-continue in " + left + " s" : "Next wave in " + left + " s") : "", enter: waits ? "Enter: continue" : "" };
     case "lull":
-      return { when: left >= 0 ? "Thú Vương tới sau " + left + " s" : "", enter: "" };
+      return { when: left >= 0 ? "Boss in " + left + " s" : "", enter: "" };
     default:
       return { when: "", enter: "" };
   }
@@ -178,6 +179,18 @@ export interface WaveCardOptions {
   readonly project?: Projector;
 }
 
+/** Shop exclusion is a hard constraint, even when every field candidate has a cost. */
+export function waveCardSpots(width: number, bottom: number, w: number, h: number, shops: readonly Rect[]): Rect[] {
+  const right = Math.min(width - 8, ...shops.map(shop => shop.x - 8));
+  const spots = [
+    { x: 8, y: 68, w, h },
+    { x: 8, y: Math.max(68, bottom - 8 - h), w, h },
+    { x: right - w, y: Math.max(68, bottom - 8 - h), w, h },
+    { x: right - w, y: 68, w, h },
+  ];
+  return spots.filter(rect => rect.x >= 0 && shops.every(shop => overlapArea(rect, shop) === 0));
+}
+
 export function createWaveCard(host: HTMLElement, options: WaveCardOptions = {}): WaveCardPresenter {
   const doc = host.ownerDocument;
   const card = el(doc, "section", "ic-panel ic-wave");
@@ -190,7 +203,7 @@ export function createWaveCard(host: HTMLElement, options: WaveCardOptions = {})
   head.append(title, marks);
   const gates = el(doc, "div", "ic-wave__gates");
   const strip = el(doc, "div", "ic-strip");
-  strip.title = "Nhịp đợt: khối sáng là đỉnh, vạch là lúc từng toán vào";
+  strip.title = "Wave schedule: blocks show peaks, ticks show arriving groups";
   const foot = el(doc, "div", "ic-wave__foot");
   const when = el(doc, "span");
   const enter = el(doc, "span");
@@ -206,7 +219,7 @@ export function createWaveCard(host: HTMLElement, options: WaveCardOptions = {})
   let frames = 0;
 
   const draw = (next: WaveSummary): void => {
-    setText(title, next.n === 0 ? "Thú Vương" : "Đợt " + next.n + " / " + next.waves);
+    setText(title, next.n === 0 ? "Boss" : "Wave " + next.n + " / " + next.waves);
     marks.replaceChildren(...next.marks.map((mark) => icon(doc, mark, MARK_TITLES[mark])));
     gates.replaceChildren(
       ...next.gates.map((gate) => {
@@ -215,7 +228,7 @@ export function createWaveCard(host: HTMLElement, options: WaveCardOptions = {})
         for (const foe of gate.foes) {
           const chip = el(doc, "span", "ic-wave__foe" + (foe.elite ? " is-elite" : ""));
           chip.style.setProperty("--fc", foe.colour);
-          chip.title = foe.name + (foe.elite ? " (có tinh anh)" : "");
+          chip.title = foe.name + (foe.elite ? " (elite)" : "");
           chip.append(icon(doc, foe.gait, foe.name), el(doc, "span", "", "× " + foe.count));
           for (const mark of foe.marks) chip.append(icon(doc, mark, MARK_TITLES[mark]));
           foes.append(chip);
@@ -245,21 +258,24 @@ export function createWaveCard(host: HTMLElement, options: WaveCardOptions = {})
     const view = doc.defaultView;
     const width = view?.innerWidth ?? 1280;
     const height = view?.innerHeight ?? 720;
-    const fixed = screenZones(width, height);
+    const textScale = 100 * (parseFloat(doc.documentElement.style.getPropertyValue("--ic-text-scale")) || 1);
+    const fixed = screenZones(width, height, textScale);
     const zone = (id: string) => fixed.find((item) => item.id === id)!;
     const cardZone = zone("card");
     const quyet = zone("quyet");
     const rect = card.getBoundingClientRect();
     const w = rect.width || cardZone.width;
     const h = rect.height || cardZone.height;
-    // Top right, bottom right above the Bàn Quyết, top left: the first that covers no route, slot or panel.
-    const margin = cardZone.y;
-    const right = cardZone.x + cardZone.width - w;
-    const spots: Rect[] = [
-      { x: right, y: margin, w, h },
-      { x: right, y: quyet.y - margin - h, w, h },
-      { x: margin, y: margin, w, h },
-    ];
+    // Reserve the drawer before its first frame, then use actual DOM bounds for either Shop mode.
+    const drawer = zone("shop");
+    const shops: Rect[] = [{ x: drawer.x, y: drawer.y, w: drawer.width, h: drawer.height }];
+    for (const node of doc.querySelectorAll<HTMLElement>(".ic-shop")) {
+      if (node.closest("[hidden]")) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) shops.push({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+    }
+    const spots = waveCardSpots(width, quyet.y, w, h, shops);
+    if (!spots.length) return;
     let choice = 0;
     if (options.project) {
       const zones = publishZones(host, options.stage ?? world.stage, options.project);
@@ -267,7 +283,7 @@ export function createWaveCard(host: HTMLElement, options: WaveCardOptions = {})
     }
     spot = choice;
     const chosen = spots[choice]!;
-    card.style.left = Math.round(chosen.x) + "px";
+    card.style.left = Math.floor(chosen.x) + "px";
     card.style.top = Math.round(chosen.y) + "px";
   };
 

@@ -27,6 +27,19 @@ function typeWord(world: World, text: string): void {
 }
 
 describe("the Bàn Quyết view", () => {
+  it("shows one meaning on the locked hinted skill, without revealing other words", () => {
+    const { world } = makeWorld({ phase: "wave", preset: "relax" });
+    stepWords(world);
+    const entry = slotEntry(world, 0, 4)!;
+    typeKey(world, key(world, entry.text[0]!));
+    const gloss = () => ({ vi: "khu vườn", ipa: "" });
+    const view = banQuyetView(world, 0, gloss);
+    expect(view.slots[3]?.note).toBe("khu vườn");
+    expect(view.slots.filter(cell => cell.note === "khu vườn")).toHaveLength(1);
+    entry.hint = false;
+    expect(banQuyetView(world, 0, gloss).slots[3]?.note).toBe("");
+  });
+
   it("is dim with no live word outside the wave warning, waves and the boss phase", () => {
     const fx = makeWorld({ phase: "break", wave: 1 });
     stepWords(fx.world);
@@ -42,13 +55,13 @@ describe("the Bàn Quyết view", () => {
     stepWords(fx.world);
     const view = banQuyetView(fx.world, 0);
     expect(view.live).toBe(true);
-    expect(view.slots.map((cell) => cell.label)).toEqual(["Ngự Kiếm Quyết", "Nhất Tuyến Xuyên Vân", "Hồi Kiếm Hộ Thân", "Lạc Kiếm Trận", "Thiên Hà Kiếm Vũ"]);
+    expect(view.slots.map((cell) => cell.label)).toEqual(["Strike", "Pierce", "Ward", "Sword field", "Ultimate"]);
     expect(view.slots.slice(0, 4).every((cell) => cell.state === "ready" && cell.text.length >= 3)).toBe(true);
     expect(view.slots[3]!.fresh).toBe(true);
-    expect(view.slots[4]).toMatchObject({ state: "cooldown", text: "", cool: 0.6, note: "Chân Nguyên 40/100" });
+    expect(view.slots[4]).toMatchObject({ state: "cooldown", text: "", cool: 0.6, note: "Energy 40/100" });
     expect(view.chanNguyen).toBe(40);
     fx.world.seats[0]!.loadout = { guard: "dash", tamPhap: "kiem-tam" };
-    expect(slotLabel(fx.world, 0, 3)).toBe("Lưu Quang Bộ");
+    expect(slotLabel(fx.world, 0, 3)).toBe("Dash");
   });
 
   it("follows typing, the held state, and the cooldown ring with the next word dim", () => {
@@ -59,7 +72,7 @@ describe("the Bàn Quyết view", () => {
     expect(banQuyetView(fx.world, 0).slots[1]).toMatchObject({ state: "typing", typed: 1, text });
     vi.mocked(resolveCast).mockReturnValue(false);
     typeWord(fx.world, text.slice(1));
-    expect(banQuyetView(fx.world, 0).slots[1]).toMatchObject({ state: "held", text, note: "Chờ đích" });
+    expect(banQuyetView(fx.world, 0).slots[1]).toMatchObject({ state: "held", text, note: "Waiting for target" });
     vi.mocked(resolveCast).mockReturnValue(true);
     fx.world.tick += 1;
     stepWords(fx.world);
@@ -79,10 +92,10 @@ describe("the Bàn Quyết view", () => {
       seats: [{ slots: [{ item: "hoi-xuan-dan", count: 2 }, { item: null, count: 0 }], cooldownUntil: fx.world.tick + 240 }],
     };
     const view = banQuyetView(fx.world, 0);
-    expect(view.extras.map((cell) => [cell.key, cell.label])).toEqual([["seal-0", "Ấn"]]);
+    expect(view.extras.map((cell) => [cell.key, cell.label])).toEqual([["seal-0", "Seal"]]);
     expect(view.extras[0]!.text.length).toBeGreaterThanOrEqual(3);
     expect(view.items.map((cell) => [cell.key, cell.label, cell.count, cell.empty])).toEqual([
-      ["item-1", "Hồi Xuân Đan", 2, false],
+      ["item-1", "Healing pill", 2, false],
       ["item-2", "", 0, true],
       ["item-3", "", 0, true],
     ]);

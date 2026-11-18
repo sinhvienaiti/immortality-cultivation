@@ -159,7 +159,7 @@ export function createLearningFrame(host: HTMLElement, options: LearningFrameOpt
   if (options.speak) {
     speakButton = node(doc, "button", "ic-learn__speak", "♪");
     speakButton.type = "button";
-    speakButton.setAttribute("aria-label", "Nghe từ");
+    speakButton.setAttribute("aria-label", "Hear word");
     top.append(speakButton);
   }
   const ipa = node(doc, "div", c.ipa);
@@ -256,7 +256,7 @@ export function createLearningFrame(host: HTMLElement, options: LearningFrameOpt
           const typed = node(doc, "span", c.typed, view.text.slice(0, view.typed));
           word.replaceChildren(typed, doc.createTextNode(view.text.slice(view.typed)));
           if (view.done) word.append(doc.createTextNode(" "), node(doc, "span", "ic-learn__check", "✓"));
-          if (view.isNew) word.append(doc.createTextNode(" "), node(doc, "span", "ic-learn__badge", "MỚI"));
+          if (view.isNew) word.append(doc.createTextNode(" "), node(doc, "span", "ic-learn__badge", "NEW"));
           ipa.textContent = view.ipa;
           meaning.textContent = view.meaning;
         }
@@ -264,7 +264,7 @@ export function createLearningFrame(host: HTMLElement, options: LearningFrameOpt
       const recentNext = model.recent.map((item) => item.text + " (" + shortMeaning(item.vi) + ")").join(" · ");
       if (recentNext !== recentKey) {
         recentKey = recentNext;
-        recent.textContent = recentNext === "" ? "" : "Vừa học: " + recentNext;
+        recent.textContent = recentNext === "" ? "" : "Just learned: " + recentNext;
       }
     },
     dispose(): void {

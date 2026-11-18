@@ -118,35 +118,23 @@ describe("the actors view", () => {
     expect(renderer.layers.actors.children).toHaveLength(0);
   });
 
-  it("draws a body entering at a sky corner or a gate just inside the field (canon D48), the sim position untouched", () => {
+  it("draws entering bodies inside the new field while leaving sim coordinates untouched", () => {
     const actors = createActors(fakeRenderer(), { capacity: 8 });
-    const crow = beast(0, { species: "hoa-nha", x: -20 * M, z: -18 * M, y: 4 * M });
-    const king = beast(1, { species: "thiet-boi-lang-vuong", tier: "boss", boss: true, x: -15 * M, z: -18 * M });
+    const crow = beast(0, { species: "hoa-nha", x: -24 * M, z: -44 * M, y: 4 * M });
+    const king = beast(1, { species: "thiet-boi-lang-vuong", tier: "boss", boss: true, x: -2 * M, z: -43.5 * M });
     actors.frame({ tick: 1, stage: THANH_THACH_AI, beasts: { list: [crow, king] } } as unknown as World, info(1 / 60));
     const p: Point3 = { x: 0, y: 0, z: 0 };
     actors.locate(0, 100, "base", p);
     const crowReach = Math.hypot(CROWD_LOOKS["hoa-nha"].sizeM[0], CROWD_LOOKS["hoa-nha"].sizeM[2]) / 2;
-    expect(p.x).toBeCloseTo(-20 + crowReach, 9);
-    expect(p.z).toBeCloseTo(-18 + crowReach, 9);
+    expect(p.x).toBeCloseTo(-24 + crowReach, 9);
+    expect(p.z).toBeCloseTo(-44 + crowReach, 9);
     actors.locate(1, 101, "base", p);
     const kingReach = Math.hypot(CROWD_LOOKS["thiet-boi-lang-vuong"].sizeM[0], CROWD_LOOKS["thiet-boi-lang-vuong"].sizeM[2]) / 2;
-    expect(p.x).toBe(-15);
-    // Taller than the headroom: further in by the excess height over tan(tilt).
+    expect(p.x).toBe(-2);
     const excess = (CROWD_LOOKS["thiet-boi-lang-vuong"].sizeM[1] - VIEW.headroomM) / Math.tan((VIEW.tiltDeg * Math.PI) / 180);
-    expect(p.z).toBeCloseTo(-18 + kingReach + Math.max(0, excess), 9);
-    expect(crow.x).toBe(-20 * M);
-    // The Vương's whole body at its entry is in frame with the Bàn Quyết band below, whichever way it faces (1080p).
-    const camera = gameCamera(1920, 1080);
-    const [w, h, l] = CROWD_LOOKS["thiet-boi-lang-vuong"].sizeM;
-    const v = new THREE.Vector3();
-    for (let yaw = 0; yaw < Math.PI * 2; yaw += Math.PI / 8) {
-      for (let i = 0; i < 8; i += 1) {
-        const a = i & 1 ? w / 2 : -w / 2;
-        const b = i & 4 ? l / 2 : -l / 2;
-        v.set(p.x + a * Math.cos(yaw) + b * Math.sin(yaw), i & 2 ? h : 0, p.z - a * Math.sin(yaw) + b * Math.cos(yaw)).project(camera);
-        expect(v.y, "yaw " + yaw.toFixed(2)).toBeLessThanOrEqual(1);
-      }
-    }
+    expect(p.z).toBeCloseTo(-44 + kingReach + Math.max(0, excess), 9);
+    expect([crow.x, crow.z, king.x, king.z]).toEqual([-24 * M, -44 * M, -2 * M, -43.5 * M]);
+    actors.dispose();
   });
 
   it("dissolves a dead beast where it fell, and fades one that left without a death", () => {
@@ -218,24 +206,17 @@ describe("sizes and frame on screen (canon §21.1, D48)", () => {
     for (const x of [-18, 0, 18]) expect(pxHeight(camera, r, PLAYER_LOOK.heightM, r, x, -18), "player at x " + x).toBeGreaterThanOrEqual(SIZES_PX_1080.player);
   });
 
-  it("keeps a flyer entering at either sky corner, and a beast at either gate, inside the frame at 1280 × 720, 1920 × 1080 and 16:10", () => {
-    const crow = CROWD_LOOKS["hoa-nha"].sizeM;
-    const v = new THREE.Vector3();
-    for (const [width, height] of [[1280, 720], [1920, 1080], [1440, 900]] as const) {
+  it("starts the distant entries off screen and shows a 1.5 m beast at z −31 in Camera B", () => {
+    for (const [width, height] of [[1280, 720], [1920, 1080]] as const) {
       const camera = gameCamera(width, height);
-      for (const entry of THANH_THACH_AI.field.skyEntries) {
-        for (const dy of [0, crow[1]]) {
-          v.set(entry.xMm / 1000, FLY_DRAW_M + dy, entry.zMm / 1000).project(camera);
-          expect(Math.abs(v.x), width + "×" + height + " x").toBeLessThanOrEqual(1);
-          expect(v.y, width + "×" + height + " top").toBeLessThanOrEqual(1);
-          // Above the Bàn Quyết band.
-          expect(v.y).toBeGreaterThan(-1 + (2 * quyetBand(width, height)) / height);
-        }
-      }
       for (const gate of THANH_THACH_AI.field.gates) {
-        v.set(gate.at.xMm / 1000, CROWD_LOOKS["nham-vien"].sizeM[1], gate.at.zMm / 1000).project(camera);
-        expect(v.y, "a Nham Viên's head at gate " + gate.id).toBeLessThanOrEqual(1);
+        const p = new THREE.Vector3(gate.at.xMm / 1000, 0, gate.at.zMm / 1000).project(camera);
+        expect(p.y).toBeGreaterThan(1);
       }
+      const base = new THREE.Vector3(0, 0, -31).project(camera);
+      const head = new THREE.Vector3(0, 1.5, -31).project(camera);
+      expect(head.y).toBeLessThanOrEqual(1);
+      expect((head.y - base.y) * height / 2).toBeGreaterThanOrEqual(40 * height / 1080);
     }
   });
 });

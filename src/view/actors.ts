@@ -30,6 +30,7 @@ import { Reactions } from "../kit/feedback/reaction";
 import { uToM } from "../sim/fixed";
 import { CLIP, CROWD_LOOKS, TINT, TINT_HEX, createCrowd, type Crowd, type CrowdDrawMode, type CrowdInstance, type CrowdLook, type CrowdRing } from "./crowd";
 import { IC_FEEDBACK_PROFILE } from "./feedback-profile";
+import { createHealthBars } from "./health-bars";
 import { VIEW, type Renderer3D } from "./renderer";
 
 /** Layers in use (generals draw on their family's layer). */
@@ -228,6 +229,7 @@ function turnToward(from: number, to: number, step: number): number {
 /** Beasts through the crowd on the renderer's actors layer. */
 export function createActors(renderer: Renderer3D, options: ActorsOptions = {}): ActorsView {
   const capacity = options.capacity ?? 320;
+  const healthBars = createHealthBars(renderer.layers.actors, capacity * LAYERS.length);
   const reduced = options.reduced ?? (() => false);
   const crowd = createCrowd(renderer, options.mode ?? crowdModeFor(renderer.quality ?? "high"), { capacity });
   // Every layer exists from the start, so a warm-up compile covers it (no stall at the first beast of a kind).
@@ -501,9 +503,11 @@ export function createActors(renderer: Renderer3D, options: ActorsOptions = {}):
       }
       crowd.setRings(rings);
       crowd.update(info.dt);
+      healthBars.update(world, view.locate);
     },
 
     dispose(): void {
+      healthBars.dispose();
       crowd.dispose();
       recs.clear();
       live.length = 0;

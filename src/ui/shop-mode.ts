@@ -31,18 +31,18 @@ export const CONSUMABLE_IDS: readonly ConsumableId[] = ["hoi-xuan-dan", "kim-tha
 
 /** canon §8.3, §12.3 names, until Lane 4's data names them. */
 const NAMES: Readonly<Record<ShopItemId, string>> = {
-  "kiem-thung": "Kiếm Thung",
-  "loi-phu-tru": "Lôi Phù Trụ",
-  "phong-an-vong": "Phong Ấn Võng",
-  "hoi-xuan-dan": "Hồi Xuân Đan",
-  "kim-than-phu": "Kim Thân Phù",
-  "loi-hoa-phu": "Lôi Hỏa Phù",
+  "kiem-thung": "Sword stakes",
+  "loi-phu-tru": "Thunder pillar",
+  "phong-an-vong": "Binding net",
+  "hoi-xuan-dan": "Healing pill",
+  "kim-than-phu": "Iron ward",
+  "loi-hoa-phu": "Thunder talisman",
 };
 
-/** Slot kinds a mechanism fits (canon §8.3: Kiếm Thung a 4 × 2 m strip, the others a post), until Lane 4's data says. */
+/** Slot kinds a mechanism fits (canon §8.3: Sword stakes a 4 × 2 m strip, the others a post), until Lane 4's data says. */
 const FITS: Readonly<Record<MechanismId, MechSlotKind>> = { "kiem-thung": "strip", "loi-phu-tru": "post", "phong-an-vong": "post" };
 
-const SLOT_KIND_NAMES: Readonly<Record<MechSlotKind, string>> = { strip: "dải đất", post: "trụ" };
+const SLOT_KIND_NAMES: Readonly<Record<MechSlotKind, string>> = { strip: "ground strip", post: "post" };
 
 /** The fixed stock in order (Lane 4's SHOP_ITEMS; the canon's six until it lands). */
 export function shopItems(): readonly ShopItemId[] {
@@ -54,10 +54,10 @@ export function isMechanism(id: ShopItemId): id is MechanismId {
 }
 
 export function itemName(id: ShopItemId): string {
-  return (isMechanism(id) ? MECHANISM_DEFS[id]?.name : CONSUMABLE_DEFS[id]?.name) ?? NAMES[id];
+  return NAMES[id];
 }
 
-/** Price in Linh Sa (null until Lane 4's data has it). */
+/** Price in Gold (null until Lane 4's data has it). */
 export function itemPrice(id: ShopItemId): number | null {
   return (isMechanism(id) ? MECHANISM_DEFS[id]?.price : CONSUMABLE_DEFS[id]?.price) ?? null;
 }
@@ -77,7 +77,7 @@ export function upgradePrice(mech: MechanismId, level: number): number | null {
   return Math.floor((base * step.pricePct) / 100);
 }
 
-/** Linh Sa back on a sale (canon §8.3: 70 %, 100 % in the same break); the sim's number wins. */
+/** Gold back on a sale (canon §8.3: 70 %, 100 % in the same break); the sim's number wins. */
 export function refundOf(paid: number, sameBreak: boolean): number {
   return Math.floor((paid * (sameBreak ? MECHANISMS.refundSameBreakPct : MECHANISMS.refundPct)) / 100);
 }
@@ -131,11 +131,11 @@ export function linhSaOf(world: World, seat: number): number {
   return world.economy?.wallets?.[seat]?.linhSa ?? 0;
 }
 
-/** A row's short label: "Ô 3 · Lôi Phù Trụ cấp 2", "Ô 5 · trụ trống", "Đan 1 · Hồi Xuân Đan × 2". */
+/** A row's short label: "Ô 3 · Thunder pillar cấp 2", "Ô 5 · post trống", "Đan 1 · Healing pill × 2". */
 export function rowLabel(row: ShopRow): string {
-  if (row.kind === "item") return "Đan " + (row.index + 1) + " · " + (row.item === null || row.count <= 0 ? "trống" : itemName(row.item) + " × " + row.count);
-  if (row.mech === null) return "Ô " + (row.index + 1) + " · " + SLOT_KIND_NAMES[row.slotKind ?? "post"] + " trống";
-  return "Ô " + (row.index + 1) + " · " + itemName(row.mech) + " cấp " + row.level;
+  if (row.kind === "item") return "Item " + (row.index + 1) + " · " + (row.item === null || row.count <= 0 ? "empty" : itemName(row.item) + " × " + row.count);
+  if (row.mech === null) return "Slot " + (row.index + 1) + " · " + SLOT_KIND_NAMES[row.slotKind ?? "post"] + " empty";
+  return "Slot " + (row.index + 1) + " · " + itemName(row.mech) + " level " + row.level;
 }
 
 // ── The model ───────────────────────────────────────────────────────────────
@@ -174,6 +174,7 @@ export class ShopModeModel implements ShopModePanel {
   /** The world the next action reads (the presenter calls it each frame). */
   setWorld(world: World): void {
     this.world = world;
+    if (!canShop(world.phase) && this.isOpen) this.close();
   }
 
   rows(): ShopRow[] {
@@ -181,6 +182,7 @@ export class ShopModeModel implements ShopModePanel {
   }
 
   open(): void {
+    if (this.world === null || !canShop(this.world.phase)) return;
     this.isOpen = true;
     this.message = "";
     this.confirm = null;
@@ -216,6 +218,7 @@ export class ShopModeModel implements ShopModePanel {
   }
 
   handleAction(action: KeyAction): boolean {
+    if (this.world === null || !canShop(this.world.phase)) return false;
     switch (action) {
       case "arrow-left":
         this.pick(this.item - 1);
@@ -268,34 +271,34 @@ export class ShopModeModel implements ShopModePanel {
     const row = this.rows()[this.row];
     if (id === undefined || row === undefined) return;
     if (!isMechanism(id)) {
-      this.send({ type: "buy", seat: this.seat, item: id }, "Mua " + itemName(id));
+      this.send({ type: "buy", seat: this.seat, item: id }, "Buy " + itemName(id));
       return;
     }
     if (row.kind !== "mech") {
-      this.message = "Chọn ô cơ quan (↑ ↓) để đặt " + itemName(id);
+      this.message = "Choose a mechanism slot (↑ ↓): " + itemName(id);
       return;
     }
     if (row.mech !== null) {
-      this.message = "Ô " + (row.index + 1) + " đã có " + itemName(row.mech) + ": = nâng, - bán";
+      this.message = "Slot " + (row.index + 1) + " contains " + itemName(row.mech) + ": = upgrade, - sell";
       return;
     }
     if (row.slotKind !== null && slotKindFor(id) !== row.slotKind) {
-      this.message = itemName(id) + " đặt trên " + SLOT_KIND_NAMES[slotKindFor(id)] + ", ô " + (row.index + 1) + " là " + SLOT_KIND_NAMES[row.slotKind];
+      this.message = itemName(id) + " requires " + SLOT_KIND_NAMES[slotKindFor(id)] + ", slot " + (row.index + 1) + " is " + SLOT_KIND_NAMES[row.slotKind];
       return;
     }
-    this.send({ type: "place", seat: this.seat, slot: row.index, mech: id }, "Đặt " + itemName(id) + " · ô " + (row.index + 1));
+    this.send({ type: "place", seat: this.seat, slot: row.index, mech: id }, "Place " + itemName(id) + " · slot " + (row.index + 1));
   }
 
   /** = and -: the first press asks, the second on the same slot within SHOP_MODE.confirmMs does it (canon §5.1, D45). */
   private twice(action: "upgrade" | "sell"): void {
     const row = this.rows()[this.row];
     if (row === undefined || row.kind !== "mech" || row.mech === null) {
-      this.message = "Chọn một ô có cơ quan (↑ ↓)";
+      this.message = "Choose a built mechanism (↑ ↓)";
       this.confirm = null;
       return;
     }
     if (action === "upgrade" && row.level >= MAX_LEVEL) {
-      this.message = itemName(row.mech) + " đã ở cấp tối đa";
+      this.message = itemName(row.mech) + " is at maximum level";
       this.confirm = null;
       return;
     }
@@ -303,16 +306,16 @@ export class ShopModeModel implements ShopModePanel {
     const pending = this.confirm;
     if (pending !== null && pending.action === action && pending.row === this.row && now <= pending.until) {
       const name = itemName(row.mech);
-      if (action === "upgrade") this.send({ type: "upgrade", seat: this.seat, slot: row.index }, "Nâng " + name + " lên cấp " + (row.level + 1));
-      else this.send({ type: "sell", seat: this.seat, slot: row.index }, "Bán " + name);
+      if (action === "upgrade") this.send({ type: "upgrade", seat: this.seat, slot: row.index }, "Upgrade " + name + " to level " + (row.level + 1));
+      else this.send({ type: "sell", seat: this.seat, slot: row.index }, "Sell " + name);
       return;
     }
     this.confirm = { action, row: this.row, until: now + SHOP_MODE.confirmMs };
     if (action === "upgrade") {
       const price = upgradePrice(row.mech, row.level);
-      this.message = "Bấm = lần nữa để nâng " + itemName(row.mech) + " lên cấp " + (row.level + 1) + (price === null ? "" : " (" + viNumber(price) + " Linh Sa)");
+      this.message = "Press = again to upgrade " + itemName(row.mech) + " to level " + (row.level + 1) + (price === null ? "" : " (" + viNumber(price) + " Gold)");
     } else {
-      this.message = "Bấm - lần nữa để bán " + itemName(row.mech) + " (hoàn " + viNumber(refundOf(row.paid, row.sameBreak)) + " Linh Sa)";
+      this.message = "Press - again to sell " + itemName(row.mech) + " (refund " + viNumber(refundOf(row.paid, row.sameBreak)) + " Gold)";
     }
   }
 }
@@ -324,7 +327,7 @@ export type ShopModeOptions = ShopModeModelOptions;
 export type ShopModePresenter = ShopModePanel & Presenter & { readonly model: ShopModeModel };
 
 /** Keys line (canon §5.1 table). */
-export const SHOP_KEYS_TEXT = "← → món · ↑ ↓ ô · Enter mua, đặt · = nâng (2 lần) · - bán (2 lần) · Esc thoát";
+export const SHOP_KEYS_TEXT = "← → item · ↑ ↓ slot · Enter buy/place · = upgrade twice · - sell twice · Esc close";
 
 export function createShopMode(host: HTMLElement, sink: CommandSink, seat: number, options: ShopModeOptions = {}): ShopModePresenter {
   const model = new ShopModeModel(sink, seat, options);
@@ -334,9 +337,9 @@ export function createShopMode(host: HTMLElement, sink: CommandSink, seat: numbe
   root.dataset.keepout = "";
   root.hidden = true;
   root.setAttribute("role", "dialog");
-  root.setAttribute("aria-label", "Cửa hàng (bàn phím)");
+  root.setAttribute("aria-label", "Shop (keyboard)");
   const head = el(doc, "div", "ic-shop__head");
-  const title = el(doc, "span", "ic-shop__title", "Cửa hàng " + keyCap("Backquote"));
+  const title = el(doc, "span", "ic-shop__title", "Shop " + keyCap("Backquote"));
   const money = el(doc, "span", "ic-shop__money");
   head.append(title, money);
   const items = el(doc, "div", "ic-shop__row");
@@ -356,7 +359,7 @@ export function createShopMode(host: HTMLElement, sink: CommandSink, seat: numbe
     drawnKey = key;
     setShown(root, model.isOpen);
     if (!model.isOpen) return;
-    setText(money, "Linh Sa " + viNumber(wallet));
+    setText(money, "Gold " + viNumber(wallet));
     items.replaceChildren(
       ...list.map((id, k) => {
         const price = itemPrice(id);

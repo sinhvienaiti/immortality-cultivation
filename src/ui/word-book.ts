@@ -15,7 +15,7 @@ export interface WordBookSection {
   readonly entries: readonly WordBookEntry[];
 }
 
-const TITLES: Readonly<Record<WordBookEntry["kind"], string>> = { new: "Mới học", mistyped: "Gõ sai", due: "Cần ôn" };
+const TITLES: Readonly<Record<WordBookEntry["kind"], string>> = { new: "New words", mistyped: "Mistyped", due: "Due for review" };
 
 /** Non-empty sections in the order new, mistyped, due (pure). */
 export function wordBookSections(entries: readonly WordBookEntry[]): WordBookSection[] {
@@ -42,9 +42,9 @@ export function renderWordBook(host: HTMLElement, entries: readonly WordBookEntr
   const doc = host.ownerDocument;
   installStyle(doc, STYLE_ID, CSS);
   const root = node(doc, "section", "ic-book");
-  root.setAttribute("aria-label", "Sổ Từ");
+  root.setAttribute("aria-label", "Word Book");
   const sections = wordBookSections(entries);
-  if (sections.length === 0) root.append(node(doc, "p", "ic-book__empty", "Trận này chưa có từ để ghi vào Sổ Từ."));
+  if (sections.length === 0) root.append(node(doc, "p", "ic-book__empty", "No words to record this match."));
   for (const section of sections) {
     const list = node(doc, "ul", "ic-book__list");
     for (const entry of section.entries) {

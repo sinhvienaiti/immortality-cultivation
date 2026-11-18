@@ -14,7 +14,7 @@
  * Owner: Lane 1.
  */
 import * as THREE from "three";
-import { createRenderer, fitCamera, placeCamera, type Renderer3D } from "../renderer";
+import { createRenderer, fitCamera, placeCamera, VIEW, type Renderer3D } from "../renderer";
 import { CLIP, CROWD_LOOKS, createCrowd, type Crowd, type CrowdKindCounts, type ImpostorRule } from "../crowd";
 import { disposeVat, loadVat, type VatAsset } from "../vat";
 import { createSwords, type SwordPool } from "../swords";
@@ -176,7 +176,7 @@ class BenchScene {
       });
       // Bakes (VAT, atlases) before the clock starts.
       for (const species of HERD_MIX) this.crowd.prepare(species);
-      this.herd = new Herd(this.crowd, c.count, benchRandom(c.seed));
+      this.herd = new Herd(this.crowd, c.count, benchRandom(c.seed), c.map);
       this.herd.update(0);
       this.crowd.update(0);
     }
@@ -341,6 +341,7 @@ class BenchScene {
 /** Runs one case; resolves with the result and keeps drawing until __icBenchStop(). */
 export async function runBench(host: HTMLElement, c: BenchCase): Promise<BenchResult> {
   const renderer: Renderer3D = createRenderer(host, c.quality);
+  if (c.map === "lane") placeCamera(renderer.camera, CAMERA.defaultTiltDeg, VIEW.distanceM, 0, VIEW.lookZM);
   const field = buildBenchField(c.seed);
   renderer.layers.ground.add(field);
   const scene = new BenchScene(c);
@@ -362,6 +363,7 @@ export async function runBench(host: HTMLElement, c: BenchCase): Promise<BenchRe
     // Closer looks for pictures (readability), never measured, at the game's tilt: gate A's corridor, the heart.
     if (preset === "close") placeCamera(renderer.camera, CAMERA.defaultTiltDeg, 27, -8, -11, 0);
     else if (preset === "heart") placeCamera(renderer.camera, CAMERA.defaultTiltDeg, 26, 0, -3, 0);
+    else if (c.map === "lane") placeCamera(renderer.camera, CAMERA.defaultTiltDeg, VIEW.distanceM, 0, VIEW.lookZM);
     else fitCamera(renderer.camera, renderer.stage.size.width / renderer.stage.size.height);
   };
 

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
+import { THANH_THACH_AI } from "../../src/content/data/stage-m0a";
 import { CAMERA, FIELD, TT_BUDGETS, TT_DYNAMIC_RES, TT_LIMITS, TT_MSAA, TT_TIERS } from "../../src/content/rules";
 import type { ScreenPoint } from "../../src/app/contracts";
 import { FIELD_M, VIEW, fitCamera, placeCamera, projectPoint } from "../../src/view/renderer";
@@ -56,7 +57,7 @@ describe("tier table (canon §20.2, PB-35)", () => {
 
 describe("fixed 3/4 camera (canon §21.1)", () => {
   it("picks a tilt and FOV inside the canon ranges; the tilt is the D48 default", () => {
-    expect(CAMERA.defaultTiltDeg).toBe(55);
+    expect(CAMERA.defaultTiltDeg).toBe(42);
     expect(VIEW.tiltDeg).toBe(CAMERA.defaultTiltDeg);
     expect(VIEW.tiltDeg).toBeGreaterThanOrEqual(CAMERA.tiltDeg[0]);
     expect(VIEW.tiltDeg).toBeLessThanOrEqual(CAMERA.tiltDeg[1]);
@@ -64,78 +65,42 @@ describe("fixed 3/4 camera (canon §21.1)", () => {
     expect(VIEW.fovDeg).toBeLessThanOrEqual(CAMERA.fovDeg[1]);
   });
 
-  it("frames the field of canon §8.1 (40 × 26 m, heart at the origin)", () => {
-    expect(FIELD_M).toEqual({ minX: -20, maxX: 20, minZ: -18, maxZ: 8 });
-    expect((FIELD_M.maxX - FIELD_M.minX) * 1000).toBe(CAMERA.frameMm.width);
-    expect((FIELD_M.maxZ - FIELD_M.minZ) * 1000).toBe(CAMERA.frameMm.depth);
-    expect(FIELD.gates.A.xMm).toBe(-15_000);
+  it("uses a 48 × 52 m field independently of the fixed camera frame", () => {
+    expect(FIELD_M).toEqual({ minX: -24, maxX: 24, minZ: -44, maxZ: 8 });
+    expect(FIELD.gates.A).toEqual({ xMm: -2000, zMm: -43500 });
   });
 
-  const corners = (camera: THREE.PerspectiveCamera, headroom = VIEW.headroomM) => {
-    const v = new THREE.Vector3();
-    const points: [number, number, number][] = [
-      [FIELD_M.minX, 0, FIELD_M.minZ],
-      [FIELD_M.maxX, 0, FIELD_M.minZ],
-      [FIELD_M.minX, 0, FIELD_M.maxZ],
-      [FIELD_M.maxX, 0, FIELD_M.maxZ],
-      [FIELD_M.minX, headroom, FIELD_M.minZ],
-      [FIELD_M.maxX, headroom, FIELD_M.minZ],
-    ];
-    return points.map(([x, y, z]) => v.set(x, y, z).project(camera).clone());
-  };
-
-  for (const [w, h] of [
-    [1920, 1080],
-    [1280, 720],
-    [1600, 900],
-    [1440, 900],
-    [2560, 1080],
-    [1024, 768],
-  ] as const) {
-    it("shows the whole field with its far-edge headroom at " + w + "×" + h, () => {
+  for (const [w, h] of [[1920, 1080], [1280, 720]] as const) {
+    it("keeps Camera B landmarks and the lane clear of Bàn Quyết at " + w + "×" + h, () => {
       const camera = new THREE.PerspectiveCamera();
-      const fit = fitCamera(camera, w / h);
-      expect(fit.tiltDeg).toBe(VIEW.tiltDeg);
-      expect(camera.fov).toBe(VIEW.fovDeg);
-      const ndc = corners(camera);
-      const limit = 1 - VIEW.marginNdc + 1e-3;
-      for (const p of ndc) {
-        expect(Math.abs(p.x)).toBeLessThanOrEqual(limit);
-        expect(Math.abs(p.y)).toBeLessThanOrEqual(limit);
-        expect(p.z).toBeLessThan(1);
+      const fit = fitCamera(camera, w / h, { insetTop: 0.1, insetBottom: 0.14 });
+      expect(fit).toEqual({ tiltDeg: 42, fovDeg: 28, distanceM: 52.8, targetZ: -7.55 });
+      const project = (x: number, y: number, z: number) => projectPoint(camera, w, h, x, y, z, { x: 0, y: 0, visible: false }, new THREE.Vector3());
+      expect(Math.abs(project(0, 0, 3).y - 880 * h / 1080)).toBeLessThanOrEqual(6 * h / 1080);
+      expect(Math.abs(project(0, 0, 0).y - 772 * h / 1080)).toBeLessThanOrEqual(6 * h / 1080);
+      expect(project(0, 0, -31).y - project(0, 1.5, -31).y).toBeGreaterThanOrEqual(40 * h / 1080);
+      for (const pillar of THANH_THACH_AI.field.pillars) {
+        expect(project(pillar.at.xMm / 1000, 0, pillar.at.zMm / 1000).visible).toBe(true);
+        expect(project(pillar.at.xMm / 1000, 3.4, pillar.at.zMm / 1000).visible).toBe(true);
       }
-      // The binding side fills the frame (no wasted screen): width at 16:9, either side elsewhere.
-      const spanX = Math.max(...ndc.map((p) => p.x)) - Math.min(...ndc.map((p) => p.x));
-      const spanY = Math.max(...ndc.map((p) => p.y)) - Math.min(...ndc.map((p) => p.y));
-      expect(Math.max(spanX, spanY)).toBeGreaterThan(2 * (1 - VIEW.marginNdc) - 0.01);
-      // Looking north from the south, down at the tilt.
-      expect(camera.position.z).toBeGreaterThan(fit.targetZ);
-      const down = new THREE.Vector3();
-      camera.getWorldDirection(down);
-      expect(THREE.MathUtils.radToDeg(Math.asin(-down.y))).toBeCloseTo(VIEW.tiltDeg, 6);
-      expect(down.x).toBeCloseTo(0, 9);
+      for (const slot of THANH_THACH_AI.field.mechSlots) expect(project(slot.at.xMm / 1000, 0, slot.at.zMm / 1000).visible).toBe(true);
+      for (const p of THANH_THACH_AI.field.lane!.pointsMm) {
+        for (const dx of [-6, 6]) expect(project(p.xMm / 1000 + dx, 0, p.zMm / 1000).y).toBeLessThan(930 * h / 1080);
+      }
+      const ray = new THREE.Raycaster();
+      placeCamera(camera, 42, 52.8, 0, -16.8);
+      ray.setFromCamera(new THREE.Vector2(0, 1), camera);
+      const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3())!;
+      expect(hit.z).toBeCloseTo(-44, 0);
     });
   }
 
-  it("at 16:9 the 40 m width binds: the near edge spans the screen", () => {
-    const camera = new THREE.PerspectiveCamera();
-    fitCamera(camera, 16 / 9);
-    const [farL, farR, nearL, nearR] = corners(camera);
-    expect(nearR!.x - nearL!.x).toBeCloseTo(2 * (1 - VIEW.marginNdc), 3);
-    expect(farR!.x - farL!.x).toBeLessThan(nearR!.x - nearL!.x);
-  });
-
-  it("is deterministic and fixed (no rotate, no zoom): the same fit twice", () => {
+  it("keeps the fixed vertical frame on wider displays and ignores DOM insets", () => {
     const a = new THREE.PerspectiveCamera();
     const b = new THREE.PerspectiveCamera();
-    expect(fitCamera(a, 16 / 9)).toEqual(fitCamera(b, 16 / 9));
+    expect(fitCamera(a, 16 / 9)).toEqual(fitCamera(b, 21 / 9, { insetBottom: 0.2 }));
     expect(a.position.toArray()).toEqual(b.position.toArray());
-  });
-
-  it("keeps the field above a DOM band at the bottom (Bàn Quyết) when asked", () => {
-    const camera = new THREE.PerspectiveCamera();
-    fitCamera(camera, 16 / 9, { insetBottom: 0.12 });
-    for (const p of corners(camera)) expect(p.y).toBeGreaterThanOrEqual(-1 + VIEW.marginNdc + 0.24 - 1e-3);
+    expect(new THREE.Vector3(15, 0, -20).project(b).x).toBeLessThan(new THREE.Vector3(15, 0, -20).project(a).x);
   });
 
   it("projects to CSS px into the caller's object, visible only on screen", () => {

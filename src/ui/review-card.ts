@@ -17,7 +17,7 @@ import type { KeyPanel } from "../app/input-router";
 import type { ReviewQuestion } from "../app/learning";
 import type { KeyAction } from "../content/rules";
 import type { SimEvent, World } from "../content/types";
-import { drawAnswer, panelBox } from "./learn-ahead";
+import { drawAnswer, panelBox } from "./review-panel";
 import { node } from "./learning-frame";
 
 /** UI timings (not rules): next question after a right answer, after a wrong one. */
@@ -100,9 +100,9 @@ export class ReviewModel {
 }
 
 const KIND_TITLES: Readonly<Record<ReviewQuestion["kind"], string>> = {
-  listening: "Nghe rồi gõ từ",
-  "meaning-type": "Xem nghĩa rồi gõ từ",
-  "meaning-pick": "Chọn nghĩa đúng (phím 1 / 2 / 3)",
+  listening: "Listen, then type",
+  "meaning-type": "Read the meaning, then type",
+  "meaning-pick": "Choose the meaning (1 / 2 / 3)",
 };
 
 export interface ReviewHooks {
@@ -121,7 +121,7 @@ export type ReviewCardPanel = KeyPanel & Presenter & { open(questions?: readonly
 
 export function createReviewCard(host: HTMLElement, sink: CommandSink, seat: number, hooks: ReviewHooks = {}): ReviewCardPanel {
   const doc = host.ownerDocument;
-  const box = panelBox(host, "Thẻ Ôn");
+  const box = panelBox(host, "Review Card");
   const now = hooks.now ?? (() => performance.now());
   const later = hooks.later ?? ((ms: number, run: () => void) => void setTimeout(run, ms));
   let model = new ReviewModel([]);
@@ -134,7 +134,7 @@ export function createReviewCard(host: HTMLElement, sink: CommandSink, seat: num
   const draw = (): void => {
     const question = model.question;
     if (question === null) return;
-    box.title.textContent = "THẺ ÔN";
+    box.title.textContent = "REVIEW CARD";
     box.step.textContent = KIND_TITLES[question.kind] + " · " + (model.index + 1) + " / " + model.questions.length;
     box.word.textContent = question.kind === "meaning-pick" ? question.text : "";
     box.ipa.textContent = "";
@@ -157,7 +157,7 @@ export function createReviewCard(host: HTMLElement, sink: CommandSink, seat: num
     }
     box.result.textContent = "";
     box.result.className = "ic-lpanel__result";
-    box.keys.textContent = question.kind === "meaning-pick" ? "Phím 1 / 2 / 3 chọn · Esc đóng thẻ" : "Enter nộp · Backspace xóa · Esc đóng thẻ";
+    box.keys.textContent = question.kind === "meaning-pick" ? "1 / 2 / 3 choose · Esc close" : "Enter submit · Backspace delete · Esc close";
   };
   const show = (): void => {
     draw();
@@ -177,14 +177,14 @@ export function createReviewCard(host: HTMLElement, sink: CommandSink, seat: num
       sink({ type: "review-card", seat, wordId: question.wordId, correct });
       hooks.learning?.review(question, correct, step.responseMs, step.answer);
       if (correct) {
-        box.result.textContent = "Đúng!";
+        box.result.textContent = "Correct!";
         box.result.className = "ic-lpanel__result is-right";
       } else {
         // A wrong answer costs nothing: the word, its meaning and IPA come back (canon §17).
         box.word.textContent = question.text;
         box.ipa.textContent = question.ipa;
         box.mean.textContent = question.vi;
-        box.result.textContent = "Chưa đúng, nhớ lại nhé";
+        box.result.textContent = "Not quite. Remember this word.";
         box.result.className = "ic-lpanel__result is-wrong";
         hooks.speak?.(question.text);
       }

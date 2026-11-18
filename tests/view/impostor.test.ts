@@ -84,7 +84,7 @@ describe("impostor material", () => {
     // Fog follows the scene, like the bodies.
     expect(material.fog).toBe(true);
     // Baked at the game's tilt (canon D48).
-    expect(CAMERA.defaultTiltDeg).toBe(55);
+    expect(CAMERA.defaultTiltDeg).toBe(42);
     material.dispose();
   });
 });

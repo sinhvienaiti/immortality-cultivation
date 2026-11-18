@@ -3,7 +3,7 @@
  * breaks, above the Bàn Quyết band: the six items with prices (Linh Sa,
  * money gold), then the mechanism slots and đan phù slots. A đan phù click
  * buys it; a mechanism click arms it and a click on an empty slot places it;
- * a click on a built slot selects it, then "Nâng" and "Bán" act on a second
+ * a click on a built slot selects it, then "Upgrade" and "Sell" act on a second
  * click within SHOP_MODE.confirmMs (the same rule as = and - of shop mode,
  * through the same ShopModeModel). Hidden while shop mode is open (the
  * keyboard panel shows the same shop). No typing to buy (canon §14.3).
@@ -30,7 +30,7 @@ export class ShopStripModel {
     this.shop.pick(index);
     if (isMechanism(id)) {
       this.armed = this.armed === index ? -1 : index;
-      this.shop.message = this.armed >= 0 ? "Chọn một ô trống để đặt " + itemName(id) : "";
+      this.shop.message = this.armed >= 0 ? "Choose an empty slot: " + itemName(id) : "";
       return;
     }
     // A đan phù: bought at once (the row does not matter).
@@ -50,7 +50,7 @@ export class ShopStripModel {
       return;
     }
     this.selected = row.kind === "mech" && row.mech !== null ? index : -1;
-    this.shop.message = this.selected >= 0 ? "Nâng hoặc bán (bấm hai lần)" : "";
+    this.shop.message = this.selected >= 0 ? "Upgrade or sell (click twice)" : "";
   }
 
   /** Nâng or Bán on the selected slot (the second click within SHOP_MODE.confirmMs acts). */
@@ -83,11 +83,11 @@ export function createShopStrip(host: HTMLElement, sink: CommandSink, seat: numb
   root.dataset.ui = "shop-strip";
   root.dataset.keepout = "";
   root.hidden = true;
-  root.setAttribute("aria-label", "Cửa hàng");
+  root.setAttribute("aria-label", "Shop");
   const head = el(doc, "div", "ic-shop__head");
-  const title = el(doc, "span", "ic-shop__title", "Cửa hàng");
+  const title = el(doc, "span", "ic-shop__title", "Shop");
   const money = el(doc, "span", "ic-shop__money");
-  const hint = el(doc, "span", "ic-shop__keys", "` mở cửa hàng bằng phím");
+  const hint = el(doc, "span", "ic-shop__keys", "` keyboard shop");
   head.append(title, money, hint);
   const itemsRow = el(doc, "div", "ic-shop__row");
   const slotsRow = el(doc, "div", "ic-shop__row");
@@ -106,12 +106,12 @@ export function createShopStrip(host: HTMLElement, sink: CommandSink, seat: numb
     model.act("upgrade");
     redraw();
   });
-  upgradeButton.textContent = "Nâng";
+  upgradeButton.textContent = "Upgrade";
   const sellButton = uiButton(doc, "ic-shop__act", () => {
     model.act("sell");
     redraw();
   });
-  sellButton.textContent = "Bán";
+  sellButton.textContent = "Sell";
   actions.append(upgradeButton, sellButton);
 
   function draw(world: World, shown: boolean): void {
@@ -122,8 +122,9 @@ export function createShopStrip(host: HTMLElement, sink: CommandSink, seat: numb
     if (key === drawnKey) return;
     drawnKey = key;
     setShown(root, shown);
+    setClass(root, "is-placing", model.armed >= 0);
     if (!shown) return;
-    setText(money, "Linh Sa " + viNumber(wallet));
+    setText(money, "Gold " + viNumber(wallet));
     itemsRow.replaceChildren(
       ...items.map((id, k) => {
         const price = itemPrice(id);

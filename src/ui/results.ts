@@ -41,7 +41,7 @@ export interface HarvestView {
   readonly learning: readonly HarvestLine[];
 }
 
-const GRADE_NAMES = ["Chớp", "Hoàn hảo", "Tốt", "Vừa", "Ẩu"] as const;
+const GRADE_NAMES = ["Flash", "Perfect", "Good", "Fair", "Sloppy"] as const;
 
 /** Stars by Trận Lực left (canon §4.1; the sim's `victory` carries the same). */
 export function starsFor(heart: number, heartMax: number): 1 | 2 | 3 {
@@ -64,20 +64,20 @@ export function harvestView(world: World, seat: number, outcome: Outcome, stars:
   const kept = outcome === "victory" ? thuHach : Math.floor((thuHach * THU_HACH.defeatKeepPct) / 100);
   const pct = heartMax > 0 ? Math.round((heart * 100) / heartMax) : 0;
   const rpg: HarvestLine[] = [
-    { label: "Trận Lực còn", value: pct + " %" },
-    { label: "Đợt giữ được", value: wavesHeld(world) + " / " + world.stage.waves.length },
-    { label: "Thú đã hạ", value: viNumber(world.stats?.kills ?? 0) },
-    { label: outcome === "victory" ? "Thú Hạch" : "Thú Hạch (giữ " + THU_HACH.defeatKeepPct + " %)", value: viNumber(kept) },
-    { label: "Linh Sa còn", value: viNumber(wallet?.linhSa ?? 0) },
+    { label: "Core remaining", value: pct + " %" },
+    { label: "Waves held", value: wavesHeld(world) + " / " + world.stage.waves.length },
+    { label: "Beasts slain", value: viNumber(world.stats?.kills ?? 0) },
+    { label: outcome === "victory" ? "Beast Cores" : "Beast Cores (keep " + THU_HACH.defeatKeepPct + " %)", value: viNumber(kept) },
+    { label: "Spirit Sand left", value: viNumber(wallet?.linhSa ?? 0) },
   ];
   const grades = world.stats?.grades ?? [0, 0, 0, 0, 0];
-  const lines: HarvestLine[] = [{ label: "Từ đã gõ", value: viNumber(world.stats?.words ?? 0) }];
+  const lines: HarvestLine[] = [{ label: "Words typed", value: viNumber(world.stats?.words ?? 0) }];
   GRADE_NAMES.forEach((name, k) => lines.push({ label: name, value: viNumber(grades[k] ?? 0) }));
   if (learning !== null) {
-    lines.push({ label: "Từ mới đã gặp", value: viNumber(learning.words.filter((word) => word.isNew).length) });
-    lines.push({ label: "Từ gõ sai", value: viNumber(learning.words.filter((word) => word.errors > 0 || word.sloppy).length) });
+    lines.push({ label: "New words seen", value: viNumber(learning.words.filter((word) => word.isNew).length) });
+    lines.push({ label: "Mistyped words", value: viNumber(learning.words.filter((word) => word.errors > 0 || word.sloppy).length) });
   }
-  const title = outcome === "victory" ? "Thu Hoạch · Giữ được ải" : outcome === "defeat" ? "Thu Hoạch · Ải đã vỡ" : "Thu Hoạch · Rút lui";
+  const title = outcome === "victory" ? "Results · Pass defended" : outcome === "defeat" ? "Results · Pass fallen" : "Results · Retreated";
   return { outcome, title, stars: outcome === "victory" ? stars : 0, rpg, learning: lines };
 }
 
@@ -111,7 +111,7 @@ export function createResults(host: HTMLElement, options: ResultsOptions = {}): 
   root.dataset.ui = "results";
   root.hidden = true;
   root.setAttribute("role", "dialog");
-  root.setAttribute("aria-label", "Thu Hoạch");
+  root.setAttribute("aria-label", "Results");
   const title = el(doc, "h2", "ic-results__title");
   const stars = el(doc, "div", "ic-results__stars");
   const cols = el(doc, "div", "ic-results__cols");
@@ -119,7 +119,7 @@ export function createResults(host: HTMLElement, options: ResultsOptions = {}): 
   const learnCol = el(doc, "div", "ic-results__col");
   cols.append(rpgCol, learnCol);
   const book = el(doc, "div", "ic-results__book");
-  const foot = el(doc, "div", "ic-results__foot", "Enter: chơi lại ải này");
+  const foot = el(doc, "div", "ic-results__foot", "Enter: replay this pass");
   root.append(title, stars, cols, book, foot);
   host.append(root);
 
@@ -142,8 +142,8 @@ export function createResults(host: HTMLElement, options: ResultsOptions = {}): 
     setText(title, view.title);
     setText(stars, view.outcome === "victory" ? starText(view.stars) : "");
     setShown(stars, view.outcome === "victory");
-    lines(rpgCol, "Trận", view.rpg);
-    lines(learnCol, "Học", view.learning);
+    lines(rpgCol, "Battle", view.rpg);
+    lines(learnCol, "Learning", view.learning);
     if (learning !== null) renderWordBook(book, learning.book, options.speak);
     else book.replaceChildren();
     setShown(root, true);

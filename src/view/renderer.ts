@@ -4,8 +4,8 @@
  * post chain's targets, set here because the kit's composer has none);
  * NeutralToneMapping set on
  * `stage.renderer` right after construction (the kit fixes ACES; OutputPass
- * reads the renderer's value); a fixed 3/4 camera (tilt 50–55°, FOV 25–30°)
- * fitted so the whole 40 × 26 m field shows at any aspect, 16:9 included; a
+ * reads the renderer's value); a fixed 3/4 camera (tilt 42°, FOV 28°)
+ * framed at 52.8 m, looking at z −7.55 m; a
  * Projector with no allocation per call; `renderer.info` read after the whole
  * frame (draw calls include the post passes: the kit resets info once per
  * frame and never between passes); everything disposed on dispose().
@@ -17,6 +17,7 @@ import * as THREE from "three";
 import { Stage3D, type StageLights } from "../kit/three/stage";
 import type { Projector, Quality, ScreenPoint } from "../app/contracts";
 import { CAMERA, DYNAMIC_RES, FIELD, TT_DYNAMIC_RES, TT_MSAA, TT_TIERS } from "../content/rules";
+import { EdgePan, bindEdgePan, type PanStatus } from "./edge-pan";
 import { DynamicResolution } from "./dynamic-resolution";
 
 export interface RenderInfo {
@@ -35,7 +36,7 @@ export interface RenderLayers {
   readonly fx: THREE.Group;
 }
 
-/** CSS pixels the DOM keeps at the top and bottom of the canvas (HUD, Bàn Quyết); the field is fitted between. */
+/** CSS pixels reserved for HUD and Bàn Quyết; Camera B itself stays fixed. */
 export interface ViewInsets {
   readonly top: number;
   readonly bottom: number;
@@ -54,12 +55,14 @@ export interface Renderer3D {
   readonly fit: CameraFit;
   /** The last frame's counts; the same object every call (read it, do not keep it). */
   info(): RenderInfo;
+  /** Updates view-only edge pan before projecting DOM or applying close zoom. */
+  updateCamera(dt: number, status: PanStatus): void;
   /** Camera before DOM projection (M0A_PLAN §6.9 frame order), then draw. */
   render(dt: number): void;
   resize(): void;
   /** Another tier (draws differently, never changes the rules, D12). */
   setQuality(quality: Quality): void;
-  /** Keeps the field clear of DOM bands (CSS px) and refits the camera. */
+  /** Records DOM bands (CSS px); reapplies the fixed Camera B framing. */
   setViewInsets(insets: ViewInsets): void;
   /** Pins the pixel ratio (captures, perf runs) or, with null, hands it back to the dynamic resolution (D57). */
   pinPixelRatio(dpr: number | null): void;
@@ -87,13 +90,8 @@ export const FIELD_M = {
   maxZ: FIELD.maxZMm / 1000,
 } as const;
 
-/**
- * Inside canon §21.1's ranges (tilt 50–55°, FOV 25–30°): the tilt is rules.ts
- * CAMERA.defaultTiltDeg (55°, canon D48); FOV 28° is this round's pick.
- * `marginNdc` keeps a thin band round the field; `headroomM` keeps a beast
- * standing on the far edge inside the frame.
- */
-export const VIEW = { tiltDeg: CAMERA.defaultTiltDeg, fovDeg: 28, marginNdc: 0.03, headroomM: 2.5, near: 1, far: 400 } as const;
+/** D48: 42°, single-lane map, 15/11. Fixed framing, independent of field bounds. */
+export const VIEW = { tiltDeg: CAMERA.defaultTiltDeg, fovDeg: 28, distanceM: 52.8, lookZM: -7.55, marginNdc: 0.03, headroomM: 2.5, near: 1, far: 400 } as const;
 
 export interface CameraFit {
   readonly tiltDeg: number;
@@ -102,7 +100,7 @@ export interface CameraFit {
   readonly targetZ: number;
 }
 
-const fitScratch = { v: new THREE.Vector3(), target: new THREE.Vector3() };
+const fitScratch = { target: new THREE.Vector3() };
 
 /** Puts a looking-north camera `distanceM` from (0, 0, targetZ), `tiltDeg` below the horizon. */
 export function placeCamera(camera: THREE.PerspectiveCamera, tiltDeg: number, distanceM: number, targetX: number, targetZ: number, targetY = 0): void {
@@ -113,13 +111,7 @@ export function placeCamera(camera: THREE.PerspectiveCamera, tiltDeg: number, di
   camera.updateMatrixWorld(true);
 }
 
-/**
- * Fits the fixed camera to the field for `aspect` (width / height): the four
- * ground corners and a beast's headroom at the far edge land inside NDC with
- * `marginNdc`, between the DOM insets (NDC fractions of the height), the field
- * centred in the free band. Iterates distance and target (converges in a few
- * steps); writes the camera and returns the fit.
- */
+/** Camera B has the same vertical framing at every aspect; wider displays reveal more sides. */
 export function fitCamera(
   camera: THREE.PerspectiveCamera,
   aspect: number,
@@ -127,47 +119,13 @@ export function fitCamera(
 ): CameraFit {
   const tiltDeg = options.tiltDeg ?? VIEW.tiltDeg;
   const fovDeg = options.fovDeg ?? VIEW.fovDeg;
-  const margin = options.marginNdc ?? VIEW.marginNdc;
-  const headroom = options.headroomM ?? VIEW.headroomM;
-  const top = 1 - margin - 2 * Math.max(0, options.insetTop ?? 0);
-  const bottom = -1 + margin + 2 * Math.max(0, options.insetBottom ?? 0);
-  const halfWidth = 1 - margin;
   camera.fov = fovDeg;
   camera.aspect = Math.max(0.1, aspect);
   camera.near = VIEW.near;
   camera.far = VIEW.far;
   camera.updateProjectionMatrix();
-  const tilt = THREE.MathUtils.degToRad(tiltDeg);
-  const tanHalf = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2);
-  const centreX = (FIELD_M.minX + FIELD_M.maxX) / 2;
-  let distance = 60;
-  let targetZ = (FIELD_M.minZ + FIELD_M.maxZ) / 2;
-  const v = fitScratch.v;
-  for (let step = 0; step < 40; step += 1) {
-    placeCamera(camera, tiltDeg, distance, centreX, targetZ);
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (let corner = 0; corner < 6; corner += 1) {
-      const x = corner % 2 === 0 ? FIELD_M.minX : FIELD_M.maxX;
-      const z = corner < 2 ? FIELD_M.minZ : corner < 4 ? FIELD_M.maxZ : FIELD_M.minZ;
-      const y = corner < 4 ? 0 : headroom;
-      v.set(x, y, z).project(camera);
-      minX = Math.min(minX, v.x);
-      maxX = Math.max(maxX, v.x);
-      minY = Math.min(minY, v.y);
-      maxY = Math.max(maxY, v.y);
-    }
-    const scale = Math.max((maxX - minX) / (2 * halfWidth), (maxY - minY) / Math.max(0.05, top - bottom));
-    // Centre the field in the free band: moving the target north lowers the field on screen.
-    const shift = (top + bottom) / 2 - (maxY + minY) / 2;
-    targetZ += (shift * distance * tanHalf) / Math.sin(tilt);
-    distance *= scale;
-    if (Math.abs(scale - 1) < 1e-5 && Math.abs(shift) < 1e-5) break;
-  }
-  placeCamera(camera, tiltDeg, distance, centreX, targetZ);
-  return { tiltDeg, fovDeg, distanceM: distance, targetZ };
+  placeCamera(camera, tiltDeg, VIEW.distanceM, 0, VIEW.lookZM);
+  return { tiltDeg, fovDeg, distanceM: VIEW.distanceM, targetZ: VIEW.lookZM };
 }
 
 /** Projects a world point (metres) to CSS px of a `width` × `height` view; writes `out`. */
@@ -260,6 +218,8 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
   layers.fx.name = "fx";
   stage.scene.add(layers.ground, layers.actors, layers.fx);
 
+  const edgePan = new EdgePan(canvas);
+  bindEdgePan(stage.camera, edgePan);
   const gpu = gpuString(stage.renderer);
   const counts = { drawCalls: 0, triangles: 0, gpu, pixelRatio: 1 };
   const scratch = new THREE.Vector3();
@@ -324,6 +284,10 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     get fit() {
       return lastFit;
     },
+    updateCamera: (dt, status) => {
+      edgePan.update(dt, status);
+      placeCamera(stage.camera, lastFit.tiltDeg, lastFit.distanceM, edgePan.state.x, edgePan.state.z);
+    },
     info: () => {
       // The kit resets renderer.info once per frame, so these include the post passes.
       counts.drawCalls = stage.renderer.info.render.calls;
@@ -364,6 +328,7 @@ export function createRenderer(host: HTMLElement, quality: Quality): Renderer3D 
     },
     dispose: () => {
       observer?.disconnect();
+      edgePan.dispose();
       disposeTree(stage.scene);
       stage.dispose();
       if (ownCanvas) canvas.remove();

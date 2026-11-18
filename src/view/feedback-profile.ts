@@ -63,7 +63,7 @@ export const IC_FEEDBACK_PROFILE: FeedbackProfile = {
   stopGapMs: 250,
   sweep: { ...DRAGON.sweep, kills: 40 },
   trauma: { ...DRAGON.trauma, maxPx: 10, kickPx: 4 },
-  numbers: { ...DRAGON.numbers, label: "CHỚP" },
+  numbers: { ...DRAGON.numbers, label: "PERFECT" },
 };
 
 /** canon §24 "không dừng hình dài": the longest stop with reduced motion on, ms. */

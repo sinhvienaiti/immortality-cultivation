@@ -1,6 +1,6 @@
 /**
  * The grey-box scene on Lane 1's renderer (canon §8.1, §8.2, §21.1): the
- * procedural ground (ground.ts), gates A and B (two posts and a lintel), the
+ * procedural ground (ground.ts), a shared lane gate (two posts and a lintel), the
  * two Trận Trụ (stone columns; cracked after two rams), the Trận Tâm (a stone
  * disc with a rune ring that turns urgent orange under 30 % Trận Lực), the
  * Kết Giới ring (r 9 m), the Tâm nhãn (pale when lit; dark with an urgent
@@ -55,8 +55,8 @@ export function marksVisible(phase: Phase): boolean {
 }
 
 /** Heading (radians, about +y) that lays a strip slot along its path towards the heart. */
-export function slotYaw(slot: Pick<MechSlotDef, "at">): number {
-  return Math.atan2(-slot.at.xMm, -slot.at.zMm);
+export function slotYaw(slot: Pick<MechSlotDef, "at" | "alongPm">): number {
+  return Math.atan2(slot.alongPm?.x ?? -slot.at.xMm, slot.alongPm?.z ?? -slot.at.zMm);
 }
 
 /** The rune ring colour for Trận Lực `heart` of `max`. */
@@ -239,13 +239,13 @@ export function createStageView(renderer: Renderer3D, stage: StageDef = THANH_TH
     return { id: pillar.id, column, material, cracked: false };
   });
 
-  // Gates: two posts and a lintel per ground gate, just inside the far edge and
-  // under the camera's headroom there (renderer.ts VIEW.headroomM), so the whole gate stays in frame (canon D48).
+  // One shared mouth for an authored lane; old stages retain one gate per entry.
   const gateMaterial = toon(STAGE_COLOURS.gate);
-  for (const gate of field.gates) {
+  const drawnGates = field.lane ? [{ id: "lane", at: { xMm: 0, zMm: -43_500 }, ground: true }] : field.gates;
+  for (const gate of drawnGates) {
     if (!gate.ground) continue;
     const x = gate.at.xMm / 1000;
-    const z = gate.at.zMm / 1000 + GATE_M.inset;
+    const z = gate.at.zMm / 1000 + (field.lane ? 0 : GATE_M.inset);
     for (const side of [-GATE_M.halfWidth, GATE_M.halfWidth]) {
       const post = inked(new THREE.BoxGeometry(0.6, GATE_M.postHeight, 0.6), gateMaterial, 1.06);
       post.position.set(x + side, GATE_M.postHeight / 2, z);

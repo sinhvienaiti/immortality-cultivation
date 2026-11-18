@@ -42,37 +42,35 @@ export const IC_CSS = `
 
 /* ── HUD (canon §6.6): Sinh lực + khiên, Chân Nguyên, Trận Lực, Thế; Linh Sa; notices ── */
 .ic-hud { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
-/* Bottom left above the Bàn Quyết (screen-zones.ts "hud"): the far corners keep the gates and sky entries clear. */
-.ic-hud__left { position: absolute; left: ${u(ZONE_PX.margin)}; bottom: calc(var(--ic-quyet-h) + ${u(ZONE_PX.margin)}); display: grid; justify-items: start; align-content: end; gap: ${u(6)}; }
-.ic-hud__left > .ic-hud__money { order: -1; }
-.ic-hud__self { width: ${u(300)}; padding: ${u(8)} ${u(10)}; display: grid; gap: ${u(6)}; }
-.ic-hud__row { display: grid; grid-template-columns: ${u(86)} 1fr auto; align-items: center; gap: ${u(8)}; font-size: ${t(13)}; }
+/* A thin edge HUD. The renderer reserves this top band for gates and warnings. */
+.ic-hud__left { position: absolute; left: 8px; top: 4px; display: flex; align-items: center; gap: 4px; }
+.ic-hud__self { width: min(31vw, 420px); padding: 3px 6px; display: flex; align-items: center; gap: 8px; }
+.ic-hud__row { flex: 1; min-width: 0; display: grid; grid-template-columns: auto minmax(28px, 1fr) auto; align-items: center; gap: 4px; font-size: 11px; }
 .ic-hud__label { font-weight: 700; color: ${p.muted}; white-space: nowrap; }
 .ic-hud__num { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ic-bar { position: relative; height: ${u(12)}; border-radius: ${u(6)}; background: rgba(242, 235, 221, 0.12); overflow: hidden; }
+.ic-bar { position: relative; height: 5px; border-radius: 3px; background: rgba(242,235,221,.12); overflow: hidden; }
 .ic-bar__fill { position: absolute; inset: 0 auto 0 0; width: calc(var(--v, 0) * 100%); background: var(--c, ${p.text}); border-radius: inherit; }
-.ic-bar__over { position: absolute; inset: 0 auto 0 0; width: calc(var(--s, 0) * 100%); background: repeating-linear-gradient(135deg, ${p.shield} 0 4px, rgba(207, 227, 255, 0.55) 4px 8px); border-radius: inherit; }
-.ic-hud__self.is-down { opacity: 0.6; }
-.ic-hud__down { font-size: ${t(13)}; font-weight: 800; color: ${p.bad}; }
+.ic-bar__over { position: absolute; inset: 0 auto 0 0; width: calc(var(--s, 0) * 100%); background: ${p.shield}; }
+.ic-hud__self.is-down { opacity: .6; }
+.ic-hud__down { font-size: 11px; color: ${p.bad}; white-space: nowrap; }
 .ic-hud__down:empty { display: none; }
-.ic-hud__money { padding: ${u(4)} ${u(10)}; display: flex; align-items: center; gap: ${u(6)}; font-size: ${t(14)}; font-weight: 800; color: ${p.money}; }
-.ic-hud__money .ic-coin { width: ${u(12)}; height: ${u(12)}; border-radius: 50%; background: ${p.money}; box-shadow: 0 0 0 2px rgba(255, 200, 58, 0.25); }
-.ic-hud__money.is-pulse { box-shadow: 0 0 0 2px rgba(255, 200, 58, 0.55); }
-.ic-hud__top { position: absolute; left: 50%; top: ${u(10)}; translate: -50% 0; width: ${u(440)}; display: grid; gap: ${u(6)}; }
-.ic-hud__heart { padding: ${u(6)} ${u(12)}; display: grid; gap: ${u(4)}; }
-.ic-hud__heart .ic-bar { height: ${u(16)}; }
+.ic-hud__money { padding: 3px 5px; display: flex; gap: 4px; font-size: 11px; color: ${p.money}; }
+.ic-hud__money .ic-coin { width: 0; height: 0; }
+.ic-hud__top { position: absolute; inset: 0; }
+.ic-hud__heart { position: absolute; top: ${ZONE_PX.heart.y}px; left: ${ZONE_PX.heart.x}px; width: ${ZONE_PX.heart.width}px; padding: 3px 6px; display: flex; align-items: center; gap: 6px; }
+.ic-hud__heart .ic-bar { flex: 1; }
 .ic-hud__heart.is-low { border-color: ${SEMANTIC.urgent}; }
-.ic-hud__heart.is-low .ic-hud__label, .ic-hud__heart.is-low .ic-hud__num { color: ${SEMANTIC.urgent}; }
-.ic-hud__posture { padding: ${u(5)} ${u(12)}; display: grid; gap: ${u(3)}; }
+.ic-hud__posture { position: absolute; top: 34px; left: 256px; width: 220px; padding: 2px 6px; display: grid; gap: 2px; }
 .ic-hud__posture[hidden] { display: none; }
 .ic-hud__posture.is-broken .ic-hud__label { color: ${p.postureBroken}; }
-.ic-hud__posture.is-immune .ic-bar__fill { opacity: 0.45; }
-.ic-hud__head { display: flex; justify-content: space-between; align-items: baseline; gap: ${u(8)}; font-size: ${t(13)}; }
-.ic-notices { display: grid; justify-items: center; gap: ${u(4)}; }
-.ic-notice { padding: ${u(4)} ${u(14)}; font-size: ${t(15)}; font-weight: 700; text-align: center; }
+.ic-hud__posture.is-immune .ic-bar__fill { opacity: .45; }
+.ic-hud__head { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11px; }
+.ic-hud__wave { position: absolute; right: 8px; top: 4px; padding: 3px 8px; font-size: 12px; font-weight: 800; }
+.ic-notices { position: absolute; right: 8px; top: 34px; max-width: 260px; }
+.ic-notice { padding: 2px 6px; font-size: 11px; line-height: 16px; text-align: right; }
 .ic-notice.is-warn { border-color: ${SEMANTIC.urgent}; color: ${SEMANTIC.urgent}; }
 .ic-notice.is-good { border-color: ${p.good}; color: ${p.good}; }
-.ic-notice.is-soft { color: ${p.muted}; font-weight: 600; }
+.ic-notice.is-soft { color: ${p.muted}; }
 
 /* ── Wave card (canon §4.1, §13.3): per gate family icon and count; marks; peak strip ── */
 .ic-wave { position: absolute; width: ${u(340)}; padding: ${u(10)} ${u(12)}; display: grid; gap: ${u(8)}; pointer-events: none; }
@@ -93,7 +91,14 @@ export const IC_CSS = `
 .ic-wave__foot { font-size: ${t(13)}; color: ${p.muted}; display: flex; justify-content: space-between; gap: ${u(8)}; }
 
 /* ── Shop strip (mouse) and shop mode (Backquote key), canon §5.1, §14.3, D45 ── */
-.ic-shop { position: absolute; left: 50%; bottom: calc(var(--ic-quyet-h) + ${u(12)}); translate: -50% 0; max-width: calc(100vw - 2 * (${u(ZONE_PX.hud.width)} + ${u(2 * ZONE_PX.margin)})); padding: ${u(8)} ${u(10)}; display: grid; gap: ${u(6)}; pointer-events: auto; z-index: 34; }
+.ic-shop { position: absolute; left: auto; right: 8px; top: 68px; bottom: calc(var(--ic-quyet-h) + 8px); width: ${ZONE_PX.drawer.viewWidth * 100}vw; max-width: ${ZONE_PX.drawer.maxWidth}px; min-width: ${ZONE_PX.drawer.minWidth}px; padding: 8px; display: grid; align-content: start; gap: 6px; overflow: auto; pointer-events: auto; z-index: 34; }
+.ic-shop.is-placing { width: 190px; min-width: 190px; }
+.ic-shop.is-placing .ic-shop__row:nth-child(2) { display: none; }
+.ic-shop__head { flex-wrap: wrap; }
+.ic-shop__row { display: grid !important; grid-template-columns: 1fr 1fr; }
+.ic-shop__slot, .ic-shop__item { min-width: 0 !important; }
+.ic-shop__slot b, .ic-shop__item b { overflow-wrap: anywhere; }
+
 .ic-shop[hidden] { display: none; }
 .ic-shop__head { display: flex; justify-content: space-between; align-items: center; gap: ${u(10)}; font-size: ${t(13)}; }
 .ic-shop__title { font-weight: 800; font-size: ${t(15)}; }

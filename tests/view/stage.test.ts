@@ -45,12 +45,12 @@ const colourOf = (object: THREE.Object3D | undefined): string => {
 };
 
 describe("the ground (canon §8.1, §21.1)", () => {
-  it("covers the 40 × 26 m field with a corridor from each ground gate to the heart edge", () => {
-    expect(fieldBox(stage)).toEqual({ minX: -20, maxX: 20, minZ: -18, maxZ: 8 });
+  it("covers the 48 × 52 m field with the authored 12 m lane", () => {
+    expect(fieldBox(stage)).toEqual({ minX: -24, maxX: 24, minZ: -44, maxZ: 8 });
     const list = corridors(stage);
-    expect(list).toHaveLength(2);
+    expect(list).toHaveLength(stage.field.lane!.pointsMm.length - 1);
     for (const c of list) {
-      expect(Math.hypot(c.bx, c.bz)).toBeCloseTo(FIELD.heartEdgeMm / 1000, 6);
+
       expect(corridorWeight(c.ax, c.az, list)).toBe(1);
       expect(corridorWeight((c.ax + c.bx) / 2, (c.az + c.bz) / 2, list)).toBe(1);
     }
@@ -67,9 +67,9 @@ describe("the ground (canon §8.1, §21.1)", () => {
     for (let k = 0; k < 36; k += 1) {
       const x = a[k * 5]!;
       const z = a[k * 5 + 1]!;
-      expect(x).toBeGreaterThanOrEqual(-20);
-      expect(x).toBeLessThanOrEqual(20);
-      expect(z).toBeGreaterThanOrEqual(-18);
+      expect(x).toBeGreaterThanOrEqual(-24);
+      expect(x).toBeLessThanOrEqual(24);
+      expect(z).toBeGreaterThanOrEqual(-44);
       expect(z).toBeLessThanOrEqual(8);
       if (corridorWeight(x, z, list) < 0.5 && Math.hypot(x, z) > 3) off += 1;
     }
@@ -77,13 +77,11 @@ describe("the ground (canon §8.1, §21.1)", () => {
     expect(off).toBeGreaterThanOrEqual(33);
   });
 
-  it("is built from 5 parts (surround, field, grid, decals, border), no image file", () => {
+  it("uses one tiled field and skirt plus the retained ink border", () => {
     const ground = createGround(stage);
-    expect(ground.children.map((child) => child.name)).toEqual(["ground-surround", "ground-field", "ground-grid", "ground-decals", "ground-border"]);
-    ground.traverse((object) => {
-      const material = (object as THREE.Mesh).material as THREE.Material & { map?: THREE.Texture | null };
-      if (material) expect(material.map ?? null).toBeNull();
-    });
+    expect(ground.children.map((child) => child.name)).toEqual(["ground-field", "ground-border"]);
+    const field = ground.getObjectByName("ground-field") as THREE.Mesh;
+    expect(field.material).toBeInstanceOf(THREE.ShaderMaterial);
   });
 });
 
@@ -112,18 +110,12 @@ describe("the stage view", () => {
     expect(renderer.layers.ground.children).toHaveLength(0);
   });
 
-  it("keeps both gates whole in the frame: just inside the far edge, under the camera's headroom (canon D48)", () => {
+  it("draws one gate at the lane mouth, available when panning north", () => {
     const view = createStageView(fakeRenderer(), stage);
-    for (const gate of stage.field.gates.filter((item) => item.ground)) {
-      const box = new THREE.Box3();
-      for (const child of view.group.children) {
-        const at = child.position;
-        if (Math.abs(at.x - gate.at.xMm / 1000) <= GATE_M.halfWidth + 0.01 && Math.abs(at.z - (gate.at.zMm / 1000 + GATE_M.inset)) < 0.01) box.expandByObject(child);
-      }
-      expect(box.isEmpty(), "gate " + gate.id).toBe(false);
-      expect(box.max.y).toBeLessThanOrEqual(VIEW.headroomM);
-      expect(box.min.z).toBeGreaterThanOrEqual(stage.field.minZMm / 1000);
-    }
+    const lintel = view.group.getObjectByName("gate-lane")!;
+    expect(lintel.position.x).toBe(0);
+    expect(lintel.position.z).toBe(-43.5);
+    view.dispose();
   });
 
   it("lays a strip slot along its way to the heart (Kiếm Thung 4 × 2 m)", () => {
@@ -131,7 +123,7 @@ describe("the stage view", () => {
       const yaw = slotYaw(slot);
       // Local +z turned by the yaw points at the heart.
       const dir = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-      const toHeart = new THREE.Vector3(-slot.at.xMm, 0, -slot.at.zMm).normalize();
+      const toHeart = new THREE.Vector3(slot.alongPm?.x ?? -slot.at.xMm, 0, slot.alongPm?.z ?? -slot.at.zMm).normalize();
       expect(dir.dot(toHeart)).toBeCloseTo(1, 6);
     }
     expect(slotOutline("strip")).toEqual([-1, -2, 1, -2, 1, 2, -1, 2]);

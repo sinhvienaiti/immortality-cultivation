@@ -6,6 +6,7 @@
  * No allocation per frame.
  */
 import type * as THREE from "three";
+import { edgePanFor, type EdgePan } from "./edge-pan";
 import { placeCamera, type CameraFit } from "./renderer";
 
 export const ZOOM = {
@@ -45,6 +46,7 @@ const ease5 = (t: number): number => {
 export class CameraZoom {
   /** The zoom the player asked for, 0 (whole field) to 1 (closest). */
   wanted = 0;
+  private pan: EdgePan | undefined;
   private now = 0;
   /** The wide framing's weight shown (0 the player's zoom, 1 the whole field) and its tween (from, goal, age, length). */
   private wide = 0;
@@ -84,12 +86,14 @@ export class CameraZoom {
 
   /** Back to the whole field. */
   reset(): void {
+    this.pan?.reset();
     this.wanted = 0;
   }
 
   /** One action between the whole field and the closest view. */
   toggle(): void {
-    this.wanted = this.wanted > 0 ? 0 : 1;
+    if (this.wanted > 0) this.reset();
+    else this.wanted = 1;
   }
 
   /** Jumps without smoothing (captures and tests); drops a wide framing and a push. */
@@ -145,6 +149,7 @@ export class CameraZoom {
    * this is exactly the fitCamera placement.
    */
   update(camera: THREE.PerspectiveCamera, fit: CameraFit, centreX: number, heroX: number, heroZ: number, dtS: number): void {
+    this.pan = edgePanFor(camera);
     const k = dtS <= 0 ? 1 : 1 - Math.pow(0.5, dtS / ZOOM.halfLifeS);
     this.now += (this.wanted - this.now) * k;
     if (Math.abs(this.wanted - this.now) < 1e-4) this.now = this.wanted;
@@ -154,13 +159,19 @@ export class CameraZoom {
       if (this.wideAge >= 1 - 1e-9) this.wideAge = 1;
       this.wide = this.wideAge >= 1 ? this.wideGoal : this.wideFrom + (this.wideGoal - this.wideFrom) * ease5(this.wideAge);
     }
+    if (this.pan) {
+      this.pan.zoom = Math.max(this.wanted, this.now);
+      this.pan.cutIn = this.framing;
+    }
     this.pushAge += Math.max(0, dtS);
     const t = ease(this.now) * (1 - this.wide);
     const far = Math.log(fit.distanceM);
     const near = Math.log(Math.min(ZOOM.closeDistanceM, fit.distanceM));
     const distance = Math.exp(far + (near - far) * t) * (1 - this.pushLevel());
-    const x = centreX + (heroX - centreX) * t;
-    const z = fit.targetZ + (heroZ - fit.targetZ) * t;
+    const panX = this.pan?.state.x ?? centreX;
+    const panZ = this.pan?.state.z ?? fit.targetZ;
+    const x = panX + (heroX - panX) * t;
+    const z = panZ + (heroZ - panZ) * t;
     placeCamera(camera, fit.tiltDeg, distance, x, z, ZOOM.heroLookY * t);
   }
 }

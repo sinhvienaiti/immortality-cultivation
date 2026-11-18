@@ -23,6 +23,7 @@ import { DRAGON } from "../../kit/feedback/profiles";
 import { tier as tierRow } from "../../kit/feedback/tiers";
 import { FIELD, FORMATION, STAGE_M0A } from "../../content/rules";
 import type { SpeciesId } from "../../content/types";
+import { THANH_THACH_AI } from "../../content/data/stage-m0a";
 import { CLIP, CROWD_LOOKS, TINT, type Crowd, type CrowdInstance, type CrowdRing } from "../crowd";
 import { RANDOM_MASK, RANDOM_SIZE } from "../hitfx";
 import { benchRoutes, BENCH_SPOTS } from "./field";
@@ -149,6 +150,8 @@ export class Herd {
   readonly beasts: HerdBeast[] = [];
   private readonly clusters: Cluster[] = [];
   private readonly ground: Route[];
+  /** Authored lane length, excluding its final approach to the heart. */
+  private readonly laneLength: number;
   private readonly sky: readonly (readonly [number, number])[];
   /** The last blow on each beast (kit Reactions' record, by herd index): tier and unit direction. */
   private readonly hitTier: Uint8Array;
@@ -174,10 +177,17 @@ export class Herd {
   /** Blows a second the herd lands on itself (case B's "trúng đòn liên tục"). */
   hitsPerSecond = HITS_PER_SECOND;
 
-  constructor(private readonly crowd: Crowd, readonly count: number, random: () => number) {
+  constructor(private readonly crowd: Crowd, readonly count: number, random: () => number, private readonly map?: "lane") {
     // The draws go into a table read by a cursor: a call returning a double may box it.
     for (let k = 0; k < RANDOM_SIZE; k += 1) this.rand[k] = random();
-    this.ground = benchRoutes().map((r) => route([r.gate, r.bend, [0, 0]]));
+    if (map === "lane") {
+      const points = THANH_THACH_AI.field.lane!.pointsMm.map((p) => [p.xMm / 1000, p.zMm / 1000] as const);
+      this.laneLength = route(points).length;
+      this.ground = [route([...points, [0, 0]])];
+    } else {
+      this.ground = benchRoutes().map((r) => route([r.gate, r.bend, [0, 0]]));
+      this.laneLength = 0;
+    }
     this.sky = FIELD.skyEntries.map((e) => [e.xMm / 1000, e.zMm / 1000] as const);
     this.hitTier = new Uint8Array(Math.max(1, count));
     this.hitDirX = new Float32Array(Math.max(1, count));
@@ -245,10 +255,13 @@ export class Herd {
   }
 
   private restartCluster(c: Cluster, scatter: boolean): void {
-    c.route = this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! < 0.5 ? 0 : 1;
+    c.route = this.map === "lane" ? 0 : this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! < 0.5 ? 0 : 1;
     const r = this.ground[c.route]!;
-    c.s = scatter ? this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * r.length * 0.9 : 0;
-    c.side = (this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! - 0.5) * 4;
+    c.s = this.map === "lane"
+      ? this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * this.laneLength
+      : scatter ? this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * r.length * 0.9 : 0;
+    // Leave 0.8 m for the outer swarm members inside the ±5.5 m spawn band.
+    c.side = (this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! - 0.5) * (this.map === "lane" ? 9.4 : 4);
     c.speed = (SPEED_MS["thach-thu"] ?? 1.6) * SPEED_SCALE * (0.9 + this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * 0.2);
     c.phase = 0;
     c.t = 0;
@@ -256,11 +269,12 @@ export class Herd {
     this.along(r, c, this.at);
     c.x = this.at[0]!;
     c.z = this.at[1]!;
+    if (this.map === "lane") c.heading = Math.atan2(this.at[2]!, this.at[3]!);
   }
 
   /** Where a ground walker stops: a spot on its side of the heart at `radius`. */
   private pickEnd(target: { endX: number; endZ: number; route: number }, r: Route, radius: number): void {
-    const bend = r.points[1]!;
+    const bend = r.points[this.map === "lane" ? r.points.length - 2 : 1]!;
     const base = Math.atan2(bend[0], bend[1]);
     const angle = base + (this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! - 0.5) * 2.2;
     target.endX = Math.sin(angle) * radius;
@@ -279,7 +293,20 @@ export class Herd {
     beast.elite = beast.cluster < 0 && this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! < ELITE_SHARE;
     beast.speed = (SPEED_MS[beast.species] ?? 1.4) * SPEED_SCALE * (0.85 + this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * 0.3) * (beast.elite ? 1.15 : 1);
     beast.walkRate = beast.speed / ((SPEED_MS[beast.species] ?? 1.4) * SPEED_SCALE);
-    if (beast.cluster >= 0) return;
+    if (beast.cluster >= 0) {
+      if (this.map !== "lane") return;
+      const c = this.clusters[beast.cluster]!;
+      if (!scatter) this.restartCluster(c, true);
+      // Keep each live swarm member on its cluster when that cluster is re-scattered.
+      for (const member of this.beasts) {
+        if (member.cluster !== beast.cluster) continue;
+        const slot = (member.member % CLUSTER_SIZE) * 2;
+        member.x = c.x + CLUSTER_OFFSETS[slot]!;
+        member.z = c.z + CLUSTER_OFFSETS[slot + 1]!;
+        member.heading = c.heading;
+      }
+      return;
+    }
     if (beast.flyer) {
       // From a sky corner, spread along the top edge so the flight lines do not stack.
       const entry = this.sky[this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! < 0.5 ? 0 : 1]!;
@@ -292,14 +319,16 @@ export class Herd {
       beast.angle = Math.atan2(beast.x, beast.z);
       return;
     }
-    beast.route = this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! < 0.5 ? 0 : 1;
+    beast.route = this.map === "lane" ? 0 : this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! < 0.5 ? 0 : 1;
     const r = this.ground[beast.route]!;
-    beast.s = scatter ? this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * r.length * 0.95 : 0;
-    beast.side = (this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! - 0.5) * 5.2;
+    beast.s = this.map === "lane"
+      ? this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * this.laneLength
+      : scatter ? this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * r.length * 0.95 : 0;
+    beast.side = (this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! - 0.5) * (this.map === "lane" ? 11 : 5.2);
     const stop = beast.species === "nham-vien" ? THROWER_STOP_M : BENCH_SPOTS.heartRadius + 0.8 + this.rand[(this.rc = (this.rc + 1) & RANDOM_MASK)]! * 6;
     this.pickEnd(beast, r, stop);
     // A scattered start never lies past its stop (walk() then makes the last approach).
-    beast.s = Math.min(beast.s, r.length - stop);
+    if (this.map !== "lane") beast.s = Math.min(beast.s, r.length - stop);
     this.along(r, beast, this.at);
     beast.x = this.at[0]!;
     beast.z = this.at[1]!;
@@ -320,7 +349,9 @@ export class Herd {
     const dx = (b[0] - a[0]) / span;
     const dz = (b[1] - a[1]) / span;
     // Narrow towards the heart, never to a single file.
-    const fade = 0.4 + 0.6 * (1 - clamped / r.length);
+    const fade = this.map === "lane"
+      ? 1 - 0.6 * Math.max(0, (clamped - this.laneLength) / (r.length - this.laneLength))
+      : 0.4 + 0.6 * (1 - clamped / r.length);
     out[0] = a[0] + (b[0] - a[0]) * t - dz * side * fade;
     out[1] = a[1] + (b[1] - a[1]) * t + dx * side * fade;
     out[2] = dx;

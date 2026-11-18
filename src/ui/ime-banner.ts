@@ -20,11 +20,11 @@ export type ImePlatform = "mac" | "other";
 /** The banner's lines for a platform (pure). */
 export function imeHint(platform: ImePlatform): { readonly title: string; readonly how: string } {
   return {
-    title: "Bộ gõ tiếng Việt đang bật: chữ gõ vào không thành phím chữ cái.",
+    title: "Vietnamese input is on: keystrokes are not arriving as letters.",
     how:
       platform === "mac"
-        ? "Chuyển nguồn nhập sang ABC (Control + Space, hoặc biểu tượng trên thanh menu) rồi gõ tiếp."
-        : "Chuyển Unikey hoặc EVKey sang E (Ctrl + Shift, hoặc bấm biểu tượng V ở khay hệ thống) rồi gõ tiếp.",
+        ? "Switch input to ABC (Control + Space, or the menu bar icon), then keep typing."
+        : "Switch Unikey or EVKey to E (Ctrl + Shift, or the tray's V icon), then keep typing.",
   };
 }
 
@@ -48,7 +48,7 @@ export function createImeBanner(host: HTMLElement): ImeBanner {
   const root = node(doc, "div", "ic-ime");
   root.hidden = true;
   root.setAttribute("role", "alert");
-  root.title = "Bấm để ẩn";
+  root.title = "Click to dismiss";
   root.append(node(doc, "div", "ic-ime__title", text.title), node(doc, "div", "ic-ime__how", text.how));
   host.append(root);
   root.addEventListener("click", () => {
