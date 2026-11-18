@@ -70,13 +70,13 @@ export interface PaceChoice {
 
 /** Card presets (WPM, hint); 35 is the reference player (canon §18.3 Chuẩn). */
 export const PACE_PRESETS: readonly { readonly wpm: number; readonly hint: string }[] = [
-  { wpm: 15, hint: "Mới tập gõ" },
-  { wpm: 20, hint: "Còn nhìn phím" },
-  { wpm: 25, hint: "Gõ chậm" },
-  { wpm: 35, hint: "Vừa, người chơi chuẩn" },
-  { wpm: 45, hint: "Khá nhanh" },
-  { wpm: 60, hint: "Nhanh" },
-  { wpm: 90, hint: "Rất nhanh" },
+  { wpm: 15, hint: "Beginner" },
+  { wpm: 20, hint: "Looking at keys" },
+  { wpm: 25, hint: "Slow" },
+  { wpm: 35, hint: "Steady, standard pace" },
+  { wpm: 45, hint: "Fairly fast" },
+  { wpm: 60, hint: "Fast" },
+  { wpm: 90, hint: "Very fast" },
 ];
 
 /** Rows of the card: the measured speed first when there is one, "chưa biết", then the presets; and the row to preselect. */
@@ -84,9 +84,9 @@ export function paceChoices(skill?: SkillProfile | null, lastPick?: number | nul
   const choices: PaceChoice[] = [];
   const measured = profileOfSkill(skill);
   if (measured !== null) {
-    choices.push({ label: "Số đo: " + measured.e + " WPM", hint: "Đúng " + Math.round(measured.a / 10) + " % phím, đo qua " + skill!.trend.stages + " trận", profile: measured, unknown: false, measured: true });
+    choices.push({ label: "Measured: " + measured.e + " WPM", hint: "Accuracy: " + Math.round(measured.a / 10) + " % across " + skill!.trend.stages + " matches", profile: measured, unknown: false, measured: true });
   }
-  choices.push({ label: "Chưa biết", hint: "Chơi ở " + PACE.unknownWpm + " WPM, game đo lại sau đợt 1", profile: profileAt(PACE.unknownWpm), unknown: true, measured: false });
+  choices.push({ label: "Not sure", hint: "Start at " + PACE.unknownWpm + " WPM; measured after wave 1", profile: profileAt(PACE.unknownWpm), unknown: true, measured: false });
   for (const preset of PACE_PRESETS) choices.push({ label: preset.wpm + " WPM", hint: preset.hint, profile: profileAt(preset.wpm), unknown: false, measured: false });
   let selected = 0;
   if (measured === null && lastPick != null) {

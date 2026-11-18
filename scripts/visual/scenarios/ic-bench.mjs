@@ -19,7 +19,8 @@
  * Tinh run is SKINNED=10 TAG=seven), VAT (a baked VAT's JSON URL for the
  * confirmation pass, `{q}` = the tier), STEPS (ladder steps, e.g. L3 or
  * L1,L3), SECONDS (10), WARMUP (2), RUNS (3), SHOTS (1; 0 none), TAG (file
- * name suffix), ALLOC (seconds, 3; 0 off).
+ * name suffix), EXTRA (additional URL parameters, e.g. map=lane),
+ * ALLOC (seconds, 3; 0 off).
  * Allocation (M0A_PLAN §6.1 note, đã chọn theo đề xuất 25/10): the criterion of
  * record is ALLOC, one more page load per case under the CDP sampling heap
  * profiler: bytes per frame of the game's modules (src/ outside src/view/bench)
@@ -210,6 +211,7 @@ export function caseUrl(base, id, quality, count, env) {
   if (env.skinned) params.set("skinned", env.skinned);
   if (env.vat && id !== "base" && id !== "crowd-proc") params.set("vat", env.vat);
   if (env.steps) params.set("steps", env.steps);
+  for (const [key, value] of new URLSearchParams(env.extra ?? "")) params.set(key, value);
   return base + "/bench.html?" + params.toString();
 }
 
@@ -227,6 +229,7 @@ export default async function (page) {
     skinned: process.env.SKINNED ?? "",
     vat: process.env.VAT ?? "",
     steps: process.env.STEPS ?? "",
+    extra: process.env.EXTRA ?? "",
     shots: process.env.SHOTS !== "0",
     allocSeconds: process.env.ALLOC === "0" ? 0 : Number(process.env.ALLOC ?? "3"),
   };

@@ -165,6 +165,10 @@ export function createInputRouter(target: Window, sinks: { readonly command: Com
       panel.handleAction(action);
       return true;
     }
+    if (action === "ultimate") {
+      if (options.banQuyetLive?.() ?? false) sinks.command({ type: "ultimate", seat, origin: quantizeOrigin(options.origin()), aim: options.aim?.() ?? null });
+      return true;
+    }
     if (action === "escape" && (options.locked?.() ?? false)) {
       sinks.command({ type: "release", seat });
       return true;

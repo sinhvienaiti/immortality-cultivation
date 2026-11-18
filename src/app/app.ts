@@ -20,11 +20,11 @@
  * 3-2-1 after a pause in a live phase.
  *
  * URL flags: ?q=low|medium|high, ?seed=, ?preset=, ?wpm=, ?motion=,
- * ?prelearn=0, ?review=0, ?speech=0, ?guard=ward|dash, ?tam=kiem-tam|tich-kiem,
+ * ?review=0, ?speech=0, ?guard=ward|dash, ?tam=kiem-tam|tich-kiem,
  * ?speed=N (dev builds only; rules unchanged), ?debug=1 → window.__ic.
  * Owner: step 0 / integration (LANES.md).
  */
-import { Vector3 } from "three";
+import { Vector3, type InstancedMesh } from "three";
 import { createSoundHooks, type SoundHooks } from "../audio/hooks";
 import { BEASTS, GENERALS } from "../content/data/beasts";
 import { BOSSES } from "../content/data/boss";
@@ -66,10 +66,10 @@ import { isBanQuyetLive } from "../sim/words";
 import { buildDeck } from "../typing/deck";
 import { createNewWordLedger, type NewWordLedger } from "../typing/new-word-ledger";
 import { createBanQuyet, type BanQuyetPresenter } from "../ui/ban-quyet";
+import { measureUiCoverage, protectedFieldRects } from "../ui/coverage";
 import { createHud, type HudPresenter } from "../ui/hud";
+import { createFoeBadges, FOE_BADGE_PX } from "../ui/foe-badges";
 import { createImeBanner } from "../ui/ime-banner";
-import { createLearnAhead, type LearnAheadPanel } from "../ui/learn-ahead";
-import { createLearningFrame, type LearningFramePresenter } from "../ui/learning-frame";
 import { createMenu, type MenuSettings } from "../ui/menu";
 import { createResults, type Outcome, type ResultsPresenter } from "../ui/results";
 import { createReviewCard, type ReviewCardPanel } from "../ui/review-card";
@@ -84,7 +84,7 @@ import { createGreyBoxView, type GreyBoxView } from "../view/stage";
 import type { FrameInfo, Presenter } from "./contracts";
 import { foeSizes, frameReport, mean, percentile, pushCapped, type FoeSize, type FrameReport } from "./debug";
 import { createInputRouter, type InputRouter, type KeyPanel, type PointerPick } from "./input-router";
-import { createLearning, learnAheadWords, loadDeckSource, type DeckSource, type GlossOf, type LearningSession, type ReviewQuestion } from "./learning";
+import { createLearning, loadDeckSource, type DeckSource, type GlossOf, type LearningSession, type ReviewQuestion } from "./learning";
 import { createLoop, type LoopTiming } from "./loop";
 import { createMatchRunner, replayCheck, type MatchRunner, type ReplayCheck } from "./match";
 import { showPaceCard, type PaceCardChoice } from "./pace-card";
@@ -196,8 +196,6 @@ export interface AppOptions {
   readonly quality?: Exclude<Quality, "ultra">;
   readonly seed?: number;
   readonly preset?: Preset;
-  /** ?prelearn=0: no Học trước before the first prep. */
-  readonly prelearn?: boolean;
   /** ?review=0: no Thẻ Ôn in the breaks (canon §17: optional). */
   readonly review?: boolean;
   /** ?speech=0: no pronunciation (browser TTS of the word in learning panels). */
@@ -234,7 +232,6 @@ export function optionsFromUrl(search: string, dev: boolean): AppOptions {
     quality: pick("q", TIERS),
     seed: seed === undefined || seed < 0 ? undefined : Math.floor(seed) >>> 0,
     preset: pick("preset", PRESET_IDS),
-    prelearn: params.get("prelearn") !== "0",
     review: params.get("review") !== "0",
     speech: params.get("speech") !== "0",
     guard: pick("guard", GUARDS),
@@ -324,10 +321,8 @@ interface Match {
   readonly wave1: PaceMeter;
   readonly scene: GreyBoxView;
   readonly banQuyet: BanQuyetPresenter;
-  readonly frame: LearningFramePresenter;
   readonly hud: HudPresenter;
   readonly shopMode: ShopModePresenter;
-  readonly learnAhead: LearnAheadPanel;
   readonly review: ReviewCardPanel;
   readonly results: ResultsPresenter;
   readonly sound: SoundHooks;
@@ -356,6 +351,10 @@ declare global {
 /** `window.__ic` (M0A_PLAN §6.9; Lane 7's scenarios). Reads, except send, action, setSpeed and restart. */
 export interface IcHandle {
   /** A match runs (after the deck and the speed are known). */
+  layout(): ReturnType<typeof measureUiCoverage> | null;
+  /** Actual health-bar instances for the mixed full/damaged screenshot fixture. */
+  healthBars(): { count: number; visible: boolean; fractions: number[] } | null;
+  foeBadges(): { count: number; visible: boolean; roles: number[]; sizes: readonly number[] } | null;
   readonly ready: boolean;
   state(): Record<string, unknown>;
   /** A command into the world as if a panel or key made it (logged in the replay). */
@@ -418,7 +417,7 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
   applyInsets();
   view.addEventListener("resize", applyInsets);
 
-  const boot = el(doc, "div", "ic-panel ic-boot", "Tu Tiên Thủ Ải · " + stage.name + " · đang nạp từ…");
+  const boot = el(doc, "div", "ic-panel ic-boot", "Loading words…");
   const veil = el(doc, "div", "ic-veil");
   const veilText = el(doc, "div", "ic-panel ic-veil__text");
   veil.append(veilText);
@@ -539,7 +538,6 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     if (menu.isOpen) return menu;
     const m = match;
     if (!m) return null;
-    if (m.learnAhead.isOpen) return m.learnAhead;
     if (m.review.isOpen) return m.review;
     if (m.results.isOpen) return m.results;
     return null;
@@ -630,12 +628,12 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
   const pausedNow = (now: number): boolean => {
     const m = match;
     if (!m) return true;
-    return menu.isOpen || paceOpen || veilMode === "focus" || countdownUntil > now || m.learnAhead.isOpen || m.review.isOpen || m.results.isOpen;
+    return menu.isOpen || paceOpen || veilMode === "focus" || countdownUntil > now || m.review.isOpen || m.results.isOpen;
   };
   const onBlur = (): void => {
     if (!match || finished()) return;
     veilMode = "focus";
-    veilText.textContent = "Bấm hoặc gõ phím bất kỳ để chơi tiếp";
+    veilText.textContent = "Click or press any key to resume";
     veil.classList.remove("is-soft");
     veil.hidden = false;
     countdownUntil = 0;
@@ -680,18 +678,20 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     let hudRef: HudPresenter | null = null;
     const scene = createGreyBoxView(renderer, { stage, seat: SEAT, reduced, overlay: overlay!, moteTarget: () => hudRef?.linhSaAnchor() ?? null });
     const highlight = (index: number): void => scene.stage.highlightSlot(index);
-    const banQuyet = createBanQuyet(quyetHost!, SEAT);
-    const frame = createLearningFrame(overlay!, { gloss, speak, seat: SEAT });
+    const banQuyet = createBanQuyet(quyetHost!, SEAT, { gloss, keepouts: world => protectedFieldRects(world, renderer.project) });
     const hud = createHud(overlay!, SEAT);
+    const foeBadges = createFoeBadges(renderer.layers.actors, {
+      project: renderer.project, locate: scene.actors.locate,
+      viewport: () => ({ width: view!.innerWidth, height: view!.innerHeight }),
+    });
     hudRef = hud;
     const waveCard = createWaveCard(overlay!, { stage, project: renderer.project });
     const shopMode = createShopMode(overlay!, send, SEAT, { onCursor: highlight });
     const shopStrip = createShopStrip(overlay!, send, SEAT, { mode: shopMode, onCursor: highlight });
-    const learnAhead = createLearnAhead(overlay!, send, SEAT, { learning, gloss, speak });
     const review = createReviewCard(overlay!, send, SEAT, { learning, speak });
     const results = createResults(overlay!, { seat: SEAT, learning: () => ({ words: learning.matchWords(), book: learning.wordBook() }), speak, onAgain: () => again() });
     const sound = createSoundHooks({ seat: SEAT, voices: quality === "low" ? AUDIO.voicesLow : AUDIO.voices });
-    const ui: Presenter[] = [sound, banQuyet, frame, hud, waveCard, shopStrip, shopMode, learnAhead, review, results];
+    const ui: Presenter[] = [sound, foeBadges, banQuyet, hud, waveCard, shopStrip, shopMode, review, results];
     match = {
       runner,
       profile: choice.profile,
@@ -702,10 +702,8 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
       wave1: new PaceMeter(),
       scene,
       banQuyet,
-      frame,
       hud,
       shopMode,
-      learnAhead,
       review,
       results,
       sound,
@@ -721,9 +719,6 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     };
     countdownUntil = 0;
     playMs = 0;
-    // Học trước (canon §17): this match's new words, before the prep's clock runs.
-    const words = learnAheadWords(loaded.header.deck, gloss);
-    if (options.prelearn !== false && words.length > 0) learnAhead.open(words);
   }
 
   function disposeMatch(): void {
@@ -741,7 +736,6 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     if (m.outcome !== null) return;
     m.outcome = outcome;
     m.learning.flush();
-    if (m.learnAhead.isOpen) m.learnAhead.close();
     if (m.review.isOpen) m.review.close();
     m.shopMode.close();
     const w = m.runner.world;
@@ -785,7 +779,7 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
         return;
       }
       newMatch(choice);
-      match?.hud.notify("Chơi lại ải ở " + choice.profile.e + " WPM", "info");
+      match?.hud.notify("Restart at " + choice.profile.e + " WPM", "info");
     });
   }
 
@@ -806,7 +800,7 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
             const update = paceUpdateAfterWave1(m.wave1, SEAT, m.profile, w.stats, (profile) => paceFor(profile).kPm);
             if (update !== null) {
               send(update);
-              m.hud.notify("Đã đo tốc độ gõ sau đợt 1: " + Math.round(m.wave1.wpm) + " WPM", "info");
+              m.hud.notify("Wave 1 typing speed: " + Math.round(m.wave1.wpm) + " WPM", "info");
             }
           }
           break;
@@ -870,6 +864,7 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     if (!m.paceSent) m.wave1.onEvents(events);
     follow(m, events, timing.now);
     openReview(m, timing.now);
+    renderer.updateCamera(timing.dt, { enabled: !pausedNow(timing.now) && !m.shopMode.isOpen && !m.runner.finished, reducedMotion: reduced() });
     const live = match === m;
     for (const presenter of m.presenters) presenter.onEvents(events, w);
     info.dt = timing.dt;
@@ -898,15 +893,13 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     if (left > 0) countdownNode.textContent = String(Math.ceil(left / 1000));
     // Words stay hidden while the game stands still in a live phase (no reading ahead in the pause), and once the match is over.
     quyetHost!.classList.toggle("is-hushed", m.runner.finished || (liveNow() && (menu.isOpen || paceOpen || veilMode === "focus" || left > 0)));
-    // A learning panel covers the frame (its lines would give answers away, canon §17).
-    m.frame.setCovered(m.learnAhead.isOpen || m.review.isOpen);
     if (veilMode === "soft") veil.hidden = activePanel() !== null;
     // canon §20.1: after 10 s of play, only a suggestion.
     if (!paused && liveNow()) playMs += timing.dt * 1000;
     if (qualityHint === "" && quality !== "low" && playMs >= DEFAULT_TIER.suggestAfterMs && overBudget(quality, intervals, cpu)) {
       const lower = quality === "medium" ? "low" : "medium";
       qualityHint = lower;
-      m.hud.notify("Máy đang chậm ở bậc hình này: thử ?q=" + lower + " cho mượt hơn", "soft");
+      m.hud.notify("Performance is low: try ?q=" + lower, "soft");
     }
   }
 
@@ -932,7 +925,7 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
       newMatch(choice);
       if (!doc.hasFocus()) {
         veilMode = "soft";
-        veilText.textContent = "Bấm hoặc gõ phím bất kỳ để bắt đầu";
+        veilText.textContent = "Click or press any key to start";
         veil.classList.add("is-soft");
         veil.hidden = false;
       }
@@ -993,7 +986,7 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
         menu: menu.isOpen,
         veil: veilMode,
         countdown: countdownUntil > now,
-        panel: menu.isOpen ? "menu" : m.learnAhead.isOpen ? "learn-ahead" : m.review.isOpen ? "review" : m.results.isOpen ? "results" : m.shopMode.isOpen ? "shop" : null,
+        panel: menu.isOpen ? "menu" : m.review.isOpen ? "review" : m.results.isOpen ? "results" : m.shopMode.isOpen ? "shop" : null,
         shop: m.shopMode.isOpen,
         imeBanner: ime.shown,
         outcome: m.outcome,
@@ -1017,6 +1010,20 @@ export function startApp(doc: Document = document, given?: AppOptions): App {
     replayCheck: () => (match ? replayCheck(match.runner) : null),
     replay: () => match?.runner.replay() ?? null,
     hash: () => (match ? { world: hex32(hashWorld(match.runner.world)), local: hex32(hashLocal(match.runner.local)) } : null),
+    layout: () => match ? measureUiCoverage(doc, match.runner.world, renderer.project) : null,
+    healthBars: () => {
+      if (!match) return null;
+      const mesh = renderer.layers.actors.getObjectByName("damaged-beast-health") as InstancedMesh | undefined;
+      if (!mesh) return null;
+      const health = mesh.geometry.getAttribute("health");
+      return { count: mesh.count, visible: mesh.visible, fractions: Array.from({ length: mesh.count }, (_, i) => health.getX(i)) };
+    },
+    foeBadges: () => {
+      const mesh = renderer.layers.actors.getObjectByName("foe-badge-batch") as InstancedMesh | undefined;
+      if (!mesh) return null;
+      const roles = mesh.geometry.getAttribute("badgeRole");
+      return { count: mesh.count, visible: mesh.visible, roles: Array.from({ length: mesh.count }, (_, i) => roles.getX(i)), sizes: [FOE_BADGE_PX.elite, FOE_BADGE_PX.boss] };
+    },
     foeSizes: () => (match ? foeSizes(renderer, match.scene.actors, match.runner.world, match.runner.local) : []),
     frame: () => {
       const m = match;

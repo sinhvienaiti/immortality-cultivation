@@ -57,18 +57,18 @@ export function showPaceCard(host: HTMLElement, options: PaceCardOptions = {}): 
   const { choices, selected } = paceChoices(options.skill, options.lastPick);
   const card = node(doc, "section", "ic-pace");
   card.setAttribute("role", "dialog");
-  card.setAttribute("aria-label", "Tốc độ gõ");
+  card.setAttribute("aria-label", "Typing speed");
   const list = node(doc, "div", "ic-pace__list");
   card.append(
-    node(doc, "div", "ic-pace__title", "Bạn gõ nhanh cỡ nào?"),
+    node(doc, "div", "ic-pace__title", "How fast do you type?"),
     node(
       doc,
       "div",
       "ic-pace__lead",
-      "Thú tràn vào nhanh hay chậm, từ dài hay ngắn theo tốc độ này; không ai phải gõ nhanh hơn sức mình. Chưa biết thì chọn \"Chưa biết\": game đo lại sau đợt 1. Hết trận, game ghi tốc độ thật của bạn.",
+      "Beast pace and word length match your speed. Choose \"Not sure\" to measure after wave 1. Your speed is recorded after each match.",
     ),
     list,
-    node(doc, "div", "ic-pace__keys", "Phím số chọn · ↑ ↓ rồi Enter · hoặc bấm chuột"),
+    node(doc, "div", "ic-pace__keys", "Number keys · ↑ ↓ then Enter · or click"),
   );
   host.append(card);
   let index = selected;

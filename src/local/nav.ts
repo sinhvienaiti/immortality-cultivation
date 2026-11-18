@@ -36,7 +36,7 @@ export function createNavGrid(stage: StageDef): NavGrid {
     cellU: g.cellU,
     minXU: g.minXU,
     minZU: g.minZU,
-    blocked: blockedCells(stage, PLAYER.radiusMm),
+    blocked: blockedCells(stage, PLAYER.radiusMm, { lane: false }),
     minX: mmToU(f.minXMm) + r,
     maxX: mmToU(f.maxXMm) - r,
     minZ: mmToU(f.minZMm) + r,

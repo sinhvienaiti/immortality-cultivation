@@ -9,9 +9,9 @@ import type { StageDef } from "../../src/content/types";
 describe("URL flags (M0A_PLAN §6.9)", () => {
   it("reads ?q ?seed ?preset ?prelearn ?review ?speech ?guard ?tam ?debug; unknown values are ignored", () => {
     const options = optionsFromUrl("?q=medium&seed=1234&preset=relax&prelearn=0&review=0&speech=0&guard=dash&tam=tich-kiem&debug=1", false);
-    expect(options).toMatchObject({ quality: "medium", seed: 1234, preset: "relax", prelearn: false, review: false, speech: false, guard: "dash", tamPhap: "tich-kiem", debug: true });
+    expect(options).toMatchObject({ quality: "medium", seed: 1234, preset: "relax", review: false, speech: false, guard: "dash", tamPhap: "tich-kiem", debug: true });
     const plain = optionsFromUrl("?q=ultra&seed=-4&preset=hard&guard=x", false);
-    expect(plain).toMatchObject({ quality: undefined, seed: undefined, preset: undefined, prelearn: true, review: true, speech: true, guard: undefined, debug: false });
+    expect(plain).toMatchObject({ quality: undefined, seed: undefined, preset: undefined, review: true, speech: true, guard: undefined, debug: false });
   });
 
   it("?speed=N only in dev builds, held in 0.25–16 (rules unchanged)", () => {

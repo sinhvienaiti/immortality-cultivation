@@ -42,7 +42,7 @@ describe("the starting speed (D18): never a silent 35", () => {
 
   it("offers 'chưa biết' at 25 WPM before the presets, the measured speed first when there is one", () => {
     const fresh = paceChoices(null, 45);
-    expect(fresh.choices[0]).toMatchObject({ label: "Chưa biết", unknown: true, profile: { e: PACE.unknownWpm } });
+    expect(fresh.choices[0]).toMatchObject({ label: "Not sure", unknown: true, profile: { e: PACE.unknownWpm } });
     expect(fresh.choices[fresh.selected]!.profile.e).toBe(45);
     const measured = updateSkill(newSkillProfile(), { outcome: "won", words: 60, wpm: 52 }).profile;
     const rows = paceChoices(measured).choices;

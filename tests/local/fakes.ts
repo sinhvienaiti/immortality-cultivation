@@ -32,13 +32,13 @@ import { fieldStep, heartDistance } from "../../src/sim/field";
 
 /** canon §10.2, §10.4, §10.5 at K0 Cân bằng: W × 100, speed mm/s, tier. */
 export const CANON_BEASTS: Readonly<Record<SpeciesId, { readonly w100: number; readonly speedMm: number; readonly tier: BeastState["tier"] }>> = {
-  "thach-thu": { w100: 33, speedMm: 1600, tier: "swarm" },
-  "phong-lang": { w100: 100, speedMm: 1400, tier: "small" },
-  "hoa-nha": { w100: 80, speedMm: 2000, tier: "small" },
-  "nham-vien": { w100: 200, speedMm: 1000, tier: "medium" },
-  "thiet-giap-tru": { w100: 300, speedMm: 1000, tier: "medium" },
-  "lang-dau-dan": { w100: 700, speedMm: 1400, tier: "general" },
-  "thiet-boi-lang-vuong": { w100: BOSS.w100, speedMm: 1000, tier: "boss" },
+  "thach-thu": { w100: 33, speedMm: 3000, tier: "swarm" },
+  "phong-lang": { w100: 100, speedMm: 2600, tier: "small" },
+  "hoa-nha": { w100: 80, speedMm: 3000, tier: "small" },
+  "nham-vien": { w100: 200, speedMm: 1900, tier: "medium" },
+  "thiet-giap-tru": { w100: 300, speedMm: 1900, tier: "medium" },
+  "lang-dau-dan": { w100: 700, speedMm: 2400, tier: "general" },
+  "thiet-boi-lang-vuong": { w100: BOSS.w100, speedMm: 1350, tier: "boss" },
 };
 
 /** canon §10.3: Cuồng +30 % speed, Thiết Bì +2 W. */
@@ -112,6 +112,9 @@ export const cast = () => ({
   nextActionId: () => 0,
   emitCast: noop,
   stepCasts: noop,
+  clearUltimate: noop,
+  releaseUltimate: noop,
+  prepareUltimate: noop,
 });
 
 /** Beasts within `fake.killAtU` of the heart are typed down; the boss after `fake.bossTicks`. */

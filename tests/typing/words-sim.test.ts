@@ -443,10 +443,10 @@ describe("the live-word cap and priority (canon §6.2, HC2)", () => {
       expect(fx.world.words.live[seat.seals[0]!]!.kitSlot).toBeGreaterThanOrEqual(0);
       expect(slotEntry(fx.world, 0, 2)!.typed).toBe(1);
       if (cap === 5) {
-        // ô 4 (Thư giãn) or ô 5 (Học) loses its place first, then ô 5 / ô 4.
+        // 394c: the full Ultimate reclaims a skill place; urgent words and the typed ô 2 stay.
         expect(slotEntry(fx.world, 0, 3)!.kitSlot).toBeGreaterThanOrEqual(0);
-        expect(slotEntry(fx.world, 0, 1)!.kitSlot).toBeGreaterThanOrEqual(0);
-        const lost = [slotEntry(fx.world, 0, 4)!, slotEntry(fx.world, 0, 5)!].filter((entry) => entry.kitSlot < 0);
+        expect(slotEntry(fx.world, 0, 5)!.kitSlot).toBeGreaterThanOrEqual(0);
+        const lost = [slotEntry(fx.world, 0, 1)!, slotEntry(fx.world, 0, 4)!].filter((entry) => entry.kitSlot < 0);
         expect(lost).toHaveLength(2);
         expect(fx.of("word-released").some((event) => event.reason === "replaced")).toBe(true);
       }

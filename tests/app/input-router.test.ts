@@ -73,6 +73,22 @@ function setup(options: Partial<RouterOptions> = {}) {
 }
 
 describe("input router", () => {
+  it("routes a fresh Space only during play, ignores repeat, and gives panels priority", () => {
+    const t = setup();
+    t.down("Space", " ");
+    t.down("Space", " ", { repeat: true });
+    expect(t.commands).toEqual([{ type: "ultimate", seat: 0, origin: { x: 6000, z: 0 }, aim: { x: 60_000, z: 0 } }]);
+    t.setLive(false);
+    t.down("Space", " ");
+    expect(t.commands).toHaveLength(1);
+    const actions: string[] = [];
+    const panel: KeyPanel = { isOpen: true, handleLetter: () => true, handleAction: action => { actions.push(action); return true; } };
+    const p = setup({ panel: () => panel });
+    p.down("Space", " ");
+    expect(p.commands).toHaveLength(0);
+    expect(actions).toEqual(["ultimate"]);
+  });
+
   it("turns letters into key commands with seat, quantised origin and aim while the Bàn Quyết is live", () => {
     const t = setup();
     t.down("KeyC", "c");
