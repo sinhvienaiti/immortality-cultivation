@@ -1,0 +1,536 @@
+{
+  "ticket": "415b",
+  "reference": "games/immortality-cultivation/art-src/concept/hand-seals/seals-sheet-411.jpg",
+  "detailReference": "games/immortality-cultivation/art-src/concept/hand-seals/seals-hands-s0-s9.v1-try3.png",
+  "interpretation": "Trái/phải theo nhân vật. Ảnh cận quyết định ngón và hướng lòng; ảnh nửa thân quyết định vùng cổ tay. Mặt khuất được diễn giải từ 393/411. Mỗi ngón dùng một curl 0–1; chia đều theo tỉ lệ loại ngón, giữ nguyên tỉ lệ khi chạm giới hạn. Ngón gập S4/S8 dùng curl 0,75. Không đan ngón mới.",
+  "zonesM": {
+    "bụng": [
+      0.78,
+      1.06
+    ],
+    "ngực": [
+      1.06,
+      1.32
+    ],
+    "mặt": [
+      1.32,
+      1.52
+    ]
+  },
+  "limits": {
+    "minGapM": 0.004,
+    "wristDepthM": [
+      0.05,
+      0.3
+    ],
+    "maxWristFlexDeg": 70,
+    "extendedTotalDeg": 40,
+    "foldedTotalDeg": 120,
+    "transitionS": 0.28,
+    "zeroFanMaxSkinGapM": 0.008,
+    "zeroFanParallelMaxDeg": 0.01,
+    "maxElbowLateralM": 0.25,
+    "wristZoneToleranceM": 0.03
+  },
+  "seals": [
+    {
+      "id": "S0",
+      "name": "Origin Rest",
+      "r": {
+        "zone": "bụng",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.16,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "l": {
+        "zone": "bụng",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.36,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "contact": "Hai đầu ngón cái chạm; tay phải đặt trên lòng tay trái. Không đan ngón.",
+      "exceptions": [
+        {
+          "pairs": [
+            "thumb_r:thumb_l"
+          ],
+          "rule": "gap4mm",
+          "reason": "Hai đầu ngón cái chạm trong ảnh S0; chỉ miễn cặp cái–cái khác tay."
+        }
+      ]
+    },
+    {
+      "id": "S1",
+      "name": "Sword Fingers",
+      "r": {
+        "zone": "ngực",
+        "palm": "trước",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.67,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.82,
+          "pinky": 0.82
+        }
+      },
+      "l": {
+        "zone": "bụng",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.67,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.82,
+          "pinky": 0.82
+        }
+      },
+      "contact": "Mỗi ngón cái giữ hai ngón áp út/út của cùng bàn tay; hai tay tách.",
+      "exceptions": [
+        {
+          "pairs": [
+            "thumb_r:ring_r",
+            "thumb_r:pinky_r"
+          ],
+          "rule": "gap4mm",
+          "reason": "Ngón cái r giữ ngoài các ngón gập; chỉ miễn đúng cặp tiếp xúc được nêu."
+        },
+        {
+          "pairs": [
+            "thumb_l:ring_l",
+            "thumb_l:pinky_l"
+          ],
+          "rule": "gap4mm",
+          "reason": "Ngón cái l giữ ngoài các ngón gập; chỉ miễn đúng cặp tiếp xúc được nêu."
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "name": "Sprouting Branches",
+      "r": {
+        "zone": "ngực",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.82,
+          "pinky": 0.82
+        }
+      },
+      "l": {
+        "zone": "ngực",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.82,
+          "pinky": 0.82
+        }
+      },
+      "contact": "Không tiếp xúc giữa hai tay, không đan; trỏ/giữa dựng cong mềm.",
+      "exceptions": []
+    },
+    {
+      "id": "S3",
+      "name": "Guiding Flow",
+      "r": {
+        "zone": "ngực",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "l": {
+        "zone": "bụng",
+        "palm": "xuống",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "contact": "Tay phải trên ngửa, tay trái dưới úp; không tiếp xúc.",
+      "exceptions": []
+    },
+    {
+      "id": "S4",
+      "name": "Hidden Ember",
+      "r": {
+        "zone": "ngực",
+        "palm": "trước",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "gập",
+          "middle": "gập",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.75,
+          "middle": 0.75,
+          "ring": 0.75,
+          "pinky": 0.75
+        }
+      },
+      "l": {
+        "zone": "bụng",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "gập",
+          "middle": "gập",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.75,
+          "middle": 0.75,
+          "ring": 0.75,
+          "pinky": 0.75
+        }
+      },
+      "contact": "Hai bàn tay tạo hai nửa bầu khí rời nhau; cong từng đốt, không nắm kín.",
+      "exceptions": []
+    },
+    {
+      "id": "S5",
+      "name": "Mountain Ward",
+      "r": {
+        "zone": "ngực",
+        "palm": "trước",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "l": {
+        "zone": "bụng",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "gập",
+          "middle": "gập",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 1,
+          "index": 0.75,
+          "middle": 0.75,
+          "ring": 0.75,
+          "pinky": 0.75
+        }
+      },
+      "contact": "Tay phải dựng mở; trái nắm ở eo, ngón cái phủ ngoài ngón trỏ. Hai tay tách.",
+      "exceptions": [
+        {
+          "pairs": [
+            "thumb_l:index_l",
+            "thumb_l:middle_l"
+          ],
+          "rule": "gap4mm",
+          "reason": "Ngón cái l giữ ngoài các ngón gập; chỉ miễn đúng cặp tiếp xúc được nêu."
+        }
+      ]
+    },
+    {
+      "id": "S6",
+      "name": "Thunder Command",
+      "r": {
+        "zone": "mặt",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "gập",
+          "middle": "gập",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 1,
+          "index": 0.75,
+          "middle": 0.75,
+          "ring": 0.75,
+          "pinky": 0.75
+        }
+      },
+      "l": {
+        "zone": "ngực",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "contact": "Tay trái đỡ phía dưới cổ tay phải; cái phải phủ ngoài trỏ/giữa của nắm.",
+      "exceptions": [
+        {
+          "pairs": [
+            "thumb_r:index_r",
+            "thumb_r:middle_r"
+          ],
+          "rule": "gap4mm",
+          "reason": "Ngón cái r giữ ngoài các ngón gập; chỉ miễn đúng cặp tiếp xúc được nêu."
+        }
+      ]
+    },
+    {
+      "id": "S7",
+      "name": "Crystal Closure",
+      "r": {
+        "zone": "ngực",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "l": {
+        "zone": "ngực",
+        "palm": "trong",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "contact": "Hai lòng tay đối nhau, khe 4–8 cm; không áp lòng, không đan.",
+      "exceptions": []
+    },
+    {
+      "id": "S8",
+      "name": "Guiding Wind",
+      "r": {
+        "zone": "ngực",
+        "palm": "xuống",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.75,
+          "pinky": 0.75
+        }
+      },
+      "l": {
+        "zone": "bụng",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "contact": "Trỏ/giữa phải dẫn ngang, áp út/út gập; trái đỡ thấp, không chạm.",
+      "exceptions": []
+    },
+    {
+      "id": "S9",
+      "name": "Opening Heaven",
+      "r": {
+        "zone": "mặt",
+        "palm": "trước",
+        "fingers": {
+          "thumb": "chạm ngón khác",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "gập",
+          "pinky": "gập"
+        },
+        "curl": {
+          "thumb": 0.67,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.82,
+          "pinky": 0.82
+        }
+      },
+      "l": {
+        "zone": "ngực",
+        "palm": "lên",
+        "fingers": {
+          "thumb": "duỗi",
+          "index": "duỗi",
+          "middle": "duỗi",
+          "ring": "duỗi",
+          "pinky": "duỗi"
+        },
+        "curl": {
+          "thumb": 0.12,
+          "index": 0.08,
+          "middle": 0.08,
+          "ring": 0.08,
+          "pinky": 0.08
+        }
+      },
+      "contact": "Tay trái đỡ cổ tay phải; cái phải giữ áp út/út; trỏ/giữa hướng lên bên mặt.",
+      "exceptions": [
+        {
+          "pairs": [
+            "thumb_r:ring_r",
+            "thumb_r:pinky_r"
+          ],
+          "rule": "gap4mm",
+          "reason": "Ngón cái r giữ ngoài các ngón gập; chỉ miễn đúng cặp tiếp xúc được nêu."
+        }
+      ]
+    }
+  ],
+  "baseTicket": 415,
+  "curlProfiles": {
+    "long": {
+      "ratio": [
+        1,
+        1.1,
+        0.8
+      ],
+      "maxDeg": [
+        85,
+        100,
+        75
+      ]
+    },
+    "thumb": {
+      "ratio": [
+        1,
+        1.2,
+        1.4
+      ],
+      "maxDeg": [
+        50,
+        60,
+        70
+      ]
+    }
+  }
+}
