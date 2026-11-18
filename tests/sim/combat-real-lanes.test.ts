@@ -104,6 +104,7 @@ function play(h: ReplayHeader, until = 60 * 60 * 12, keyEvery = 9): Run {
       if (keys % 97 === 0) commands.push({ type: "release", seat: 0 });
       else if (letter >= 0) commands.push({ type: "key", seat: 0, letter, ms: world.tick * 17, origin: { x: 0, z: mToU(3) }, aim });
     }
+    if (world.casts.prepared[0]) commands.push({ type: "ultimate", seat: 0, origin: { x: 0, z: mToU(3) }, aim: null });
     if ((world.phase === "wave" || world.phase === "boss") && world.tick % 600 === 300) commands.push({ type: "consumable", seat: 0, slot: world.tick % 1200 === 300 ? 0 : 1, origin: { x: 0, z: mToU(3) }, aim: null });
     stepMatch(world, local, inputs, commands, run.log);
     run.events.push(...world.events.drain(), ...drainLocalEvents(local));

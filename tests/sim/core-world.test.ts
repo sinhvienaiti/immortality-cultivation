@@ -70,7 +70,7 @@ describe("world: creation and phases (canon §4.1)", () => {
     const world = createWorld(THANH_THACH_AI, header.seed, header);
     expect(world.phase).toBe("prep");
     expect(world.phaseEndsAt).toBe(msToTicks(FLOW.prepMs));
-    expect(world.liveCap).toBe(60);
+    expect(world.liveCap).toBe(90);
     expect(world.seats).toEqual([
       { seat: 0, human: true, profile: { e: 35, a: 950, cv: 250 }, kPm: 1000, loadout: { guard: "ward", tamPhap: "kiem-tam" }, chanNguyenPm: 0, downUntil: -1, softTarget: null, lastResolvedTick: -1 },
     ]);
@@ -130,7 +130,7 @@ describe("world: creation and phases (canon §4.1)", () => {
 });
 
 describe("world: waves end only when every group spawned and none lives (canon §4.1)", () => {
-  it("keeps a wave going past its clock while a beast lives, and the live cap at 60 every tick", () => {
+  it("keeps a wave going past its clock while a beast lives, and the live cap at 90 every tick", () => {
     fake.killAtU = -1;
     let capChecked = 0;
     const run = play(testHeader(), {
@@ -341,7 +341,7 @@ describe("world: commands, beasts and cleanup", () => {
     const cluster = spawnGroup(world, { atMs: 0, gate: "A", species: "thach-thu", count: 7, cluster: true }, { wave: 1, summoned: false });
     expect(cluster).toHaveLength(7);
     expect(new Set(cluster.map((b) => b.cluster)).size).toBe(1);
-    expect(liveRoom(world)).toBe(53);
+    expect(liveRoom(world)).toBe(83);
     for (const beast of cluster.slice(0, 3)) {
       beast.alive = false;
       beast.killedBy = "slot4";

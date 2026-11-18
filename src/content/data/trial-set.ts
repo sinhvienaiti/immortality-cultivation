@@ -17,7 +17,7 @@
 import type { CatalogWord, LessonDef } from "../../tinh-tu/sim/lesson";
 
 /** Shown wherever the fallback set is in use (results, debug), so nobody takes it for the real deck. */
-export const TRIAL_SET_LABEL = "Bộ thử dự phòng: không tải được kho từ chung";
+export const TRIAL_SET_LABEL = "Fallback word set: shared vocabulary unavailable";
 
 // ── Match deck fallback (canon §17.1) ─────────────────────────────────────────
 
@@ -104,7 +104,7 @@ export const TRIAL_LESSONS: readonly LessonDef[] = [
   {
     id: "nhat-tuyen",
     slot: 2,
-    name: "Nhất Tuyến Xuyên Vân",
+    name: "Cloudpiercer",
     topic: "nature.weather",
     topicLabel: "Weather",
     group: "nature-environment",
@@ -120,7 +120,7 @@ export const TRIAL_LESSONS: readonly LessonDef[] = [
   {
     id: "lac-kiem",
     slot: 4,
-    name: "Lạc Kiếm Trận",
+    name: "Swordfall Formation",
     topic: "food.cooking",
     topicLabel: "Cooking",
     group: "food-drink",
@@ -136,7 +136,7 @@ export const TRIAL_LESSONS: readonly LessonDef[] = [
   {
     id: "thien-ha",
     slot: 5,
-    name: "Thiên Hà Kiếm Vũ",
+    name: "Celestial Sword Rain",
     topic: "people.emotions",
     topicLabel: "Emotions",
     group: "people-relationships",

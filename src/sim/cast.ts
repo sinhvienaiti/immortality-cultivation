@@ -15,12 +15,12 @@
  * Owner: Lane 3.
  */
 import { CAST, POSTURE, SIM } from "../content/rules";
-import type { Cast, CastsState, SimEvent, World, WorldInit } from "../content/types";
+import type { Cast, CastsState, SimCommand, SimEvent, World, WorldInit } from "../content/types";
 import { addChanNguyen } from "./chan-nguyen";
 import type { EventBody } from "./events";
 import { postureHit } from "./posture";
 import { resolveCast } from "./skills";
-import { liveBeast, onCastSettled } from "./words";
+import { isBanQuyetLive, liveBeast, onCastSettled, slotEntry } from "./words";
 
 const HELD_TICKS = Math.round((CAST.heldMs * SIM.tickHz) / 1000);
 
@@ -49,6 +49,7 @@ export function sealPosture(seats: number): number {
 export function createCastsState(init: WorldInit): CastsState {
   const seats = Math.max(1, init.seats);
   return {
+    prepared: new Array<Cast | null>(seats).fill(null),
     held: [],
     nextAction: new Array<number>(seats).fill(0),
     resolved: 0,
@@ -106,6 +107,37 @@ export function emitCast(world: World, cast: Cast): void {
   world.stats.castsHeld += 1;
   castEvent(world, cast);
   onCastSettled(world, cast, "held");
+}
+
+/** The word is scored now; only a later Space may resolve this cast. */
+export function prepareUltimate(world: World, cast: Cast): void {
+  if (world.casts.prepared[cast.seat] == null) world.casts.prepared[cast.seat] = cast;
+}
+
+/** No buffering and no held-target retry: each press makes exactly one attempt. */
+export function releaseUltimate(world: World, command: Extract<SimCommand, { type: "ultimate" }>): void {
+  const pending = world.casts.prepared[command.seat];
+  if (!pending || !isBanQuyetLive(world, command.seat)) return;
+  const cast: Cast = { ...pending, tick: world.tick, origin: command.origin, aim: command.aim };
+  if (!tryResolve(world, cast)) {
+    out(world, { type: "rejected", command: "ultimate", reason: "target" });
+    return;
+  }
+  world.casts.prepared[command.seat] = null;
+  const n = cast.actionId - cast.seat * CAST.actionSeatStride;
+  world.casts.lastAction[cast.seat] = Math.max(world.casts.lastAction[cast.seat] ?? -1, n);
+}
+
+/** Wave end and death discard readiness, retaining the energy meter. */
+export function clearUltimate(world: World, seat: number): void {
+  if (!world.casts.prepared[seat]) return;
+  world.casts.prepared[seat] = null;
+  const entry = slotEntry(world, seat, 5);
+  if (entry) {
+    entry.state = isBanQuyetLive(world, seat) ? "cooldown" : "dim";
+    entry.until = -1;
+    entry.next = -1;
+  }
 }
 
 /** Retries held Casts and fizzles them at 3 s. */

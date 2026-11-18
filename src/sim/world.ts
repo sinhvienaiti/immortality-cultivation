@@ -28,7 +28,7 @@ import { createRng } from "../kit/platform/rng";
 import { createLocal, drainLocalCommands, drainLocalEvents, stepLocal } from "../local/index";
 import { stepBeasts } from "./beasts";
 import { createBossState, stepBoss } from "./boss";
-import { createCastsState, stepCasts } from "./cast";
+import { clearUltimate, createCastsState, releaseUltimate, stepCasts } from "./cast";
 import { applyAuto, onBeastKilled as combatOnKill, stepAutoHits } from "./combat";
 import { createConsumablesState, stepConsumables, useConsumable } from "./consumables";
 import { createDirectorState, directorOnKill, directorOnRelease, stepDirector } from "./director";
@@ -138,7 +138,11 @@ export function step(world: World, commands: readonly SimCommand[] = []): void {
     stepPosture(world);
     stepFormation(world);
     stepEconomy(world);
+    const endedBefore = world.waves.endedThrough;
     cleanup(world);
+    if (world.waves.endedThrough !== endedBefore || finished(world.phase)) {
+      for (let seat = 0; seat < world.seats.length; seat += 1) clearUltimate(world, seat);
+    }
   }
   world.events.endTick?.();
   world.tick += 1;
@@ -207,6 +211,8 @@ export function applyCommand(world: World, command: SimCommand): void {
     case "key":
       world.wall.lastKeyMs[command.seat] = command.ms;
       return typeKey(world, command);
+    case "ultimate":
+      return releaseUltimate(world, command);
     case "backspace":
       return typeBackspace(world, command.seat);
     case "release":

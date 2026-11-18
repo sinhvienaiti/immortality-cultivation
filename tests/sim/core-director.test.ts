@@ -32,10 +32,11 @@ import { fake, resetFake, testHeader } from "../local/fakes";
 
 beforeEach(() => resetFake());
 
-function run(header: ReplayHeader, until = 60 * 60 * 12): { world: World; events: SimEvent[] } {
+function run(header: ReplayHeader, until = 60 * 60 * 12, pressureFromStart = false): { world: World; events: SimEvent[] } {
   const world = createWorld(THANH_THACH_AI, header.seed, header);
   const events: SimEvent[] = [];
   while (world.tick < until && world.phase !== "victory" && world.phase !== "defeat") {
+    if (pressureFromStart) world.formation.lastHeartHitTick = world.tick;
     step(world, []);
     events.push(...world.events.drain());
   }
@@ -66,10 +67,11 @@ describe("pace director (canon §13.2)", () => {
   });
 
   it("eases a hard fight with at most 2 steps a wave and one Linh Dịch a wave (+5 % Trận Lực)", () => {
-    // Beasts reach the heart and bite before they are typed down: pressure and a falling Trận Lực.
+    // Hold pressure from the start: the longer lane now has an idle opening before the first bite.
+    // Beasts then reach the heart and bite before they are typed down.
     fake.killAtU = mToU(1.9);
     fake.bite = true;
-    const { world, events } = run(testHeader());
+    const { world, events } = run(testHeader(), undefined, true);
     const steps = paces(events);
     expect(steps.length).toBeGreaterThan(0);
     expect(steps.every((e) => e.dir === -1)).toBe(true);

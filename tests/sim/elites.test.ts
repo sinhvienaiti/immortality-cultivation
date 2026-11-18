@@ -31,7 +31,7 @@ describe("tinh anh (canon §10.3)", () => {
     const far = { x: U(-15), z: U(-17) };
     const cuong = addBeast(world, "phong-lang", { ...far, elite: "cuong" });
     expect(cuong).toMatchObject({ elite: "cuong", hpMax: 144, hp: 144, armour: 0, posture: { value: ELITES.posture, max: 40 } });
-    expect(effectiveSpeedPm(world, cuong)).toBe(1_820_000);
+    expect(effectiveSpeedPm(world, cuong)).toBe(3_380_000);
     const tru = addBeast(world, "thiet-giap-tru", { ...far, elite: "thiet-bi" });
     // (3 × 1.6 + 2) W = 6.8 W = 612 HP; armour G2 → G3.
     expect(tru).toMatchObject({ hpMax: 612, armour: 3, threatW100: 680 });

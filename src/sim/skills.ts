@@ -184,7 +184,7 @@ function resolveUltimate(world: World, cast: Cast, seat: SeatState, def: SkillDe
   if (effect.kind !== "ultimate") return false;
   if (seat.chanNguyenPm < CHAN_NGUYEN.full * 1000) return false;
   const point = groundPoint(world, cast.aim, cast.origin, mmToU(effect.rangeMm), mmToU(effect.radiusMm));
-  if (point === null) return false;
+  if (point === null || areaVictims(world, point.x, point.z, mmToU(effect.radiusMm)).length === 0) return false;
   spendChanNguyen(world, cast.seat);
   const volleys = effect.hitTicks.length;
   const pool = splitWord(wHpOf(world, effect.totalW100), volleys);

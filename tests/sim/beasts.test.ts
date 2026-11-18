@@ -25,11 +25,11 @@ const dist = (x: number, z: number, px = 0, pz = 0): number => Math.hypot(x - px
 describe("the five families (canon §10.2) and Lang Đầu Đàn (§10.4)", () => {
   it("match the canon table: W, speed, role, armour, group size", () => {
     const rows: Record<BeastId, [string, number, number, boolean, number]> = {
-      "thach-thu": ["T01", 33, 1600, false, 0],
-      "phong-lang": ["T02", 100, 1400, false, 0],
-      "hoa-nha": ["T03", 80, 2000, true, 0],
-      "nham-vien": ["T04", 200, 1000, false, 0],
-      "thiet-giap-tru": ["T05", 300, 1000, false, 2],
+      "thach-thu": ["T01", 33, 3000, false, 0],
+      "phong-lang": ["T02", 100, 2600, false, 0],
+      "hoa-nha": ["T03", 80, 3000, true, 0],
+      "nham-vien": ["T04", 200, 1900, false, 0],
+      "thiet-giap-tru": ["T05", 300, 1900, false, 2],
     };
     for (const [id, [code, w100, speed, flying, armour]] of Object.entries(rows)) {
       expect(BEASTS[id as BeastId]).toMatchObject({ id, code, w100, speedMm: speed, flying, armour, element: null });
@@ -119,32 +119,34 @@ describe("the Thú Vương's size (canon §10.5)", () => {
 
 describe("speed: preset × Cuồng × aura × slows (canon §7.2, §8.1)", () => {
   /** Seconds from a gate to the Kết Giới edge at this speed. */
-  const secondsTo9m = (speedPm: number, routeMm: number) => ((routeMm - 9000) * 60) / (speedPm / 1000) / 60;
+  const secondsTo9m = (speedPm: number, routeMm: number) => (routeMm - 9000) / (speedPm / 1000);
+  // Ground routeMm ends at r 2 m; skyRouteMm ends at the centre.
+  const groundRouteMm = FIELD.routeMm + FIELD.heartEdgeMm;
 
-  it("small beasts reach the Kết Giới in 8–12 s at k 1 Cân bằng; Cuồng, aura and both stay ≥ 6 s (canon §8.1, PB-08)", () => {
+  it("small beasts reach the Kết Giới in 10–16 s at k 1 Cân bằng; Cuồng, aura and both stay ≥ 8 s (canon §8.1, PB-08)", () => {
     const { world } = makeWorld();
     const far = { x: U(-15), z: U(-17) };
     const lang = addBeast(world, "phong-lang", far);
     const thu = addBeast(world, "thach-thu", far);
     const nha = addBeast(world, "hoa-nha", { x: U(-20), z: U(-18) });
     const range = FIELD.approachMs.map((ms) => ms / 1000);
-    expect(secondsTo9m(effectiveSpeedPm(world, lang), FIELD.routeMm)).toBeCloseTo(10.71, 1);
-    expect(secondsTo9m(effectiveSpeedPm(world, thu), FIELD.routeMm)).toBeCloseTo(9.38, 1);
-    expect(secondsTo9m(effectiveSpeedPm(world, nha), FIELD.skyRouteMm)).toBeCloseTo(8.95, 1);
+    expect(secondsTo9m(effectiveSpeedPm(world, lang), groundRouteMm)).toBeCloseTo(13.2, 1);
+    expect(secondsTo9m(effectiveSpeedPm(world, thu), groundRouteMm)).toBeCloseTo(11.44, 1);
+    expect(secondsTo9m(effectiveSpeedPm(world, nha), FIELD.skyRouteMm)).toBeCloseTo(13.71, 1);
     for (const beast of [lang, thu, nha]) {
-      const route = beast === nha ? FIELD.skyRouteMm : FIELD.routeMm;
+      const route = beast === nha ? FIELD.skyRouteMm : groundRouteMm;
       const s = secondsTo9m(effectiveSpeedPm(world, beast), route);
       expect(s).toBeGreaterThanOrEqual(range[0]!);
       expect(s).toBeLessThanOrEqual(range[1]!);
     }
     const cuong = addBeast(world, "phong-lang", { ...far, elite: "cuong" });
-    expect(secondsTo9m(effectiveSpeedPm(world, cuong), FIELD.routeMm)).toBeCloseTo(8.24, 1);
+    expect(secondsTo9m(effectiveSpeedPm(world, cuong), groundRouteMm)).toBeCloseTo(10.15, 1);
     addBeast(world, "lang-dau-dan", { x: far.x + U(2), z: far.z });
-    const inAura = secondsTo9m(effectiveSpeedPm(world, lang), FIELD.routeMm);
-    const both = secondsTo9m(effectiveSpeedPm(world, cuong), FIELD.routeMm);
-    expect(inAura).toBeCloseTo(9.32, 1);
-    // Multiplied, not added (canon §8.1: both 7.2 s).
-    expect(both).toBeCloseTo(7.17, 1);
+    const inAura = secondsTo9m(effectiveSpeedPm(world, lang), groundRouteMm);
+    const both = secondsTo9m(effectiveSpeedPm(world, cuong), groundRouteMm);
+    expect(inAura).toBeCloseTo(11.47, 1);
+    // Multipliers stay multiplicative at the updated base speed.
+    expect(both).toBeCloseTo(8.83, 1);
     expect(Math.min(inAura, both)).toBeGreaterThanOrEqual(FIELD.approachFloorMs / 1000);
   });
 
@@ -154,10 +156,10 @@ describe("speed: preset × Cuồng × aura × slows (canon §7.2, §8.1)", () =>
     const near = addBeast(world, "phong-lang", { x: U(-10), z: U(-9.5) });
     const far = addBeast(world, "phong-lang", { x: U(-10), z: U(-8.5) });
     const rat = addBeast(world, "thach-thu", { x: U(-10), z: U(-14) });
-    expect(effectiveSpeedPm(world, near)).toBe(1_610_000);
-    expect(effectiveSpeedPm(world, far)).toBe(1_400_000);
-    expect(effectiveSpeedPm(world, general)).toBe(1_400_000);
-    expect(effectiveSpeedPm(world, rat)).toBe(1_600_000);
+    expect(effectiveSpeedPm(world, near)).toBe(2_990_000);
+    expect(effectiveSpeedPm(world, far)).toBe(2_600_000);
+    expect(effectiveSpeedPm(world, general)).toBe(2_400_000);
+    expect(effectiveSpeedPm(world, rat)).toBe(3_000_000);
   });
 
   it("slows: the Kết Giới 15 %, same source keeps the strongest, sources multiply, total ≤ 60 %", () => {
@@ -171,7 +173,7 @@ describe("speed: preset × Cuồng × aura × slows (canon §7.2, §8.1)", () =>
     world.tick = 100;
     expect(slowFactorPm(world, lang)).toBe(850);
     const preset = makeWorld({ preset: "relax" }).world;
-    expect(effectiveSpeedPm(preset, addBeast(preset, "phong-lang", { x: U(-15), z: U(-17) }))).toBe(1_260_000);
+    expect(effectiveSpeedPm(preset, addBeast(preset, "phong-lang", { x: U(-15), z: U(-17) }))).toBe(2_340_000);
   });
 });
 
@@ -207,14 +209,14 @@ describe("movement", () => {
     }
     expect(atNode.target).toEqual({ kind: "node", node: "tam-nhan" });
     expect(atHeart.target).toEqual({ kind: "heart" });
-    const step = 1000 / 60; // mm a tick at 1 m/s
+    const step = 1900 / 60; // mm a tick at 1 m/s
     expect(dist(atNode.x / 60, atNode.z / 60, 2000, 1000)).toBeLessThanOrEqual(11_000);
     expect(dist(atNode.x / 60, atNode.z / 60, 2000, 1000)).toBeGreaterThan(11_000 - 2 * step);
     expect(dist(atHeart.x / 60, atHeart.z / 60)).toBeLessThanOrEqual(11_000);
     expect(dist(atHeart.x / 60, atHeart.z / 60)).toBeGreaterThan(11_000 - 2 * step);
-    // ~13 s from a gate (canon §8.1), outside the Kết Giới, and the ring lasts 1.6 s at k 1.
-    expect(stoppedHeart / 60).toBeGreaterThan(11);
-    expect(stoppedHeart / 60).toBeLessThan(15);
+    // From this fixture point at 1.9 m/s: ~6.2 s; the ring still lasts 1.6 s at k 1.
+    expect(stoppedHeart / 60).toBeGreaterThan(6);
+    expect(stoppedHeart / 60).toBeLessThan(8);
     const starts = of("telegraph").filter((e) => e.stage === "start");
     expect(starts.map((e) => e.def).sort()).toEqual(["nham-vien-throw-heart", "nham-vien-throw-node"]);
     for (const start of starts) expect(start.strikeTick - start.tick).toBe(96);

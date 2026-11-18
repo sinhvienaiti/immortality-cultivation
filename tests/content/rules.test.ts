@@ -37,12 +37,12 @@ describe("rules.ts against the canon", () => {
       learn: [850, 700, 900, "enter", 5, 5],
     });
     expect([LOAD.gateGapMs, LOAD.gatePairGapMs, LOAD.analyticTolerancePct]).toEqual([1500, 600, 25]);
-    expect([STAGE_M0A.liveCap, STAGE_M0A.clusterSize, STAGE_M0A.waves]).toEqual([60, 7, 6]);
+    expect([STAGE_M0A.liveCap, STAGE_M0A.clusterSize, STAGE_M0A.waves]).toEqual([90, 7, 6]);
     expect([FORMATION.heartBySeats[0], FORMATION.barrierRadiusMm, FORMATION.downPenaltyPct, FORMATION.linhDichPct]).toEqual([1000, 9000, 5, 5]);
     expect([FORMATION.barrierPlayerReductionPct, FORMATION.barrierGraceMs, FORMATION.barrierFadeMs, FORMATION.barrierJoinMs]).toEqual([10, 1500, 3000, 1000]);
     expect([PLAYER.hp, PLAYER.breakRegenPct, PLAYER.speedMmPerS, PLAYER.radiusMm, PLAYER.downMs]).toEqual([600, 30, 5000, 400, 8000]);
     expect([DASH.distanceMm, DASH.unpushableMs]).toEqual([5000, 300]);
-    expect([FIELD.cellMm, FIELD.cols, FIELD.rows, FIELD.heartEdgeMm]).toEqual([500, 80, 52, 2000]);
+    expect([FIELD.cellMm, FIELD.cols, FIELD.rows, FIELD.heartEdgeMm]).toEqual([500, 96, 104, 2000]);
     expect([PACE.kMinPm, PACE.kMaxPm, PACE.unknownWpm]).toEqual([750, 1300, 25]);
     expect(PACE.refProfile).toEqual({ e: 35, a: 950, cv: 250 });
     expect(DEATH_TIER).toEqual({ swarm: 1, small: 2, medium: 3, general: 4, boss: 5 });

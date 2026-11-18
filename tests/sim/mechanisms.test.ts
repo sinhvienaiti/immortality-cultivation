@@ -2,6 +2,7 @@
 // flyers skip ground mechanisms; Phong Ấn Võng holds (hardUntil, pulls flyers down, Thế −15) within the 35 % cap.
 import { describe, expect, it } from "vitest";
 import type { MechanismId, World } from "../../src/content/types";
+import { THANH_THACH_AI } from "../../src/content/data/stage-m0a";
 import { stepBeasts } from "../../src/sim/beasts";
 import { holdAllowance, inStrip, levelPm, slotPoint, stepMechanisms } from "../../src/sim/mechanisms";
 import { addBeast, advance, makeWorld } from "./combat-fixture";
@@ -24,12 +25,12 @@ describe("Kiếm Thung (strip 4 × 2 m along the path)", () => {
     const { world, of } = makeWorld();
     build(world, 0, "kiem-thung");
     const centre = slotPoint(world, 0);
-    expect(inStrip(centre, 240_000, 120_000, centre.x, centre.z)).toBe(true);
-    const wolf = addBeast(world, "phong-lang", { x: -10.24, z: -12.29 });
-    const along = addBeast(world, "phong-lang", { x: -9.024, z: -10.83 });
-    const aside = addBeast(world, "phong-lang", { x: -9.088, z: -13.25 });
-    const tru = addBeast(world, "thiet-giap-tru", { x: -10.24, z: -12.0 });
-    const crow = addBeast(world, "hoa-nha", { x: -10.24, z: -12.29, gate: "sky" });
+    expect(inStrip(centre, 240_000, 120_000, centre.x, centre.z, THANH_THACH_AI.field.mechSlots[0]!.alongPm!)).toBe(true);
+    const wolf = addBeast(world, "phong-lang", { x: -2.79, z: -30 });
+    const along = addBeast(world, "phong-lang", { x: -3.2, z: -28.2 });
+    const aside = addBeast(world, "phong-lang", { x: -1.29, z: -30 });
+    const tru = addBeast(world, "thiet-giap-tru", { x: -2.79, z: -29.7 });
+    const crow = addBeast(world, "hoa-nha", { x: -2.79, z: -30, gate: "sky" });
     advance(world, 121, [stepMechanisms]);
     // 0.05 W = 4.5 → 5 HP; pulses at 0, 60, 120.
     expect(wolf.hpMax - wolf.hp).toBe(15);
@@ -48,7 +49,7 @@ describe("Kiếm Thung (strip 4 × 2 m along the path)", () => {
   it("level 2: 5 × 1.45 = 7.25 → 7 a pulse", () => {
     const { world } = makeWorld();
     build(world, 0, "kiem-thung", 2);
-    const wolf = addBeast(world, "phong-lang", { x: -10.24, z: -12.29 });
+    const wolf = addBeast(world, "phong-lang", { x: -2.79, z: -30 });
     advance(world, 1, [stepMechanisms]);
     expect(wolf.hpMax - wolf.hp).toBe(7);
   });
@@ -60,9 +61,9 @@ describe("Lôi Phù Trụ (post: every 4 s, 3 targets in 7 m, 0.25 W magic)", ()
     build(world, 1, "loi-phu-tru");
     advance(world, 30, [stepMechanisms]);
     expect(of("mechanism")).toHaveLength(0);
-    const near = [addBeast(world, "nham-vien", { x: -9, z: -6 }), addBeast(world, "nham-vien", { x: -10, z: -7 }), addBeast(world, "nham-vien", { x: -12, z: -9 })];
-    const last = addBeast(world, "nham-vien", { x: -13, z: -10 });
-    const crow = addBeast(world, "hoa-nha", { x: -10.5, z: -7.5, gate: "sky" });
+    const near = [addBeast(world, "nham-vien", { x: -7.96, z: -20 }), addBeast(world, "nham-vien", { x: -8.96, z: -21 }), addBeast(world, "nham-vien", { x: -10.96, z: -23 })];
+    const last = addBeast(world, "nham-vien", { x: -11.96, z: -24 });
+    const crow = addBeast(world, "hoa-nha", { x: -9.46, z: -21.5, gate: "sky" });
     const t0 = world.tick;
     advance(world, 241, [stepMechanisms]);
     for (const beast of near) expect(beast.hpMax - beast.hp).toBe(46);

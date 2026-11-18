@@ -207,10 +207,10 @@ describe("Trận Trụ (canon §8.2, §10.5)", () => {
     expect(of("pillar").map((event) => [event.stage, event.rams])).toEqual([["hit", 1], ["hit", 2], ["crack", 2]]);
   });
 
-  it("on the real field a line from gate A's side to the heart meets the west pillar", () => {
+  it("on the real field a line through the west pillar meets it; the lane-mouth line stays clear", () => {
     const { world } = makeWorld();
     const pillar = world.formation.pillars[0]!;
-    const vuong = addBeast(world, "thiet-boi-lang-vuong", { x: -12.8, z: -15.36 });
+    const vuong = addBeast(world, "thiet-boi-lang-vuong", { x: -15.2, z: -15.36 });
     expect(pillarOnSegment(world, { x: vuong.x, z: vuong.z }, { x: 0, z: 0 })).toBe(pillar);
     expect(pillarOnSegment(world, { x: vuong.x + mToU(3), z: vuong.z }, { x: 0, z: 0 })).toBeNull();
   });

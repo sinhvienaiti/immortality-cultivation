@@ -264,8 +264,8 @@ describe("Thiết Bối Lang Vương: phases (canon §10.5)", () => {
     const { world, of, vuong } = vuongAt();
     toPhase(world, vuong, 2, 59);
     toPhase(world, vuong, 3, 29);
-    // 1.2 m/s × 1.25 (then the Kết Giới, if it stands inside it).
-    expect(effectiveSpeedPm(world, vuong)).toBe(Math.round((1_500_000 * slowFactorPm(world, vuong)) / 1000));
+    // 1.35 m/s × 1.25 (then the Kết Giới, if it stands inside it).
+    expect(effectiveSpeedPm(world, vuong)).toBe(Math.round((1_687_500 * slowFactorPm(world, vuong)) / 1000));
     const p3 = world.boss.roarUntil;
     runUntil(world, () => strikesOf(of, "vuong-thiet-boi-xung").length >= 1 && starts(of, "vuong-thiet-boi-xung").length >= 2, 4000);
     const charges = starts(of, "vuong-thiet-boi-xung");

@@ -1,5 +1,5 @@
 /**
- * Flow fields (canon §8.1): one per ground gate on the 0.5 m grid (80 × 52)
+ * Flow fields (canon §8.1): one per ground gate on the 0.5 m grid (96 × 104)
  * towards the heart, around the Trận Trụ; integer Dijkstra (10 a straight
  * step, 14 a diagonal, no corner cutting), then each cell's waypoint is pulled
  * tight by line of sight, so a beast on open ground walks straight at the
@@ -7,17 +7,14 @@
  * The sky route is a straight line from its entry to the heart. Ground beasts
  * walk readable corridors, never forced into narrow lanes; they stop at the
  * heart edge (r 2 m, canon §10.8).
- * At M0a both ground gates share one field (the stage has no per-gate
- * corridors); `fieldDistance` still takes the gate for later stages. On a
- * mirror-symmetric stage the field is mirror-symmetric too (cell picking on
- * edges, tie-breaks and rounding never favour east or west), so gate A's
- * beasts walk the mirror image of gate B's.
+ * Both ground gates share one field and one authored lane; the S-shaped lane
+ * is not mirror-symmetric. Player navigation does not use the lane boundary.
  * Owner: Lane 2.
  */
 import { BEASTS, GENERALS } from "../content/data/beasts";
 import { BOSSES } from "../content/data/boss";
 import { FIELD } from "../content/rules";
-import type { BeastDef, BeastState, FieldRuntime, FlowField, GateId, PointU, StageDef, World } from "../content/types";
+import type { BeastDef, BeastState, FieldRuntime, FlowField, GateId, PointMm, PointU, StageDef, World } from "../content/types";
 import { dist, dist2, mmToU, mulDiv, mulDivSym, stepTowards } from "./fixed";
 
 /** Waypoint value: walk straight at the heart's centre. */
@@ -50,8 +47,26 @@ function geometry(stage: StageDef): { cols: number; rows: number; cellMm: number
   return { cols, rows, cellMm, cellU: mmToU(cellMm), minXU: mmToU(f.minXMm), minZU: mmToU(f.minZMm) };
 }
 
+/** Integer squared distance to a polyline in mm; zero-length segments are ignored. */
+export function laneDistanceSqMm(x: number, z: number, points: readonly PointMm[]): number {
+  let best = Number.MAX_SAFE_INTEGER;
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const dx = b.xMm - a.xMm;
+    const dz = b.zMm - a.zMm;
+    const length2 = dx * dx + dz * dz;
+    if (length2 === 0) continue;
+    const t = Math.max(0, Math.min(length2, (x - a.xMm) * dx + (z - a.zMm) * dz));
+    const rx = x - a.xMm - mulDivSym(dx, t, length2);
+    const rz = z - a.zMm - mulDivSym(dz, t, length2);
+    best = Math.min(best, rx * rx + rz * rz);
+  }
+  return best;
+}
+
 /** Which cells a body of `clearanceMm` may not stand in (terrain rectangles and pillars, grown by the clearance). */
-export function blockedCells(stage: StageDef, clearanceMm: number): Uint8Array {
+export function blockedCells(stage: StageDef, clearanceMm: number, options: { lane: boolean }): Uint8Array {
   const f = stage.field;
   const { cols, rows, cellMm } = geometry(stage);
   const out = new Uint8Array(cols * rows);
@@ -59,7 +74,9 @@ export function blockedCells(stage: StageDef, clearanceMm: number): Uint8Array {
     const cz = f.minZMm + row * cellMm + cellMm / 2;
     for (let col = 0; col < cols; col += 1) {
       const cx = f.minXMm + col * cellMm + cellMm / 2;
-      let blocked = false;
+      const lane = options.lane ? f.lane : undefined;
+      const radius = lane ? lane.halfWidthMm - clearanceMm : 0;
+      let blocked = lane !== undefined && cz < lane.endZMm && (radius < 0 || laneDistanceSqMm(cx, cz, lane.pointsMm) > radius * radius);
       for (const rect of f.blocked) {
         const x0 = Math.min(rect.from.xMm, rect.to.xMm) - clearanceMm;
         const x1 = Math.max(rect.from.xMm, rect.to.xMm) + clearanceMm;
@@ -232,7 +249,7 @@ function buildFlow(grid: Grid): FlowField {
 
 /** Obstacles of a stage as a cache key (pillars never move at M0a; Thạch Bích comes with M1). */
 function obstacleKey(stage: StageDef): string {
-  return JSON.stringify([stage.field.blocked, stage.field.pillars]);
+  return JSON.stringify([stage.field.blocked, stage.field.pillars, stage.field.lane]);
 }
 
 function build(stage: StageDef): FieldBuild {
@@ -245,7 +262,7 @@ function build(stage: StageDef): FieldBuild {
   const hit = byKey.get(key);
   if (hit) return hit;
   const g = geometry(stage);
-  const blocked = blockedCells(stage, FIELD.clearanceMm);
+  const blocked = blockedCells(stage, FIELD.clearanceMm, { lane: true });
   const flow = buildFlow({ ...g, blocked });
   const made = { blocked, flow };
   byKey.set(key, made);
@@ -356,7 +373,7 @@ export function gatePoint(stage: StageDef, gate: GateId, entry = 0): PointU {
   const clampX = (xMm: number): number => Math.min(f.maxXMm - inset, Math.max(f.minXMm + inset, xMm));
   const clampZ = (zMm: number): number => Math.min(f.maxZMm - inset, Math.max(f.minZMm + inset, zMm));
   if (gate === "sky") {
-    // Flyers come in over the corner itself (26.9 m to the heart, canon §8.1).
+    // Flyers come in over the authored corner itself.
     const at = f.skyEntries[entry] ?? f.skyEntries[0];
     if (!at) throw new Error("field: stage " + stage.id + " has no sky entry");
     return { x: mmToU(at.xMm), z: mmToU(at.zMm) };

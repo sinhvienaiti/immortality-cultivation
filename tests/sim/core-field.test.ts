@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { BEASTS } from "../../src/content/data/beasts";
 import { THANH_THACH_AI } from "../../src/content/data/stage-m0a";
 import { FIELD, FORMATION, PLAYER } from "../../src/content/rules";
 import type { BeastState, GateId, World } from "../../src/content/types";
-import { HEART, cellAt, cellCenterX, cellCenterZ, createField, fieldDistance, fieldStep, gatePoint, heartDistance, routeU } from "../../src/sim/field";
+import { HEART, cellAt, cellCenterX, cellCenterZ, createField, fieldDistance, fieldStep, gatePoint, heartDistance, routeU, laneDistanceSqMm, blockedCells } from "../../src/sim/field";
 import { dist, mToU, mmToU, msToTicks, within } from "../../src/sim/fixed";
 
 /** canon §8.1, PB-08: flow fields from two gates and the sky route to the heart; time to the Kết Giới edge by species. */
@@ -26,7 +27,7 @@ function tenthsToBarrier(beast: BeastState): number {
 }
 
 describe("flow field (canon §8.1)", () => {
-  it("covers the 40 × 26 m field with 0.5 m cells (80 × 52) and blocks only round the Trận Trụ", () => {
+  it("covers the 48 × 52 m field with 0.5 m cells (96 × 104) and blocks outside the lane and round the Trận Trụ", () => {
     expect([field.cols, field.rows, field.cellMm]).toEqual([FIELD.cols, FIELD.rows, FIELD.cellMm]);
     const blocked = field.blocked.reduce((sum, cell) => sum + cell, 0);
     expect(blocked).toBeGreaterThan(0);
@@ -48,26 +49,23 @@ describe("flow field (canon §8.1)", () => {
     const open = cellAt(field, mToU(-10), mToU(5));
     expect(flow.waypoint[open]).toBe(HEART);
     expect(flow.pathU[open]).toBe(dist(cellCenterX(field, open), cellCenterZ(field, open), 0, 0));
-    // Gate A's cell: the west pillar sits on its line to the heart, so the way bends and is longer than the straight line.
-    const gate = gatePoint(stage, "A");
-    const cell = cellAt(field, gate.x, gate.z);
-    expect(flow.waypoint[cell]).toBeGreaterThanOrEqual(0);
-    expect(flow.pathU[cell]).toBeGreaterThan(dist(cellCenterX(field, cell), cellCenterZ(field, cell), 0, 0));
-    // Route ~24 m (canon §8.1).
-    const routeM = (routeU(world, "A") + mmToU(FIELD.heartEdgeMm)) / 60_000;
-    expect(routeM).toBeGreaterThan(22.5);
-    expect(routeM).toBeLessThan(25);
-    expect(routeU(world, "A")).toBe(routeU(world, "B"));
-    expect(fieldDistance(world, "sky", cell)).toBe(dist(cellCenterX(field, cell), cellCenterZ(field, cell), 0, 0));
+    // The broad S corridor permits a straight, string-pulled route from both gate cells.
+    for (const id of ["A", "B"] as const) {
+      const at = gatePoint(stage, id);
+      const cell = cellAt(field, at.x, at.z);
+      expect(flow.waypoint[cell]).toBe(HEART);
+      expect(routeU(world, id) / 60).toBeCloseTo(FIELD.routeMm, -2);
+    }
+    expect(fieldDistance(world, "sky", open)).toBe(dist(cellCenterX(field, open), cellCenterZ(field, open), 0, 0));
   });
 
   it("never walks a beast into a pillar, always closes in, and stops it at the heart edge", () => {
     for (const gate of ["A", "B"] as const) {
       for (const dx of [-mToU(1.2), 0, mToU(1.2)]) {
-        const beast = probe(gate, 1400, dx, mToU(0.6));
+        const beast = probe(gate, 2600, dx, mToU(0.6));
         let last = heartDistance(world, beast);
         let secondAgo = last;
-        for (let tick = 1; tick <= 60 * 30; tick += 1) {
+        for (let tick = 1; tick <= 60 * 35; tick += 1) {
           fieldStep(world, beast);
           for (const pillar of stage.field.pillars) {
             expect(within(beast.x, beast.z, mmToU(pillar.at.xMm), mmToU(pillar.at.zMm), mmToU(pillar.radiusMm))).toBe(false);
@@ -88,56 +86,72 @@ describe("flow field (canon §8.1)", () => {
     }
   });
 
-  it("flies the sky route straight from both top corners (26.9 m)", () => {
+  it("flies the sky route straight from both top corners (50.1 m)", () => {
     for (const entry of [0, 1]) {
       const at = gatePoint(stage, "sky", entry);
-      expect(Math.round(dist(at.x, at.z, 0, 0) / 6000) / 10).toBe(26.9);
-      const beast = probe("sky", 2000, 0, 0, entry);
+      expect(Math.round(dist(at.x, at.z, 0, 0) / 6000) / 10).toBe(50.1);
+      const beast = probe("sky", 3000, 0, 0, entry);
       fieldStep(world, beast);
       expect(beast.cell).toBe(-1);
     }
   });
 
-  it("brings every small beast to the Kết Giới edge in 8–12 s at k = 1, Cân bằng; the deliberate fast cases never under 6 s (PB-08)", () => {
-    const window = (tenths: number) => tenths >= FIELD.approachMs[0] / 100 && tenths <= FIELD.approachMs[1] / 100;
-    const floor = (tenths: number) => tenths >= FIELD.approachFloorMs / 100;
-    const results: Record<string, number> = {};
-    for (const gate of ["A", "B"] as const) {
-      // A pack spawns up to ± 1.2 m across its gate and 1.2 m in (spawn.ts); B's offsets mirror A's.
-      for (const [dx, dz] of [[0, 0], [-mToU(1.2), mToU(1.2)], [mToU(1.2), mToU(0.6)], [-mToU(1.2), 0], [mToU(1.2), 0]] as const) {
-        // canon §10.2 speeds: Phong Lang 1.4, Thạch Thử 1.6 m/s; Cuồng +30 %, a general's aura +15 % (canon §10.3, §10.4).
-        const tenths = tenthsToBarrier(probe(gate, 1400, dx, dz));
-        results["phong-lang " + gate + " " + dx + " " + dz] = tenths;
-        expect(window(tenths)).toBe(true);
-        expect(window(tenthsToBarrier(probe(gate, 1600, dx, dz)))).toBe(true);
-        expect(floor(tenthsToBarrier(probe(gate, 1820, dx, dz)))).toBe(true);
-        expect(floor(tenthsToBarrier(probe(gate, 1610, dx, dz)))).toBe(true);
-        expect(floor(tenthsToBarrier(probe(gate, 2093, dx, dz)))).toBe(true);
+  it("brings all small species, including both sky entries, to the barrier in 10–16 s at k 1 balanced", () => {
+    for (const def of Object.values(BEASTS).filter((b) => b.tier === "small" || b.tier === "swarm")) {
+      const gates: GateId[] = def.flying ? ["sky"] : ["A", "B"];
+      for (const gate of gates) for (const entry of [0, 1]) {
+        const t = tenthsToBarrier(probe(gate, def.speedMm, 0, 0, entry)) * 100;
+        expect(t, def.id + gate).toBeGreaterThanOrEqual(FIELD.approachMs[0]);
+        expect(t, def.id + gate).toBeLessThanOrEqual(FIELD.approachMs[1]);
+        expect(t).toBeGreaterThanOrEqual(FIELD.approachFloorMs);
       }
     }
-    for (const entry of [0, 1]) {
-      const tenths = tenthsToBarrier(probe("sky", 2000, 0, 0, entry));
-      expect(window(tenths)).toBe(true);
-      // canon §8.1: Hỏa Nha 9.0 s.
-      expect(Math.abs(tenths - 90)).toBeLessThanOrEqual(3);
+    for (const gate of ["A", "B"] as const) for (const dx of [-mToU(1.2), 0, mToU(1.2)]) {
+      for (const speed of [2600, 3000]) {
+        const t = tenthsToBarrier(probe(gate, speed, dx, mToU(1.2))) * 100;
+        expect(t).toBeGreaterThanOrEqual(FIELD.approachMs[0]);
+        expect(t).toBeLessThanOrEqual(FIELD.approachMs[1]);
+      }
+      // Deliberate Cuồng and aura combinations remain above the 8 s floor.
+      expect(tenthsToBarrier(probe(gate, 3887, dx, mToU(1.2))) * 100).toBeGreaterThanOrEqual(FIELD.approachFloorMs);
     }
-    // canon §8.1: Phong Lang 10.7 s from the gate itself (the gate point sits 0.25 m inside the field,
-    // the pillar on the line adds a little); A and B mirror each other.
-    expect(Math.abs(results["phong-lang A 0 0"]! - 107)).toBeLessThanOrEqual(8);
-    expect(results["phong-lang A 0 0"]).toBe(results["phong-lang B 0 0"]);
   });
 
-  it("mirrors gate A's field onto gate B's: every waypoint and path length east–west", () => {
-    const flow = field.flows.A;
-    const mirror = (cell: number) => Math.floor(cell / field.cols) * field.cols + (field.cols - 1 - (cell % field.cols));
-    for (let cell = 0; cell < field.cols * field.rows; cell += 1) {
-      const wp = flow.waypoint[cell]!;
-      expect(flow.waypoint[mirror(cell)]).toBe(wp < 0 ? wp : mirror(wp));
-      expect(flow.pathU[mirror(cell)]).toBe(flow.pathU[cell]);
+  it("connects both gates with comparable paths and keeps every ground waypoint and walk inside the lane", () => {
+    const lane = stage.field.lane!;
+    expect(Math.abs(routeU(world, "A") - routeU(world, "B")) / routeU(world, "A")).toBeLessThanOrEqual(0.05);
+    for (const gate of ["A", "B"] as const) {
+      expect(Math.abs(routeU(world, gate) / 60 - FIELD.routeMm) / FIELD.routeMm).toBeLessThanOrEqual(0.03);
+      const beast = probe(gate, 3000);
+      for (let tick = 0; tick < 60 * 20; tick += 1) {
+        fieldStep(world, beast);
+        if (beast.z / 60 < lane.endZMm) expect(laneDistanceSqMm(Math.round(beast.x / 60), Math.round(beast.z / 60), lane.pointsMm)).toBeLessThanOrEqual(6000 * 6000);
+      }
+      expect(dist(beast.x, beast.z, 0, 0)).toBeLessThanOrEqual(mmToU(FIELD.heartEdgeMm) + 1);
     }
-    const a = gatePoint(stage, "A");
-    const b = gatePoint(stage, "B");
-    expect(cellAt(field, b.x, b.z)).toBe(mirror(cellAt(field, a.x, a.z)));
+    for (let cell = 0; cell < field.blocked.length; cell += 1) {
+      if (field.blocked[cell]) continue;
+      const wp = field.flows.A.waypoint[cell]!;
+      if (wp < 0) { expect(wp).toBe(HEART); continue; }
+      const x = cellCenterX(field, wp) / 60;
+      const z = cellCenterZ(field, wp) / 60;
+      if (z < lane.endZMm) expect(laneDistanceSqMm(x, z, lane.pointsMm)).toBeLessThanOrEqual(6000 * 6000);
+    }
+    for (const p of lane.pointsMm) expect(field.flows.A.pathU[cellAt(field, mmToU(p.xMm), mmToU(p.zMm))]).toBeGreaterThan(0);
+    expect(Math.abs(dist(mmToU(24000), mmToU(-44000), 0, 0) / 60 - FIELD.skyRouteMm) / FIELD.skyRouteMm).toBeLessThanOrEqual(0.01);
+  });
+
+  it("uses integer signed projection, skips duplicate segments and leaves exact lane thresholds open", () => {
+    const points = [{ xMm: 0, zMm: 0 }, { xMm: 0, zMm: 0 }, { xMm: -1000, zMm: 1000 }];
+    expect(laneDistanceSqMm(-500, 500, points)).toBe(0);
+    expect(laneDistanceSqMm(0, 1000, points)).toBe(500000);
+    const lane = stage.field.lane!;
+    for (let i = 1; i < lane.pointsMm.length; i += 1) expect(lane.pointsMm[i]).not.toEqual(lane.pointsMm[i - 1]);
+    for (const p of lane.pointsMm) { expect(p.xMm % 10 + 0).toBe(0); expect(p.zMm % 10 + 0).toBe(0); }
+    const testStage = { ...stage, field: { ...stage.field, pillars: [], lane: { pointsMm: [{ xMm: 0, zMm: -44000 }, { xMm: 0, zMm: -9000 }], halfWidthMm: 6150, endZMm: -9000 } } };
+    const mask = blockedCells(testStage, 400, { lane: true });
+    expect(mask[cellAt(field, mmToU(5750), mmToU(-20000))]).toBe(0);
+    expect(mask[cellAt(field, mmToU(6250), mmToU(-20000))]).toBe(1);
   });
 
   it("keeps the player's clearance and the beasts' the same (canon §9.1 radius)", () => {

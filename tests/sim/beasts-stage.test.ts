@@ -51,8 +51,8 @@ function stageWorld(options: { phase?: World["phase"]; wave?: number } = {}) {
 }
 
 /** Gate A's spawn point, half a cell inside the field (Lane 2's gatePoint). */
-const GATE_A: PointU = { x: U(-15), z: U(-17.75) };
-const GATE_B: PointU = { x: U(15), z: U(-17.75) };
+const GATE_A: PointU = { x: U(-2), z: U(-43.5) };
+const GATE_B: PointU = { x: U(2), z: U(-43.5) };
 const meters = (b: { x: number; z: number }, p: PointU = { x: 0, z: 0 }) => Math.hypot(b.x - p.x, b.z - p.z) / 60_000;
 
 /** Lane 2's FIELD.clearanceMm (room kept round obstacles; 0.4 m when this file was written). */
@@ -64,14 +64,14 @@ function outsidePillars(world: World, beast: BeastState): boolean {
 }
 
 describe.skipIf(FIELD_RT === null)("beasts on the real Thanh Thạch Ải field (Lane 2's flow field)", () => {
-  it("each family from its gate reaches its attack: bite, 11 m throw (~13 s), dive, ram then the node; never inside a pillar", () => {
+  it("each family from its gate reaches its attack: bite, 11 m throw (~17 s), dive, ram then the node; never inside a pillar", () => {
     const { world, of } = stageWorld();
     const add = (species: SpeciesId, at: PointU, gate: "A" | "B" | "sky" = "A") => addBeast(world, species, { x: at.x, z: at.z, gate });
     const lang = add("phong-lang", GATE_A);
     // Serials 2 and 3: the even one aims at the heart, the odd one at the Tâm nhãn.
     const vienB = add("nham-vien", GATE_B, "B");
     const vienA = add("nham-vien", GATE_A);
-    const nha = add("hoa-nha", { x: U(-20), z: U(-18) }, "sky");
+    const nha = add("hoa-nha", { x: U(-24), z: U(-44) }, "sky");
     const tru = add("thiet-giap-tru", GATE_B, "B");
     const vienes = [vienB, vienA];
     const firstThrow: Record<number, number> = {};
@@ -88,10 +88,10 @@ describe.skipIf(FIELD_RT === null)("beasts on the real Thanh Thạch Ải field 
       expect(meters(vien, target)).toBeLessThanOrEqual(11);
       expect(meters(vien, target)).toBeGreaterThan(10.9);
     }
-    // The heart thrower walks ~13 m from its gate at 1 m/s (canon §8.1: "dừng ném ở 11 m sau ~13 s").
+    // The heart thrower walks ~32.5 m from the new gate at 1.9 m/s (~17.1 s).
     const heartVien = vienes.find((v) => v.target!.kind === "heart")!;
-    expect(firstThrow[heartVien.serial]! / 60).toBeGreaterThan(11);
-    expect(firstThrow[heartVien.serial]! / 60).toBeLessThan(16);
+    expect(firstThrow[heartVien.serial]! / 60).toBeGreaterThan(16);
+    expect(firstThrow[heartVien.serial]! / 60).toBeLessThan(18);
     expect(of("telegraph").some((e) => e.def === "hoa-nha-dive-heart" || e.def === "hoa-nha-dive-node")).toBe(true);
     expect(nha.cell).toBe(-1);
     expect(of("telegraph").some((e) => e.def === "thiet-giap-tru-ram")).toBe(true);
@@ -107,7 +107,7 @@ describe.skipIf(FIELD_RT === null)("beasts on the real Thanh Thạch Ải field 
     for (let n = 0; n < 300; n += 1) {
       const species = n === 0 ? "lang-dau-dan" : mix[n % mix.length]!;
       const gate = species === "hoa-nha" ? "sky" : n % 2 === 0 ? "A" : "B";
-      const at = gate === "sky" ? { x: U(n % 4 === 0 ? -20 : 20), z: U(-18) } : gate === "A" ? GATE_A : GATE_B;
+      const at = gate === "sky" ? { x: U(n % 4 === 0 ? -24 : 24), z: U(-44) } : gate === "A" ? GATE_A : GATE_B;
       addBeast(world, species, { x: at.x + U((n % 7) / 10), z: at.z + U((n % 5) / 10), gate, elite: n % 50 === 7 ? "hoi-nguyen" : null });
     }
     run(world, 120, STEPS);
@@ -124,7 +124,7 @@ describe.skipIf(FIELD_RT === null)("beasts on the real Thanh Thạch Ải field 
   it("the Vương walks in from gate A, cones the Tâm nhãn in P1, then charges from 12 m inside the field in P2", () => {
     const { world, of } = stageWorld({ phase: "boss", wave: 0 });
     const vuong = addBeast(world, "thiet-boi-lang-vuong", { x: GATE_A.x, z: GATE_A.z, gate: "A", wave: 0 });
-    run(world, 60 * 30, STEPS);
+    run(world, 60 * 40, STEPS);
     expect(world.boss.phase).toBe(1);
     expect(of("telegraph").some((e) => e.def === "vuong-vo-xe" && e.stage === "strike")).toBe(true);
     expect(outsidePillars(world, vuong)).toBe(true);

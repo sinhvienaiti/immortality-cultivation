@@ -35,7 +35,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "phi-kiem",
     school: "kiem",
     slot: "auto",
-    name: "Phi Kiếm",
+    name: "Flying Sword",
     cooldownMs: 1200,
     castStyle: "move",
     // 1 sword every 1.2 s, 0.25 W physical, 10 m; lands +18 ticks after the command.
@@ -45,7 +45,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "ngu-kiem-quyet",
     school: "kiem",
     slot: 1,
-    name: "Ngự Kiếm Quyết",
+    name: "Sword Command",
     cooldownMs: 0,
     castStyle: "move",
     // One word's damage once, split over 3 swords (rest on the last), 12 m, each pierces 1 small beast at 50 %; ≤ 2 bands.
@@ -56,7 +56,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "nhat-tuyen-xuyen-van",
     school: "kiem",
     slot: 2,
-    name: "Nhất Tuyến Xuyên Vân",
+    name: "Cloudpiercer",
     cooldownMs: 8000,
     castStyle: "move",
     // 14 × 1.2 m line: 2.5 W on the first beast, −15 % each next (floor 40 %), Thế −20; lands +12.
@@ -66,7 +66,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "hoi-kiem-ho-than",
     school: "kiem",
     slot: 3,
-    name: "Hồi Kiếm Hộ Thân",
+    name: "Sword Ward",
     cooldownMs: 15_000,
     castStyle: "move",
     // A `ward` r 2 m at the Cast's origin, 5 s, 3 blocks (canon §9.1).
@@ -76,7 +76,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "luu-quang-bo",
     school: "kiem",
     slot: 3,
-    name: "Lưu Quang Bộ",
+    name: "Radiant Step",
     cooldownMs: 8000,
     castStyle: "move",
     // Glide 5 m, 0.3 s unpushable; `local` applies it on its own `cast resolved` (local/dash.ts).
@@ -86,7 +86,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "lac-kiem-tran",
     school: "kiem",
     slot: 4,
-    name: "Lạc Kiếm Trận",
+    name: "Swordfall Formation",
     cooldownMs: 12_000,
     castStyle: "ground",
     // r 3 m for 5 s at the cursor or the densest cluster in 12 m: 0.3 W/s a beast (a beat of 0.15 W every 30 ticks), slow 20 %, ≤ 4 W a cast over all beasts; opens +12.
@@ -96,7 +96,7 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
     id: "thien-ha-kiem-vu",
     school: "kiem",
     slot: 5,
-    name: "Thiên Hà Kiếm Vũ",
+    name: "Celestial Sword Rain",
     cooldownMs: 0,
     castStyle: "ground",
     // 3 volleys in 2 s, r 6 m at the cursor or the densest cluster in 14 m: 10 W shared evenly, ≤ 2.5 W a beast, cluster cap 60 %, Thế −40.
@@ -106,8 +106,8 @@ export const SCHOOL_KIEM: readonly SkillDef[] = [
 
 /** canon §12.1 tâm pháp (S Kiếm Tâm, R Tích Kiếm). */
 export const TAM_PHAP: Readonly<Record<TamPhapId, TamPhapDef>> = {
-  "kiem-tam": { id: "kiem-tam", name: "Kiếm Tâm", kind: "S", extraEveryMs: 3000, extraShareDiv: 3 },
-  "tich-kiem": { id: "tich-kiem", name: "Tích Kiếm", kind: "R", firstWavePct: -8, perWavePct: 4, capPct: 24 },
+  "kiem-tam": { id: "kiem-tam", name: "Sword Heart", kind: "S", extraEveryMs: 3000, extraShareDiv: 3 },
+  "tich-kiem": { id: "tich-kiem", name: "Gathering Blades", kind: "R", firstWavePct: -8, perWavePct: 4, capPct: 24 },
 };
 
 /**

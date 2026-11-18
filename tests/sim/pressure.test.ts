@@ -128,18 +128,18 @@ describe("Hỏa Nha dives (canon §10.2)", () => {
   });
 
   it("at the Tâm nhãn: −3 only when the zone touches the heart; a ward over the node blocks it with one charge", () => {
-    // ~5–9 m to fly at 1.7 m/s inside the Kết Giới, then 1.5 s: one strike within 500 ticks (the next starts 4 s after the first).
+    // At the new 3 m/s base speed, 400 ticks isolate one completed dive in each case.
     const near = diver({ x: U(2), z: U(1) }, "node");
-    run(near.world, 500, STEPS);
+    run(near.world, 400, STEPS);
     expect(strikes(near.of).map((e) => e.def)).toEqual(["hoa-nha-dive-node"]);
     expect(heartLost()).toBe(3);
     const far = diver({ x: U(5), z: U(3) }, "node");
-    run(far.world, 500, STEPS);
+    run(far.world, 400, STEPS);
     expect(strikes(far.of)).toHaveLength(1);
     expect(heartLost()).toBe(0);
     const warded = diver({ x: U(2), z: U(1) }, "node");
     const ward = fakeWards.createWard(warded.world, 0, { x: U(2), z: U(1) }, 1000);
-    run(warded.world, 500, STEPS);
+    run(warded.world, 400, STEPS);
     expect(strikes(warded.of)).toHaveLength(1);
     expect(heartLost()).toBe(0);
     expect(calls.wardUses).toEqual([{ seat: 0, wardId: ward.id }]);
@@ -184,8 +184,8 @@ describe("Thiết Giáp Trư rams then captures (canon §8.2, §10.2)", () => {
     const { world, of, tru } = ram({ pillar: true });
     run(world, 1 + 84, STEPS);
     const strike = strikes(of)[0]!;
-    // It walked one tick (1 m/s) before the ram started 10 m out; the line ends on the pillar's rim (r 1 m at 5 m).
-    expect(strike.z).toBeCloseTo(-10 + 1 / 60, 3);
+    // One tick at 1.9 m/s before the ram; the line ends on the pillar's rim (r 1 m at 5 m).
+    expect(strike.z).toBeCloseTo(-10 + 1.9 / 60, 3);
     expect(strike.toZ).toBeCloseTo(-6, 3);
     expect(strike.reachM).toBeCloseTo(strike.toZ - strike.z, 3);
     expect(heartLost()).toBe(0);

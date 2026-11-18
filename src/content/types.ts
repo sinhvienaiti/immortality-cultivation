@@ -299,17 +299,21 @@ export interface MechSlotDef {
   readonly index: number;
   readonly at: PointMm;
   readonly kind: MechSlotKind;
+  /** Authored path direction, integer permille. */
+  readonly alongPm?: { readonly x: number; readonly z: number };
 }
 
-/** Thanh Thạch Ải's field (canon §8.1): 40 × 26 m, heart at the origin. */
+/** Authored stage field; heart at the origin. */
 export interface FieldDef {
+  /** Ground beasts only; player navigation stays open across the field. */
+  readonly lane?: { readonly pointsMm: readonly PointMm[]; readonly halfWidthMm: number; readonly endZMm: number };
   readonly minXMm: number;
   readonly maxXMm: number;
   readonly minZMm: number;
   readonly maxZMm: number;
   readonly barrierRadiusMm: number;
   readonly gates: readonly GateDef[];
-  /** Sky entries (±20 m; −18 m). */
+  /** Sky entries in authored field coordinates. */
   readonly skyEntries: readonly PointMm[];
   readonly pillars: readonly PillarDef[];
   readonly mechSlots: readonly MechSlotDef[];
@@ -509,6 +513,8 @@ export interface BeastRef {
 export type SimCommand =
   /** a–z as 0–25. `ms` is wall time for learning only, never hashed. `aim`: cursor on the ground (ô 4, ô 5), else null. */
   | { readonly type: "key"; readonly seat: number; readonly letter: number; readonly ms: number; readonly origin: PointU; readonly aim: PointU | null }
+  /** Space releases a completed ultimate; origin and aim are sampled at release. */
+  | { readonly type: "ultimate"; readonly seat: number; readonly origin: PointU; readonly aim: PointU | null }
   | { readonly type: "backspace"; readonly seat: number }
   /** Esc while a word is locked (D19: errors stay). */
   | { readonly type: "release"; readonly seat: number }
@@ -1139,6 +1145,8 @@ export interface Cast {
 
 /** Lane 3 cast.ts. */
 export interface CastsState {
+  /** Completed ultimate words, awaiting a fresh Space press. Never auto-retried. */
+  readonly prepared: (Cast | null)[];
   readonly held: Cast[];
   /** Next n per seat. */
   readonly nextAction: number[];

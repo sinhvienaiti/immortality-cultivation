@@ -24,7 +24,7 @@ export const BOSSES: Readonly<Record<BossId, BossDef>> = {
     tier: "boss",
     w100: 6400,
     // Not in the canon: a heavy wolf king, a little slower than its pack (proposal).
-    speedMm: 1200,
+    speedMm: 1350,
     flying: false,
     armour: 0,
     resist: 0,

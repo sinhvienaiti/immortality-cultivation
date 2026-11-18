@@ -635,7 +635,7 @@ describe("the replay header's rulesHash covers the trial table only when the hea
   });
 });
 
-describe("the flag off: world hashes pinned on 1a78a82 (before the grey box)", () => {
+describe("the flag off: world hashes deliberately rebased for 387a geometry and 387c cap", () => {
   /** A scripted fight with key 2 (today's line), key 4 and key 1 casts; world hash and beasts alive every 300 ticks. */
   function scripted(seed: number, swordKey2 = false): string[] {
     const header = swordKey2 ? { ...testHeader({ seed }), swordKey2: "twin-pearl" as const } : testHeader({ seed });
@@ -669,10 +669,10 @@ describe("the flag off: world hashes pinned on 1a78a82 (before the grey box)", (
     return out;
   }
 
-  it("default headers give the same world, tick for tick, as the commit before the grey box", () => {
-    // Computed by this same script on a clean export of 1a78a82 (04/11/2026) and on the current tree: identical.
-    expect(scripted(5)).toEqual(["844c012d@22", "1cb00f08@36", "527f8f69@58", "7b865d13@35"]);
-    expect(scripted(9)).toEqual(["aa8ae3cc@23", "4ba2160f@38", "753240f5@56", "29c48d76@34"]);
+  it("default headers match the 387c golden, tick for tick", () => {
+    // Rebased for 394: the deterministic cast state now includes prepared ultimates.
+    expect(scripted(5)).toEqual(["895a0612@23", "f6506a3f@35", "08ec44e5@55", "4e0a1bfe@43"]);
+    expect(scripted(9)).toEqual(["2b63e2a8@21", "36d400b1@34", "31a15576@52", "19f191dd@35"]);
     // The script does reach key 2: with the flag on, the same fight differs.
     expect(scripted(5, true)).not.toEqual(scripted(5));
   });

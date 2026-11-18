@@ -275,27 +275,27 @@ export const PACE = {
 
 // ── Field and formation (canon §8.1, §8.2) ──────────────────────────────────
 
-/** canon §8.1: Thanh Thạch Ải, 40 × 26 m, heart at (0; 0). */
+/** canon §8.1: Thanh Thạch Ải, 48 × 52 m, heart at (0; 0). */
 export const FIELD = {
-  minXMm: -20_000,
-  maxXMm: 20_000,
-  minZMm: -18_000,
+  minXMm: -24_000,
+  maxXMm: 24_000,
+  minZMm: -44_000,
   maxZMm: 8000,
-  gates: { A: { xMm: -15_000, zMm: -18_000 }, B: { xMm: 15_000, zMm: -18_000 } } as Readonly<Record<Exclude<GateId, "sky">, { xMm: number; zMm: number }>>,
+  gates: { A: { xMm: -2000, zMm: -43_500 }, B: { xMm: 2000, zMm: -43_500 } } as Readonly<Record<Exclude<GateId, "sky">, { xMm: number; zMm: number }>>,
   skyEntries: [
-    { xMm: -20_000, zMm: -18_000 },
-    { xMm: 20_000, zMm: -18_000 },
+    { xMm: -24_000, zMm: -44_000 },
+    { xMm: 24_000, zMm: -44_000 },
   ] as readonly { xMm: number; zMm: number }[],
-  /** Ground route ~24 m; sky route 26.9 m straight. */
-  routeMm: 24_000,
-  skyRouteMm: 26_900,
-  /** Flow field and player nav grid: 0.5 m cells, 80 × 52. */
+  /** Measured flow from gate A cell to the 2 m heart edge; sky entry to centre, straight. */
+  routeMm: 41_308,
+  skyRouteMm: 50_120,
+  /** Flow field and player nav grid: 0.5 m cells, 96 × 104. */
   cellMm: 500,
-  cols: 80,
-  rows: 52,
-  /** Small beasts reach the barrier edge in 8–12 s at k 1 Cân bằng; exceptions never under 6 s. */
-  approachMs: [8000, 12_000] as readonly [number, number],
-  approachFloorMs: 6000,
+  cols: 96,
+  rows: 104,
+  /** Small beasts reach the barrier edge in 10–16 s at k 1 Cân bằng; exceptions never under 8 s. */
+  approachMs: [10_000, 16_000] as readonly [number, number],
+  approachFloorMs: 8000,
   /**
    * Room kept around obstacles on the 0.5 m grid (beasts and the player alike; the player's radius,
    * canon §9.1). Đề xuất của vòng này, chờ chủ dự án xác nhận: the canon gives no beast radius.
@@ -518,7 +518,7 @@ export const DIRECTOR = {
 
 /** canon §13.3, §25: the M0a stage. */
 export const STAGE_M0A = {
-  liveCap: 60,
+  liveCap: 90,
   /** A Thạch Thử cluster: 7 × 0.33 W = 2.31 W. */
   clusterSize: 7,
   waves: 6,
@@ -780,13 +780,12 @@ export const DEATH_TIER: Readonly<Record<BeastTier, FeedbackTier>> = { swarm: 1,
 export const SIZES_PX_1080 = { player: 64, swarm: 20, swarmCluster: 60, small: 36, medium: 48, general: 80, boss: 160 } as const;
 
 /**
- * canon §21.1: fixed 3/4 camera (no rotate, no zoom at MVP). canon D48 (owner, 25/10): the frame always
- * holds the whole field and tide; the default tilt is 55°.
+ * canon §21.1, D48: 42°, single-lane map, 15/11; D57 retains player zoom.
  */
 export const CAMERA = {
-  tiltDeg: [50, 55] as readonly [number, number],
-  /** canon D48: default tilt inside the §21.1 range. */
-  defaultTiltDeg: 55,
+  tiltDeg: [42, 55] as readonly [number, number],
+  /** D48: 42°, single-lane map, 15/11. */
+  defaultTiltDeg: 42,
   fovDeg: [25, 30] as readonly [number, number],
   frameMm: { width: 40_000, depth: 26_000 },
 } as const;
@@ -814,6 +813,7 @@ export interface KeyBinding {
 }
 
 export type KeyAction =
+  | "ultimate"
   | "backspace"
   | "escape"
   | "enter"
@@ -830,6 +830,7 @@ export type KeyAction =
 
 /** Command keys (canon §5.1). Letters a–z are typing only; keys with Ctrl or Cmd are ignored; no WASD at MVP. */
 export const KEYS: readonly KeyBinding[] = [
+  { action: "ultimate", code: "Space" },
   { action: "backspace", code: "Backspace" },
   { action: "escape", code: "Escape" },
   { action: "enter", code: "Enter" },

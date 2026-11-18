@@ -9,7 +9,7 @@
 import type { ConsumableDef, ConsumableId } from "../types";
 
 export const CONSUMABLE_DEFS: Readonly<Record<ConsumableId, ConsumableDef>> = {
-  "hoi-xuan-dan": { id: "hoi-xuan-dan", name: "Hồi Xuân Đan", price: 30, target: "self", effect: { kind: "heal", pct: 25, durationMs: 2000 } },
-  "kim-than-phu": { id: "kim-than-phu", name: "Kim Thân Phù", price: 40, target: "self", effect: { kind: "shield", pct: 20, durationMs: 8000 } },
-  "loi-hoa-phu": { id: "loi-hoa-phu", name: "Lôi Hỏa Phù", price: 50, target: "world", effect: { kind: "bomb", radiusMm: 3000, rangeMm: 14_000, w100: 160 } },
+  "hoi-xuan-dan": { id: "hoi-xuan-dan", name: "Healing pill", price: 30, target: "self", effect: { kind: "heal", pct: 25, durationMs: 2000 } },
+  "kim-than-phu": { id: "kim-than-phu", name: "Iron ward", price: 40, target: "self", effect: { kind: "shield", pct: 20, durationMs: 8000 } },
+  "loi-hoa-phu": { id: "loi-hoa-phu", name: "Thunder talisman", price: 50, target: "world", effect: { kind: "bomb", radiusMm: 3000, rangeMm: 14_000, w100: 160 } },
 };

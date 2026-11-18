@@ -7,7 +7,7 @@
 import type { EliteTraitDef, EliteTraitId } from "../types";
 
 export const ELITE_TRAITS: Readonly<Record<EliteTraitId, EliteTraitDef>> = {
-  cuong: { id: "cuong", name: "Cuồng", speedPct: 30, extraW100: 0, armourStep: 0, regenPmPerS: 0, regenAfterMs: 0 },
-  "thiet-bi": { id: "thiet-bi", name: "Thiết Bì", speedPct: 0, extraW100: 200, armourStep: 1, regenPmPerS: 0, regenAfterMs: 0 },
-  "hoi-nguyen": { id: "hoi-nguyen", name: "Hồi Nguyên", speedPct: 0, extraW100: 0, armourStep: 0, regenPmPerS: 15, regenAfterMs: 3000 },
+  cuong: { id: "cuong", name: "Frenzied", speedPct: 30, extraW100: 0, armourStep: 0, regenPmPerS: 0, regenAfterMs: 0 },
+  "thiet-bi": { id: "thiet-bi", name: "Ironhide", speedPct: 0, extraW100: 200, armourStep: 1, regenPmPerS: 0, regenAfterMs: 0 },
+  "hoi-nguyen": { id: "hoi-nguyen", name: "Regenerating", speedPct: 0, extraW100: 0, armourStep: 0, regenPmPerS: 15, regenAfterMs: 3000 },
 };

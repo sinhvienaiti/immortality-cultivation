@@ -13,7 +13,8 @@
  * their own words, canon §19.1) and its own kit BudgetLedger (cap = min(preset
  * cap; A − 3)). Places go by canon §6.2's priority when several entries wait;
  * an urgent word or the first Ấn takes the place of the lowest-priority word
- * nobody is typing; slot words never push each other out.
+ * nobody is typing; a full-energy Ultimate may replace the lowest-priority
+ * untouched, unlocked skill word. Other skill words never push each other out.
  *
  * Words come, in order: the dim preview shown during the cooldown; for ô 2 and
  * ô 4 this match's new words due to be met again (≥ 45 s apart, canon §6.4,
@@ -47,7 +48,7 @@ import { IC_RULES, kindIndex, type IcKind } from "../typing/config";
 import { SOURCE, SOURCES, fallbackStages, isDeckText, liveWordCap, seatBudget, stageAccepts, type FallbackStage, type FallbackStep } from "../typing/fallback";
 import { GRADES, activityFor, eEffX1000, expectedTicks, gradeOf, mqPm } from "../typing/grading";
 import { meaningShown, slotLengths, takesFreshNew, takesRemeetings, type SlotAsk } from "../typing/slots";
-import { emitCast, nextActionId } from "./cast";
+import { clearUltimate, emitCast, nextActionId, prepareUltimate } from "./cast";
 import type { EventBody } from "./events";
 
 // WordsState, LiveWord, SeatHeader.flashEX1000 and WallState word times live in content/types.ts (folded in, part A fixes).
@@ -608,7 +609,7 @@ function priorityList(world: World, seat: number): number[] {
   return list;
 }
 
-/** Fills waiting entries by priority within the cap; an urgent word or the first Ấn takes the place of the lowest untouched word. */
+/** Fills within the cap; urgent words may replace lower priorities, a full Ultimate only untouched, unlocked skills. */
 function allocate(world: World, seat: number): void {
   const w = world.words;
   if (!w.awake[seat]) return;
@@ -620,10 +621,12 @@ function allocate(world: World, seat: number): void {
     if (entry.state !== "waiting") continue;
     if (ledger.total >= ledger.budget.total) {
       const urgent = entry.kind === "cleanse" || (entry.kind === "seal" && w.seats[seat]!.seals[0] === entry.index);
-      if (!urgent) continue;
+      const ultimate = entry.kind === "slot" && entry.slot === 5 && chanFull(world, seat);
+      if (!urgent && !ultimate) continue;
       let victim = -1;
-      for (let q = list.length - 1; q > p; q -= 1) {
+      for (let q = list.length - 1; q > (ultimate ? -1 : p); q -= 1) {
         const other = w.live[list[q]!]!;
+        if (ultimate && (other.kind !== "slot" || other.slot === 5)) continue;
         if (isLive(other) && other.typed === 0 && other.index !== locked) {
           victim = other.index;
           break;
@@ -698,6 +701,7 @@ export function releaseWord(world: World, word: number, reason: WordReleaseReaso
 
 /** The Bàn Quyết of `seat` stops (phase or down): live words leave (a word being typed as with Esc), entries dim; bindings stay. */
 function sleepSeat(world: World, seat: number, reason: WordReleaseReason): void {
+  clearUltimate(world, seat);
   const w = world.words;
   unlock(w.sessions[seat]!);
   for (let j = 0; j < ENTRIES_PER_SEAT; j += 1) {
@@ -878,7 +882,8 @@ function complete(world: World, entry: LiveWord, command: Extract<SimCommand, { 
     entry.state = "held";
     entry.until = -1;
   } else unbind(world, entry);
-  emitCast(world, {
+  const submit = castSlot === 5 ? prepareUltimate : emitCast;
+  submit(world, {
     seat,
     slot: castSlot,
     actionId: nextActionId(world, seat),
@@ -1043,6 +1048,7 @@ export function onBeastGone(world: World, beast: BeastState): void {
 
 /** The seat went down: release its typing (as Esc) and dim the bar. */
 export function onSeatDown(world: World, seat: number): void {
+  clearUltimate(world, seat);
   if (world.words.awake[seat]) sleepSeat(world, seat, "down");
 }
 

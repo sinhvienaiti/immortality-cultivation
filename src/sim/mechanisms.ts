@@ -57,14 +57,12 @@ export function slotPoint(world: World, index: number): PointU {
 
 const axis = { x: 0, z: 0 };
 
-/** Inside a Kiếm Thung strip centred on `at`, laid along at → heart: |along| ≤ length / 2, |across| ≤ width / 2. */
-export function inStrip(at: PointU, lengthU: number, widthU: number, x: number, z: number): boolean {
-  unitPm(-at.x, -at.z, axis);
-  if (axis.x === 0 && axis.z === 0) axis.z = -1000;
+/** Inside a Kiếm Thung strip centred on `at`, laid along its authored axis (fallback at → heart): |along| ≤ length / 2, |across| ≤ width / 2. */
+export function inStrip(at: PointU, lengthU: number, widthU: number, x: number, z: number, axisPm: Readonly<PointU>): boolean {
   const rx = x - at.x;
   const rz = z - at.z;
-  const along = rx * axis.x + rz * axis.z;
-  const across = rx * axis.z - rz * axis.x;
+  const along = rx * axisPm.x + rz * axisPm.z;
+  const across = rx * axisPm.z - rz * axisPm.x;
   return Math.abs(along) * 2 <= lengthU * 1000 && Math.abs(across) * 2 <= widthU * 1000;
 }
 
@@ -91,9 +89,13 @@ function stepStrip(world: World, slot: MechSlotState, def: MechanismDef, at: Poi
   if (pulse) slot.nextFire = world.tick + SIM.tickHz;
   const amount = mulDiv(wHpOf(world, effect.w100PerS), levelPm(slot.level), 1000);
   const area = pulse ? createAreaHit() : null;
+  const authored = world.stage.field.mechSlots.find((item) => item.index === slot.index)?.alongPm;
+  unitPm(-at.x, -at.z, axis);
+  if (axis.x === 0 && axis.z === 0) axis.z = -1000;
+  const axisPm = authored ?? axis;
   let hit = false;
   for (const beast of world.beasts.list) {
-    if (!beast.alive || isAirborne(beast) || !inStrip(at, lengthU, widthU, beast.x, beast.z)) continue;
+    if (!beast.alive || isAirborne(beast) || !inStrip(at, lengthU, widthU, beast.x, beast.z, axisPm)) continue;
     addSlow(world, beast, def.id, effect.slowPct);
     if (area === null) continue;
     damageBeast(world, beast, amount, def.damageType, { seat: 0, source: "mechanism", grade: null, area });

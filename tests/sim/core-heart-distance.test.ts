@@ -23,14 +23,14 @@ function beast(serial: number, species: SpeciesId, gate: GateId, x: number, z: n
 
 describe("distance to the heart (canon §23.3)", () => {
   it("walks ground beasts along their flow field from where they stand, flyers straight (sky route or flying species)", () => {
-    const at = gatePoint(stage, "A");
+    const at = { x: mToU(-9), z: mToU(-9) };
     const lang = beast(1, "phong-lang", "A", at.x, at.z);
     const flow = field.flows.A;
     const wp = flow.waypoint[cellAt(field, at.x, at.z)]!;
     expect(wp).toBeGreaterThanOrEqual(0);
     const along = dist(at.x, at.z, cellCenterX(field, wp), cellCenterZ(field, wp)) + flow.pathU[wp]!;
     const straight = dist(at.x, at.z, 0, 0);
-    // The west Trận Trụ stands on gate A's line: the field's way is longer than the straight line.
+    // A point behind the new west pillar takes a longer flow route.
     expect(heartDistance(worldOf([lang]), lang)).toBe(along);
     expect(along).toBeGreaterThan(straight);
     // A flyer at the same spot: straight, on the sky route or (pulled down, any gate) by species.

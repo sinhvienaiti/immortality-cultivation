@@ -12,7 +12,7 @@ import type { MechanismDef, MechanismId } from "../types";
 export const MECHANISM_DEFS: Readonly<Record<MechanismId, MechanismDef>> = {
   "kiem-thung": {
     id: "kiem-thung",
-    name: "Kiếm Thung",
+    name: "Sword stakes",
     slotKind: "strip",
     price: 150,
     damageType: "physical",
@@ -20,7 +20,7 @@ export const MECHANISM_DEFS: Readonly<Record<MechanismId, MechanismDef>> = {
   },
   "loi-phu-tru": {
     id: "loi-phu-tru",
-    name: "Lôi Phù Trụ",
+    name: "Thunder pillar",
     slotKind: "post",
     price: 300,
     damageType: "magic",
@@ -28,7 +28,7 @@ export const MECHANISM_DEFS: Readonly<Record<MechanismId, MechanismDef>> = {
   },
   "phong-an-vong": {
     id: "phong-an-vong",
-    name: "Phong Ấn Võng",
+    name: "Binding net",
     slotKind: "post",
     price: 250,
     // Deals no damage (a hold and Thế); the type is unused.
