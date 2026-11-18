@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tu Tiên · Monster rig test</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html,body{margin:0;height:100%;background:#0b0f16;overflow:hidden;font:12px/1.4 ui-monospace,Menlo,monospace;color:#cfe}
+      #rig{position:absolute;inset:0}
+      #hud{position:absolute;left:8px;top:8px;background:#0008;padding:6px 8px;border-radius:4px;white-space:pre;pointer-events:none}
+    </style>
+  </head>
+  <body>
+    <!-- Dev-only monster rig test (docs/work/tasks/monster-rig-test.md): src/lab/monster-rig-main.ts. Not in the build inputs.
+         Keys: 1/2/3 pick a monster, W walk, A attack, H hit, I idle, SPACE auto loop, C toggle play camera / side camera.
+         Query: ?mon=troll|tanuki|nuppeppo (solo), ?fixed=1 (manual stepping via window.__rig). -->
+    <div id="rig"></div>
+    <div id="hud"></div>
+    <script type="module" src="/src/lab/monster-rig-main.ts"></script>
+  </body>
+</html>

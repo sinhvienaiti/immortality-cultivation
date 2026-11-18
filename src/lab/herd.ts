@@ -69,6 +69,8 @@ const KING_AT = [15, -9] as const;
 export type HerdMode = "still" | "march";
 
 const MAX = 100;
+/** The view profile's rim on bosses and elites: warm ivory (× its level). */
+const TIER_RIM = [1, 0.9, 0.72] as const;
 /** Knockback: a critically damped spring (rad/s): an impulse peaks after 1/ω (~80 ms) and is home in ~0.4 s. */
 const KNOCK_W = 12;
 /** Stagger tilt: an underdamped spring (rad/s, ζ): it tips away from the blow, overshoots once and settles. */
@@ -108,6 +110,8 @@ const SLIDE_POWER = 0.95;
 const SLIDE_MIN = 0.3;
 const SLIDE_MAX = 0.8;
 const SLIDE_K = 9;
+/** A shove's decay (1/s): 1 − e^(−22 × 8/60) = 95 % of its distance in 8 frames. */
+const SHOVE_K = 22;
 /** A launch (`launch`): up-speed (m/s), gravity (m/s²), along-the-blow speed (m/s); small beasts only. */
 const LAUNCH_VY = 5.6;
 const LAUNCH_G = -16;
@@ -191,6 +195,9 @@ const DISSOLVE_DISCARD = "\tfloat labDn = labDissolveN();\n\tfloat labTh = vDiss
 
 export class LabHerd implements TargetField {
   readonly size = MAX;
+  /** The lab's view profile (camera-modes.ts): a thin warm rim on bosses and elites (tier ≥ 2) at this level, so they
+   * stand out of the herd at the low views (0: none, the top view). */
+  tierRim = 0;
   readonly group = new THREE.Group();
   private readonly meshes: THREE.InstancedMesh[] = [];
   /** Kills burn away (an element's FoeStatus.burn, setBurn). */
@@ -247,6 +254,10 @@ export class LabHerd implements TargetField {
   private readonly az = new Float32Array(MAX);
   /** > 0 while dying (s since the killing blow); the slot then waits `gone` s and respawns. */
   private readonly dying = new Float32Array(MAX);
+  /** A shoved beast's own slide decay (1/s; 0: SLIDE_K). */
+  private readonly slideK = new Float32Array(MAX);
+  /** A dying beast's own slice time (s; 0: DIE_S), set by `dieOver` after its killing blow. */
+  private readonly dieLen = new Float32Array(MAX);
   private readonly gone = new Float32Array(MAX); // > 0 until respawn
   /** ≥ 0 while dissolving in after a respawn (s); −1 none. */
   private readonly spawn = new Float32Array(MAX).fill(-1);
@@ -693,6 +704,23 @@ export class LabHerd implements TargetField {
     this.statusRgb[i] = rgb;
   }
 
+  /** Beast `i` is thrown `metres` along (dx, dz) (unit), sliding to a stop (elites half, the king not at all). */
+  shove(i: number, dx: number, dz: number, metres: number): void {
+    if (i < 0 || i >= this.count || this.live[i] !== 1) return;
+    const tier = this.tier(i);
+    if (tier >= 4) return;
+    // A fast decay: 95 % of the way in 8 frames (SHOVE_K), not the hit slide's long tail.
+    const v0 = metres * (tier >= 2 ? 0.5 : 1) * SHOVE_K;
+    this.svx[i] = dx * v0;
+    this.svz[i] = dz * v0;
+    this.slideK[i] = SHOVE_K;
+  }
+
+  /** Beast `i`, just killed, slices away over `seconds` instead of DIE_S (a skill whose kill fades slower). */
+  dieOver(i: number, seconds: number): void {
+    if (i >= 0 && i < this.count && this.dying[i]! > 0) this.dieLen[i] = seconds;
+  }
+
   /** A local hit-stop: beast `i` holds still for `seconds` (the basic blow's stop is its target's alone). */
   holdBeast(i: number, seconds: number): void {
     if (i >= 0 && i < this.count) this.hold[i] = Math.max(this.hold[i]!, seconds);
@@ -739,6 +767,7 @@ export class LabHerd implements TargetField {
         const v0 = d * SLIDE_K;
         const cur = this.svx[i]! * dx + this.svz[i]! * dz;
         if (v0 > cur) {
+          this.slideK[i] = 0;
           this.svx[i] = dx * v0;
           this.svz[i] = dz * v0;
         }
@@ -871,6 +900,8 @@ export class LabHerd implements TargetField {
         const lv = STATUS_LEVEL * Math.min(1, left / STATUS_FADE) * flick;
         const rgb = this.statusRgb[i]!;
         rimA.setXYZ(idx, (((rgb >> 16) & 255) / 255) * lv, (((rgb >> 8) & 255) / 255) * lv, ((rgb & 255) / 255) * lv);
+      } else if (this.tierRim > 0 && this.dying[i] === 0 && SPECIES[k]!.tier >= 2) {
+        rimA.setXYZ(idx, TIER_RIM[0] * this.tierRim, TIER_RIM[1] * this.tierRim, TIER_RIM[2] * this.tierRim);
       } else rimA.setXYZ(idx, 0, 0, 0);
       if (this.statusT[i]! > 0) this.statusT[i] = Math.max(0, this.statusT[i]! - dt);
       if (this.gone[i]! > 0) {
@@ -895,7 +926,7 @@ export class LabHerd implements TargetField {
       if (this.svx[i] !== 0 || this.svz[i] !== 0) {
         this.px[i] = this.px[i]! + this.svx[i]! * bdt;
         this.pz[i] = this.pz[i]! + this.svz[i]! * bdt;
-        const kd = Math.exp(-(this.air[i]! > 0 ? 1.2 : SLIDE_K) * bdt);
+        const kd = Math.exp(-(this.air[i]! > 0 ? 1.2 : this.slideK[i]! > 0 ? this.slideK[i]! : SLIDE_K) * bdt);
         this.svx[i] = this.svx[i]! * kd;
         this.svz[i] = this.svz[i]! * kd;
         if (Math.abs(this.svx[i]!) + Math.abs(this.svz[i]!) < 0.01) this.svx[i] = this.svz[i] = 0;
@@ -942,7 +973,7 @@ export class LabHerd implements TargetField {
       let dissolve = 0;
       if (this.dying[i]! > 0) {
         this.dying[i] = this.dying[i]! + dt;
-        const u = Math.min(1, this.dying[i]! / DIE_S);
+        const u = Math.min(1, this.dying[i]! / (this.dieLen[i]! > 0 ? this.dieLen[i]! : DIE_S));
         const e = u * u * (3 - 2 * u);
         const d0 = this.die0[i]!;
         dissolve = d0 + (1 - d0) * e;
@@ -966,6 +997,7 @@ export class LabHerd implements TargetField {
         cutA.setXYZW(idx, (nx * cyaw - nz * syaw) / l, 0.6 / l, (nx * syaw + nz * cyaw) / l, cy);
         if (u >= 1) {
           this.dying[i] = 0;
+          this.dieLen[i] = 0;
           this.live[i] = 0;
           this.caught[i] = 0;
           this.air[i] = this.airV[i] = this.flip[i] = this.flipV[i] = this.svx[i] = this.svz[i] = 0;

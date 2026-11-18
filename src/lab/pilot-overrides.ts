@@ -156,7 +156,7 @@ export function installPilotOverrides(search: string | URLSearchParams): Promise
   sources.clear(); order = 0;
   const transform = createPilotOverrides(search);
   return setFlipbookManifestTransform(async (original, base) => {
-    const metas = await transform(original, base);
+    const metas = await import("./burst-v2").then(m => m.overrideBursts(transform, original, base, search));
     if (!/\/art-src\/lab\/vfx\/(boss|blood|fire|beast|hybrid)\/$/.test(base)) return metas;
     const result = new Map(metas);
     for (const id of Object.values(PILOT_IDS)) {

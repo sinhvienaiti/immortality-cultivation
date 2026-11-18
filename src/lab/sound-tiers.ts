@@ -1,5 +1,6 @@
 /** Ticket 269: playback targets include the nominal event, bus and master gains. */
 export type SoundTier = "T2" | "T3" | "T4" | "T5" | "T6" | "voice";
+import { FOE_LEVELS } from "./foe-levels";
 export type SoundBus = "combat" | "voice" | "world";
 
 export const SOUND_TIER: Record<string, SoundTier> = {
@@ -107,6 +108,8 @@ export const FIREFLY_TARGET: Readonly<Record<"heavy" | "ult", number>> = { heavy
  * 269's audit (06/11/2026; tt-sfx-x-immortal-sword-progenitor-avatar take 4 measured −37.3, near silent: take 3 plays).
  */
 export const FIREFLY_LEVELS: Readonly<Record<string, readonly [number, number]>> = {
+  // The foe pack (foe-levels.ts, generated): files relative to the Firefly sound folder.
+  ...FOE_LEVELS,
   // Lane B3: ffmpeg ebur128, 07/11; .local/laneB3-sounds/measurements.json.
   "tt-sfx-guard-body/take3.wav": [-8.0, -2.3],
   "tt-sfx-boss-entrance-roar/take6.wav": [-5.8, -0.0],

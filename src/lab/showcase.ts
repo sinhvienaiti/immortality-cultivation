@@ -20,6 +20,7 @@
  * cast needs it (no slot free, or its video stalls), then goes again ATLAS_RELEASE_S after its card ends: all 48 at load
  * held 1.9 GB of textures (lab-perf, 06/11).
  */
+import { PILLAR_VIDEO_ID, pillarVideoGrade } from "./pillar-video-grade";
 import * as THREE from "three";
 import { FlipbookPool, type FlipbookLibrary, type FlipbookMeta, type FlipbookPlayer, type FlipbookVideo } from "../view/skills/flipbook";
 import { SCREEN_TIERS } from "../view/screen-fx";
@@ -235,6 +236,8 @@ interface VideoSlot {
   seenCt: number;
   seenAt: number;
   fallback: (() => void) | null;
+  /** Its card's Thunder Pillar grade on (pillar-video-grade.ts): 1 while it holds that clip. */
+  readonly cut: { value: number };
 }
 
 /**
@@ -272,6 +275,7 @@ class VideoBank {
     if (s === undefined && this.slots.length < MAX_VIDEOS) s = this.make();
     s ??= this.slots.find((x) => x.left <= 0);
     if (s === undefined) return null;
+    s.cut.value = id === PILLAR_VIDEO_ID ? 1 : 0;
     if (s.id !== id) {
       s.id = id;
       s.el.src = url;
@@ -291,7 +295,8 @@ class VideoBank {
     const pool = new FlipbookPool("video", "fire", 1, 15, this.blank);
     pool.vignette = 0.35;
     this.player.group.add(pool.mesh);
-    const s: VideoSlot = { el, texture, pool, id: "", gen: 0, left: 0, clock: 0, duration: 0, startedAt: 0, seenCt: -1, seenAt: 0, fallback: null };
+    const cut = pillarVideoGrade(pool);
+    const s: VideoSlot = { el, texture, pool, id: "", gen: 0, left: 0, clock: 0, duration: 0, startedAt: 0, seenCt: -1, seenAt: 0, fallback: null, cut };
     this.slots.push(s);
     return s;
   }
@@ -415,6 +420,15 @@ export interface PlayOptions {
   readonly scale?: number;
   /** Its video when it has one and a slot is free (default true; false: its atlas). */
   readonly video?: boolean;
+  /**
+   * Its card's life (s; none: its clip's length). With it the card shares the clip's pool with the others still showing
+   * (a salvo's pillars overlap), instead of replacing them, and fades out over its last 0.6 s.
+   */
+  readonly life?: number;
+  /** Played by another skill (Ngũ Lôi's Quy Nhất): no caption, the key's selection left as it is. */
+  readonly quiet?: boolean;
+  /** A big pillar (Quy Nhất): its video card's spray fades toward its foot (pillar-video-grade.ts, switch value 2). */
+  readonly footFade?: boolean;
 }
 
 /** A clip's time map: to its peak frame in ATTACK_S, then the rest over its tail (or all of it over its tail). */
@@ -495,9 +509,12 @@ export class Showcase {
         return;
       }
       const it = this.match(id, e.meta);
-      const pool = player.pool(cfg.folder, id, { mode: "fire", capacity: 2, renderOrder: 15 });
+      // Key 8's Thunder Pillar drops a salvo (clip-skills.ts): up to 3 of its cards at once, any of them from the atlas.
+      const pool = player.pool(cfg.folder, id, { mode: "fire", capacity: id === PILLAR_VIDEO_ID ? 4 : 2, renderOrder: 15 });
       if (it.place === "foe") pool.attach({ ...e.meta, pivot: FOOT }, e.texture, e.controls);
       pool.vignette = 0.35;
+      // Key 8's Thunder Pillar: its atlas cards graded as its video cards are (pillar-video-grade.ts).
+      if (id === PILLAR_VIDEO_ID) pillarVideoGrade(pool).value = 1;
       this.pools.set(id, pool);
       this.items.set(id, it);
       for (const fn of this.listeners) fn();
@@ -645,9 +662,9 @@ export class Showcase {
   }
 
   /** A card from `id`'s atlas: now, or once its deferred atlas arrives (not when that is too late for the cast). */
-  private atlasCard(id: string, pool: FlipbookPool, at: THREE.Vector3, size: number, o: Parameters<FlipbookPool["spawn"]>[2]): void {
+  private atlasCard(id: string, pool: FlipbookPool, at: THREE.Vector3, size: number, o: Parameters<FlipbookPool["spawn"]>[2], replace = true): void {
     const spawn = (p: THREE.Vector3): void => {
-      pool.clear();
+      if (replace) pool.clear();
       pool.spawn(p, size, o);
       // A clip with a video lends its atlas only while its cards show (the library lets a non-deferred one stay).
       if (this.lib.get(id)?.meta.video !== undefined) this.bank.lease(this.lib, id, pool);
@@ -689,8 +706,8 @@ export class Showcase {
   play(id?: string, opts: PlayOptions = {}): string | null {
     const ids = this.ids();
     if (ids.length === 0 || (id !== undefined && !this.pools.has(id))) return null;
-    this.turn = id === undefined ? (this.turn + 1) % ids.length : ids.indexOf(id);
-    const pick = ids[this.turn]!;
+    if (opts.quiet !== true || id === undefined) this.turn = id === undefined ? (this.turn + 1) % ids.length : ids.indexOf(id);
+    const pick = opts.quiet === true && id !== undefined ? id : ids[this.turn]!;
     const pool = this.pools.get(pick)!;
     if (!pool.ready) return null;
     const meta = pool.meta!;
@@ -758,15 +775,17 @@ export class Showcase {
     const slot = vid !== undefined ? this.bank.take(pick, vid.url) : null;
     this.played = null;
     if (vid !== undefined && slot !== null) {
+      if (opts.footFade === true && slot.cut.value === 1) slot.cut.value = 2;
       const duration = vid.frames / vid.fps;
       slot.pool.attach({ ...meta, id: pick + "#video", cols: 1, rows: 1, frames: 1, fps: vid.fps, start: 0, aspect: vid.w / vid.h,
         pivot: it.place === "foe" ? FOOT : vid.pivot, peak: undefined, holdEnd: undefined, video: undefined }, slot.texture);
-      const life = duration + 0.3;
+      const life = opts.life ?? duration + 0.3;
       slot.pool.clear();
       slot.pool.spawn(v, size, { ...o, frame: 0, rate: 0, slowFrom: undefined, slowRate: undefined, life });
       const at = v.clone();
-      this.played = this.bank.start(slot, life, duration, () => this.atlasCard(pick, pool, at, size, o));
-    } else this.atlasCard(pick, pool, v, size, o);
+      const ao = opts.life !== undefined ? { ...o, life: opts.life } : o;
+      this.played = this.bank.start(slot, life, duration, () => this.atlasCard(pick, pool, at, size, ao, opts.life === undefined));
+    } else this.atlasCard(pick, pool, v, size, opts.life !== undefined ? { ...o, life: opts.life } : o, opts.life === undefined);
     if (opts.feel !== false) {
       this.host.light(p.set(v.x, 1.5, v.z), it.light, it.place === "foe" ? 6 : 8);
       // The ultimate tier's shake and flash for ultimates, avatars and beasts; the skill tier's for the rest.
@@ -776,7 +795,7 @@ export class Showcase {
       this.host.accent(big ? 0.6 : 0.35);
     }
     this.sound(it, opts.sound, opts.soundClass);
-    this.show(it, ids, opts.detail, opts.nav);
+    if (opts.quiet !== true) this.show(it, ids, opts.detail, opts.nav);
     return pick;
   }
 

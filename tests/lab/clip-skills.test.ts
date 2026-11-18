@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { aimClipSkill, ClipSkillRunner, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, MARK_S, type ClipSkill, type ClipSkillHost } from "../../src/lab/clip-skills";
+import { aimClipSkill, ClipSkillRunner, KEY8_SKILLS, SINGLE_STRIKE_ROWS, salvoSpot, salvoRand, KEY9_NAV, KEY9_SKILLS, MARK_S, type ClipSkill, type ClipSkillHost } from "../../src/lab/clip-skills";
 import { EXPANSION, EXPANSION_SHOWCASE, SHOWCASE, Showcase, ULT_SHOWCASE } from "../../src/lab/showcase";
 import { FlipbookPlayer, parseFlipbookManifest } from "../../src/view/skills/flipbook";
 import type { TargetField } from "../../src/view/skills/targets";
@@ -195,7 +195,7 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     expect(Math.abs(meteor.log.blows[0]!.t - peakS)).toBeLessThanOrEqual(1 / 60 + 1e-9);
     expect(meteor.runner.last!.firstBlowAt).toBeCloseTo(meteor.runner.last!.strikeAt[0]!, 6);
     // Peak at frame 0: its mark leads by MARK_S, then the clip and its blow come together.
-    const bolt = setup();
+    const bolt = setup(SINGLE_STRIKE_ROWS);
     bolt.runner.cast("pillar-thunder-single");
     bolt.step(1);
     expect(bolt.runner.last!.clipAt).toBeCloseTo(MARK_S, 1);
@@ -416,5 +416,54 @@ describe("lab clip skills (key 8 cast on the herd, lab-castable-skills.md batch 
     expect(log.blows.length).toBeGreaterThan(0);
     expect(runner.last!.firstBlowClip).toBeCloseTo(2.67, 6);
     expect(runner.last!.peakClip).toBeCloseTo(2.667, 6);
+  });
+});
+
+describe("key 8 Thunder Pillar salvo (owner 15/11)", () => {
+  const row = KEY8_SKILLS.find((x) => x.id === "pillar-thunder-single")!;
+  const S = row.salvo!;
+
+  it("drops five pillars a second apart, each biting 3 times a second for its 3 s, at most 3 standing", () => {
+    const big = setup();
+    big.field.hp.fill(1000);
+    big.runner.cast("pillar-thunder-single");
+    const standing: number[] = [];
+    for (let k = 0; k < 9 * 60; k += 1) {
+      big.step(1 / 60);
+      // A card shows lifeS − 0.05 s (showcase life), so the next pillar's card never makes a fourth.
+      const now = (k + 1) / 60;
+      standing.push(big.runner.last!.strikeAt.filter((t) => t <= now && now < t + S.lifeS - 0.05).length);
+    }
+    const r = big.runner.last!;
+    expect(r.strikeAt.length).toBe(5);
+    r.strikeAt.forEach((t, k) => expect(Math.abs(t - k * S.everyS)).toBeLessThanOrEqual(1 / 60 + 1e-9));
+    // Each pillar's first bite is a primary strike (the tier's reaction); the rest are secondary ticks.
+    expect(big.log.strikes.filter((x) => x.role === "primary").length).toBe(5);
+    expect(Math.max(...standing)).toBeLessThanOrEqual(3);
+    // Every beast standing under one pillar the whole time takes lifeS × tickHz = 9 bites from it.
+    expect(S.lifeS * S.tickHz).toBe(9);
+    const perBeast = new Map<number, number>();
+    for (const b of big.log.blows) perBeast.set(b.i, (perBeast.get(b.i) ?? 0) + 1);
+    expect(Math.max(...perBeast.values()) % 9).toBe(0);
+    expect(big.runner.active).toBe(0);
+  });
+
+  it("puts its spots on the beasts near the aim, apart from the pillars still standing, the same for the same seed", () => {
+    const f = setup().field;
+    const near = new Int32Array(64);
+    const a = salvoRand(7), b = salvoRand(7);
+    const taken: { x: number; z: number }[] = [];
+    for (let k = 0; k < 3; k += 1) {
+      const p = salvoSpot(f, 6, -10, S, taken, a, near);
+      const q = salvoSpot(f, 6, -10, S, taken, b, near);
+      expect(p).toEqual(q);
+      // On a beast of the group (≤ 1 m jitter).
+      expect(Math.min(...HERD.map(([x, z]) => Math.hypot(x - p.x, z - p.z)))).toBeLessThanOrEqual(1 + 1e-9);
+      taken.push(p);
+    }
+    // Nobody near: a point within spreadM of the aim.
+    const empty = new Field([]);
+    const p = salvoSpot(empty, 0, 0, S, [], salvoRand(3), near);
+    expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(S.spreadM + 1e-9);
   });
 });

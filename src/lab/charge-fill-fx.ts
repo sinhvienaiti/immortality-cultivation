@@ -1,11 +1,19 @@
-/** Authored caster charge, scrubbed by correct letters; never owns release timing. */
+/**
+ * Authored caster charge, scrubbed by correct letters; never owns release timing. The ring lies flat on the ground
+ * round the caster's feet (owner 11/11: it stood upright beside the body), a hair above it, as wide as the body.
+ */
 import * as THREE from "three";
+import { layFlat } from "../view/skills/element-clips";
 import { FlipbookPlayer, ONE_FRAME, type FlipbookLibrary, type FlipbookMeta, type FlipbookPool, type FlipOptions } from "../view/skills/flipbook";
 
 export const CHARGE_FILL_ORDER = -1;
 export const CHARGE_FILL_RELEASE_S = 0.12;
 export const CHARGE_FILL_CANCEL_S = 0.2;
 const VOICES = 8;
+/** The ring's width in body widths, its height over the ground (m; no z-fight), its depth bias toward the eye (m). */
+export const CHARGE_FILL_SPAN = 3;
+export const CHARGE_FILL_RISE_M = 0.04;
+const CHARGE_FILL_LIFT_M = 0.15;
 const deferred = (): boolean => true;
 const slots = new Set(["k2", "guard", "dash", "k4", "k5", "k7"]);
 export function chargeFillEnabled(search: string): boolean { return new URLSearchParams(search).get("chargefill") !== "0"; }
@@ -36,7 +44,7 @@ export class ChargeFillFx {
   private time = 0;
   private disposed = false;
   private readonly at = new THREE.Vector3();
-  private readonly options: FlipOptions = { life: ONE_FRAME, rate: 0, frame: 0, alpha: 1, intensity: 0.9, fadeIn: 0, fadeOut: 0, occlude: 0, ground: -1e5, lift: 0 };
+  private readonly options: FlipOptions = { life: ONE_FRAME, rate: 0, frame: 0, alpha: 1, intensity: 0.9, fadeIn: 0, fadeOut: 0, occlude: 0, ground: -1e5, lift: CHARGE_FILL_LIFT_M, dir: new THREE.Vector3(1, 0, 0) };
 
   constructor(parent: THREE.Object3D, base: string, search = "", player?: FlipbookPlayer) {
     this.enabled = chargeFillEnabled(search);
@@ -60,6 +68,7 @@ export class ChargeFillFx {
     const pool = this.player.pool("charge-fill", layer.id, { mode: meta.mode, capacity: VOICES, renderOrder: CHARGE_FILL_ORDER });
     pool.mesh.material.depthTest = true;
     pool.mesh.material.depthWrite = false;
+    layFlat(pool);
     return pool;
   }
 
@@ -140,14 +149,14 @@ export class ChargeFillFx {
     }
     // Crossfading old/new words or elements together stays below 0.9 per channel.
     this.options.intensity = 0.9 / Math.max(1, total);
-    this.options.lift = -pose.bodyWidth * 0.6;
-    this.at.set(pose.x, pose.y + pose.height * 0.62, pose.z);
+    // Flat on the ground at the feet (layFlat: +x along `dir`, the card's height across), CHARGE_FILL_SPAN body widths.
+    this.at.set(pose.x, pose.y + CHARGE_FILL_RISE_M, pose.z);
     for (const voice of this.voices) {
       const pool = voice.layer?.pool;
       if (pool == null || pool.meta === null) continue;
       this.options.frame = chargeFillFrame(pool.meta, voice.progress, 1);
       this.options.alpha = voice.fade > 0 ? voice.left / voice.fade : 1;
-      pool.spawn(this.at, pose.bodyWidth * 1.2 / pool.meta.aspect, this.options);
+      pool.spawn(this.at, (pose.bodyWidth * CHARGE_FILL_SPAN) / pool.meta.aspect, this.options);
     }
     this.player.update(0);
     // Failed atlas requests retry slowly, independently of the last-key release.

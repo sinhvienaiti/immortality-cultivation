@@ -85,6 +85,66 @@ export interface ClipSkill {
    * where its peak still drowns a tag at 0.3 (lab-readability, 06/11: 0.12 brings every tag to ≥ 7:1).
    */
   readonly tagKeep?: number;
+  /**
+   * A salvo (owner 15/11, key 8's Thunder Pillar): `count` pillars, one every `everyS` s, each on a random spot (biased
+   * toward the beasts within `spreadM` of the aim), each standing `lifeS` s and biting the beasts within `radius` of it
+   * `tickHz` times a second (its first bite the row's first strike: the tier's reaction and the status; the rest ticks
+   * at `tickPower`). Replaces the row's strikes and marks.
+   */
+  readonly salvo?: ClipSalvo;
+}
+
+export interface ClipSalvo {
+  readonly count: number;
+  readonly everyS: number;
+  readonly lifeS: number;
+  readonly tickHz: number;
+  readonly tickPower: number;
+  readonly spreadM: number;
+  /** Two live pillars at least this far apart (m) when the beasts allow. */
+  readonly apartM: number;
+}
+
+/** A seeded 0–1 stream (mulberry32) for a salvo's spots. */
+export function salvoRand(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    let t = (s += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * A salvo pillar's spot: a random live beast within `spreadM` of (ax, az), jittered ≤ 1 m, kept `apartM` from the live
+ * pillars `taken` when one of six tries allows; none near: a random point within `spreadM` of the aim.
+ */
+export function salvoSpot(targets: TargetField, ax: number, az: number, salvo: ClipSalvo, taken: readonly XZ[], rand: () => number, near: Int32Array): XZ {
+  const n = targets.inCircle(ax, az, salvo.spreadM, near);
+  let best: XZ | null = null;
+  let bestGap = -1;
+  for (let k = 0; k < 6; k += 1) {
+    let x: number;
+    let z: number;
+    if (n > 0) {
+      const i = near[Math.floor(rand() * n) % n]!;
+      const a = rand() * Math.PI * 2;
+      const j = rand();
+      x = targets.x(i) + Math.cos(a) * j;
+      z = targets.z(i) + Math.sin(a) * j;
+    } else {
+      const a = rand() * Math.PI * 2;
+      const d = Math.sqrt(rand()) * salvo.spreadM;
+      x = ax + Math.cos(a) * d;
+      z = az + Math.sin(a) * d;
+    }
+    let gap = Infinity;
+    for (const p of taken) gap = Math.min(gap, Math.hypot(p.x - x, p.z - z));
+    if (gap >= salvo.apartM) return { x, z };
+    if (gap > bestGap) { bestGap = gap; best = { x, z }; }
+  }
+  return best!;
 }
 
 /** Where a clip stands (showcase.ts ShowcasePlace): its shapes centre there. */
@@ -134,7 +194,8 @@ const TAG_KEEP_LOW = 0.12;
 const TAG_KEEP_S = 5;
 
 export const KEY8_SKILLS: readonly ClipSkill[] = [
-  { id: "pillar-thunder-single", element: "thunder", shape: "point", radius: 2.2, count: 1, strikes: [peak(1)], damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: true, linger: 2 },
+  { id: "pillar-thunder-single", element: "thunder", shape: "point", radius: 2.2, count: 1, strikes: [peak(1)], damage: "heavy", status: { kind: "stun", seconds: 1 }, mark: true, linger: 2,
+    salvo: { count: 5, everyS: 1, lifeS: 3, tickHz: 3, tickPower: 0.35, spreadM: 9, apartM: 3 } },
   { id: "pillar-thunder-field", tagKeep: TAG_KEEP_LOW, element: "thunder", shape: "multi", radius: 1.4, count: 12, strikes: [peak(0.85)], damage: "heavy", status: { kind: "stun", seconds: 0.8 }, mark: true, linger: 1.6 },
   { id: "pillar-light-judgement", tagKeep: TAG_KEEP_LOW, element: "light", shape: "point", radius: 3, count: 1, strikes: [peak(1)], damage: "heavy", status: { kind: "stun", seconds: 0.6 }, mark: true, linger: 2.2 },
   { id: "pillar-fire-meteor", element: "fire", shape: "point", radius: 3.6, count: 1, strikes: [peak(1)], damage: "heavy", mark: true, linger: 2.5 },
@@ -153,6 +214,13 @@ export const KEY8_SKILLS: readonly ClipSkill[] = [
   { id: "ult-void", tagKeep: TAG_KEEP_LOW, element: "void", shape: "field", radius: 30, count: 1, strikes: [peak(1), at(8, 0.6)], damage: "ult", status: { kind: "stun", seconds: 0.8 }, mark: false, linger: 1.5, guess: "frame 8: the mirror's shards" },
   { id: "ult-star", element: "star", shape: "field", radius: 30, count: 1, strikes: [peak(0.8), at(6, 0.8), at(12, 1)], damage: "ult", mark: true, linger: 2, guess: "frames 6, 12: the next meteors" },
 ];
+
+/** Key 8's rows with their salvo taken out: the single-strike path (tests of the five-phase sample built on it). */
+export const SINGLE_STRIKE_ROWS: readonly ClipSkill[] = KEY8_SKILLS.map((r) => {
+  if (r.salvo === undefined) return r;
+  const { salvo: _salvo, ...rest } = r;
+  return rest;
+});
 
 /**
  * Key 9's rows, batch by batch (lab-castable-skills.md), transcribed from docs/work/tasks/clip-skills-expansion.json
@@ -369,6 +437,7 @@ export function describeClipSkill(s: ClipSkill): string {
   const ticks = s.strikes.filter((x) => x.kind === "tick").length;
   parts.push(`${s.strikes.length - ticks} cú` + (ticks > 0 ? ` + ${ticks} nhịp` : ""), `sát thương ${DAMAGE_VI[s.damage]}`);
   if (s.status !== undefined) parts.push(`${STATUS_VI[s.status.kind]} ${fmt(s.status.seconds)} s`);
+  if (s.salvo !== undefined) return [`${s.salvo.count} cột, ${fmt(s.salvo.everyS)} s một cột`, `${fmt(s.radius)} m`, `mỗi cột ${fmt(s.salvo.lifeS)} s, ${s.salvo.tickHz} nhịp/s`, `sát thương ${DAMAGE_VI[s.damage]}`, ...(s.status !== undefined ? [`${STATUS_VI[s.status.kind]} ${fmt(s.status.seconds)} s`] : [])].join(" · ");
   return parts.join(" · ");
 }
 
@@ -668,6 +737,19 @@ interface Running {
   readonly report: ClipCastReport;
 }
 
+/** A salvo in flight: its pillars so far, each with its spot, age and bites. */
+interface Salvo {
+  readonly skill: ClipSkill;
+  readonly salvo: ClipSalvo;
+  readonly aim: XZ;
+  readonly rand: () => number;
+  readonly colour: string;
+  t: number;
+  dropped: number;
+  readonly pillars: { readonly at: THREE.Vector3; age: number; bites: number; readonly hit: Set<number> }[];
+  readonly report: ClipCastReport;
+}
+
 const c = new THREE.Vector3();
 const m = new THREE.Vector3();
 const markAt = new THREE.Vector3();
@@ -677,6 +759,9 @@ const flyV = new THREE.Vector3();
 export class ClipSkillRunner {
   private readonly table: ReadonlyMap<string, ClipSkill>;
   private readonly running: Running[] = [];
+  private readonly salvos: Salvo[] = [];
+  private salvoSeed = 1111;
+  private readonly near = new Int32Array(256);
   private readonly marks: GroundMarks;
   /** Whether it ages and clears the marks (a runner sharing another's leaves that to it). */
   private readonly ownsMarks: boolean;
@@ -734,6 +819,7 @@ export class ClipSkillRunner {
     this.showcase.centre(m);
     const place = this.showcase.item(pick).place;
     const aim = aimClipSkill(skill, this.host.targets, c, m, place);
+    if (skill.salvo !== undefined) return this.castSalvo(pick, skill, skill.salvo, aim);
     // Each strike on its clip frame (the first on its peak: its video's peakTime, else the manifest's peak frame through
     // the atlas's time map), or its seconds after the first strike.
     const video = this.showcase.canVideo(pick);
@@ -770,6 +856,96 @@ export class ClipSkillRunner {
     this.last = report;
     if (lead === 0) this.spawnClip(run, 0);
     return pick;
+  }
+
+  /** A salvo: its first pillar now, the rest one every everyS s (update). */
+  private castSalvo(pick: string, skill: ClipSkill, salvo: ClipSalvo, aim: ClipAim): string {
+    const colour = this.showcase.item(pick).light;
+    const report: ClipCastReport = {
+      id: pick, shape: skill.shape, points: salvo.count, targets: 0, clipAt: -1, strikeAt: [], strikeFrames: [],
+      firstBlowAt: -1, blows: 0, kills: 0, marks: 0, video: this.showcase.canVideo(pick), peakClip: 0, firstBlowClip: -1,
+    };
+    const run: Salvo = { skill, salvo, aim: { x: aim.anchor.x, z: aim.anchor.z }, rand: salvoRand(this.salvoSeed++), colour, t: 0, dropped: 0, pillars: [], report };
+    const first = salvoSpot(this.host.targets, run.aim.x, run.aim.z, salvo, [], run.rand, this.near);
+    const at = new THREE.Vector3(first.x, 0, first.z);
+    this.host.release(skill, at, 0);
+    this.host.fivePhase?.cast(at);
+    if (skill.tagKeep !== undefined) this.keeps.push({ keep: skill.tagKeep, left: salvo.count * salvo.everyS + salvo.lifeS });
+    this.salvos.push(run);
+    this.last = report;
+    this.drop(run, at);
+    return pick;
+  }
+
+  /** One pillar of a salvo on `at`: its card for lifeS, its first bite now. */
+  private drop(r: Salvo, at: THREE.Vector3): void {
+    const S = r.salvo;
+    r.dropped += 1;
+    const p = { at, age: 0, bites: 0, hit: new Set<number>() };
+    r.pillars.push(p);
+    this.showcase.play(r.skill.id, { at, feel: false, detail: describeClipSkill(r.skill), nav: this.nav, sound: r.skill.sfx, soundClass: "heavy", life: S.lifeS - 0.05 });
+    if (r.report.clipAt < 0) r.report.clipAt = r.t;
+    r.report.strikeAt.push(r.t);
+    // Its ground mark: the cold scorch where the aftermath card owns it, else the element's mark.
+    if (this.host.fivePhase?.aftermathR2 != null) {
+      if (this.marks.spawn("thunder", at.x, at.z, 4.8, 0, THUNDER_AFTERMATH_END_S + 1 / 30, 0.9)) r.report.marks += 1;
+    } else if (this.marks.spawn(r.skill.element, at.x, at.z, Math.max(2.4, r.skill.radius * 2.2), 0, S.lifeS + Math.max(0.4, r.skill.linger), 1)) r.report.marks += 1;
+    this.bite(r, p);
+  }
+
+  /** A pillar's bite on the beasts within its radius: the first through the strike path, the rest as ticks. */
+  private bite(r: Salvo, p: Salvo["pillars"][number]): void {
+    const first = p.bites === 0;
+    p.bites += 1;
+    const role: ImpactRole = first ? "primary" : "secondary";
+    if (first) {
+      this.host.strike(r.skill, p.at, role, r.colour);
+      // The five-phase impact on the salvo's first pillar only (its travel and aftermath cards follow one target).
+      if (r.dropped === 1) this.host.fivePhase?.strike(p.at);
+    }
+    const power = first ? r.skill.strikes[0]!.power : r.salvo.tickPower;
+    const n = this.host.targets.inCircle(p.at.x, p.at.z, r.skill.radius, this.near);
+    for (let k = 0; k < n; k += 1) {
+      const i = this.near[k]!;
+      let dx = this.host.targets.x(i) - p.at.x;
+      let dz = this.host.targets.z(i) - p.at.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 1e-3) { dx /= d; dz /= d; } else { dx = 0; dz = 1; }
+      const killed = this.host.blow(r.skill, i, dx, dz, power, role);
+      if (r.report.firstBlowAt < 0) r.report.firstBlowAt = r.t;
+      r.report.blows += 1;
+      if (killed) r.report.kills += 1;
+      else if (!p.hit.has(i)) {
+        p.hit.add(i);
+        const st = r.skill.status;
+        this.host.status(i, st?.kind ?? null, st?.seconds ?? RIM_S, RIM[r.skill.element], r.colour);
+        if (r.dropped === 1 && first) this.host.fivePhase?.hit(i, killed, st?.seconds ?? 0);
+      }
+    }
+  }
+
+  private updateSalvos(dt: number): void {
+    for (let k = this.salvos.length - 1; k >= 0; k -= 1) {
+      const r = this.salvos[k]!;
+      const S = r.salvo;
+      r.t += dt;
+      for (const p of r.pillars) {
+        p.age += dt;
+        // Bites at 0, 1/tickHz, …: lifeS × tickHz in its life.
+        while (p.bites < Math.round(S.lifeS * S.tickHz) && p.age >= p.bites / S.tickHz - 1e-6) this.bite(r, p);
+      }
+      while (r.dropped < S.count && r.t >= r.dropped * S.everyS - 1e-6) {
+        const live = r.pillars.filter((p) => p.age < S.lifeS).map((p) => ({ x: p.at.x, z: p.at.z }));
+        const s = salvoSpot(this.host.targets, r.aim.x, r.aim.z, S, live, r.rand, this.near);
+        this.drop(r, new THREE.Vector3(s.x, 0, s.z));
+      }
+      if (r.dropped >= S.count && r.pillars.every((p) => p.age >= S.lifeS)) this.salvos.splice(k, 1);
+    }
+  }
+
+  /** Salvos still landing (tests, __lab). */
+  get salvoCount(): number {
+    return this.salvos.length;
   }
 
   /** Its clip out now, its strikes on the clip's own clock (`t0`: the cast's clock when the clip's age is 0). */
@@ -819,6 +995,7 @@ export class ClipSkillRunner {
       this.marks.update(dt);
       this.showcase.updateVideos(dt);
     }
+    this.updateSalvos(dt);
     for (let k = this.running.length - 1; k >= 0; k -= 1) {
       const r = this.running[k]!;
       r.t += dt;
@@ -882,7 +1059,7 @@ export class ClipSkillRunner {
 
   /** Casts still landing. */
   get active(): number {
-    return this.running.length;
+    return this.running.length + this.salvos.length;
   }
 
   /** The least light any of its casts keeps behind a word tag now (1: none asks; ClipSkill.tagKeep). */
@@ -895,6 +1072,7 @@ export class ClipSkillRunner {
   clear(): void {
     this.host.fivePhase?.clear();
     this.running.length = 0;
+    this.salvos.length = 0;
     this.keeps.length = 0;
     if (this.ownsMarks) {
       this.marks.clear();

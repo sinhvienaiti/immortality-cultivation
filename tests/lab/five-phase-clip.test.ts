@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FivePhaseClip, FIVE_CLIP_ID, FIVE_CLIP_CHARGE_S, FIVE_CLIP_TAIL_S, fivePhaseClipEnabled } from "../../src/lab/five-phase-clip";
-import { ClipSkillRunner, KEY8_SKILLS, KEY9_NAV, KEY9_SKILLS, type ClipSkillHost } from "../../src/lab/clip-skills";
+import { ClipSkillRunner, KEY8_SKILLS, SINGLE_STRIKE_ROWS, KEY9_NAV, KEY9_SKILLS, type ClipSkillHost } from "../../src/lab/clip-skills";
 import { Showcase, ULT_SHOWCASE } from "../../src/lab/showcase";
 import { FoeFlipbookFx, FOE_CLIPS } from "../../src/lab/foe-flipbook-fx";
 import { LabBus } from "../../src/lab/events";
@@ -79,7 +79,8 @@ function runner(search = "", video = false) {
     },
     status(i, kind, seconds) { statuses.push(seconds); if (kind === "stun") foe.status(i, kind, seconds); },
   };
-  const casts = new ClipSkillRunner(show, host);
+  // The single-strike path the five-phase sample was built on (key 8's live row now drops a salvo, clip-skills.ts).
+  const casts = new ClipSkillRunner(show, host, SINGLE_STRIKE_ROWS);
   casts.adoptMark("thunder", mark, new THREE.Texture());
   const step = (dt: number) => { time += dt; casts.update(dt); player.update(dt); foe.update(dt); };
   return { ...f, casts, show, player, host, foe, blows, statuses, step, clock: (t: number) => { videoTime = t; } };

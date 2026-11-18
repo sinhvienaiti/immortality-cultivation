@@ -31,6 +31,8 @@ import {
   fireflyGain, trimGain, type SoundBus, type VoiceGroup,
 } from "./sound-tiers";
 
+import { FOE_EVENTS, FOE_PITCH_JITTER } from "./foe-levels";
+
 const BASE = "/art-src/lab/audio/";
 /** Every event id the lab may play (folders under BASE). */
 export const SOUND_IDS = [
@@ -430,6 +432,58 @@ export class LabSound {
   sprint(id: string, options: TakeOptions = {}): boolean {
     const cue = SPRINT_TAKES[id];
     return cue !== undefined && this.playTake(cue, { ...cue.options, ...options });
+  }
+
+  /** Foe sounds merged into a bucket (counted, not played) and the last start per foe event (s on the lab or context clock). */
+  foeMerged = 0;
+  private readonly foeLast = new Map<string, number>();
+  private readonly foeTurn = new Map<string, number>();
+  private foeSeed = 0x51f15e;
+
+  /** Loads foe events' files with the context (none: all of them; the pack is large, so a scenario names the ones it uses). */
+  prepareFoes(ids: readonly string[] = Object.keys(FOE_EVENTS)): void {
+    this.registerTakes(ids.flatMap((id) => (FOE_EVENTS[id]?.v ?? []).map((file) => ({ file, gain: 1, onset: 0 }))));
+  }
+
+  /**
+   * A foe sound (foe-levels.ts, art-src/lab/audio/foes): shared material composed here, not one fixed file per event: it picks one
+   * of the event's variants (never the one just played) and offsets the pitch by up to ±3 %, then lays its layers
+   * (body, tail) at their offsets. Hits and deaths merge in 40 and 50 ms buckets (the first sounds, the rest count in
+   * `foeMerged`). False: unknown event, merged, or silent.
+   */
+  foe(id: string, options: TakeOptions = {}, layers = true): boolean {
+    const ev = FOE_EVENTS[id];
+    if (ev === undefined) return false;
+    const now = this.recording !== null ? this.clock : this.context?.currentTime ?? 0;
+    if (ev.b !== undefined) {
+      const last = this.foeLast.get(id);
+      if (last !== undefined && now - last < ev.b / 1000) {
+        this.foeMerged += 1;
+        return false;
+      }
+      this.foeLast.set(id, now);
+    }
+    const n = ev.v.length;
+    let k = 0;
+    if (n > 1) {
+      this.foeSeed = (this.foeSeed * 1664525 + 1013904223) >>> 0;
+      const last = this.foeTurn.get(id) ?? -1;
+      k = (this.foeSeed >>> 8) % n;
+      if (k === last) k = (k + 1) % n;
+      this.foeTurn.set(id, k);
+    }
+    this.foeSeed = (this.foeSeed * 1664525 + 1013904223) >>> 0;
+    const jitter = 1 + FOE_PITCH_JITTER * (((this.foeSeed >>> 8) / 0x800000) - 1);
+    const file = ev.v[k]!;
+    const bus: SoundBus = options.bus === "world" || options.bus === "voice" ? options.bus : "combat";
+    const take: FireflyTake = { file, gain: fireflyGain(file, ev.t, bus), onset: 0 };
+    const played = this.playTake(take, { send: ev.loop === true ? 0 : 0.1, ...(ev.g !== undefined ? { group: ev.g } : {}), ...options, rate: (options.rate ?? 1) * jitter });
+    if (layers && ev.l !== undefined) {
+      for (const [layer, offsetMs, gainDb] of ev.l) {
+        this.foe(layer, { ...options, gain: (options.gain ?? 1) * 10 ** (gainDb / 20), delay: (options.delay ?? 0) + offsetMs / 1000 }, false);
+      }
+    }
+    return played;
   }
 
   private twinVariant = 0;

@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChargeFillFx, CHARGE_FILL_ORDER, chargeFillEnabled, chargeFillFrame, type ChargeFillPose } from "../../src/lab/charge-fill-fx";
+import { ChargeFillFx, CHARGE_FILL_ORDER, CHARGE_FILL_RISE_M, CHARGE_FILL_SPAN, chargeFillEnabled, chargeFillFrame, type ChargeFillPose } from "../../src/lab/charge-fill-fx";
 import { FlipbookPlayer, parseFlipbookManifest, setFlipbookKtx2 } from "../../src/view/skills/flipbook";
 
 const elements = ["blood", "dark", "earth", "fire", "ice", "light", "metal", "poison", "star", "thunder", "void", "water", "wind", "wood"];
@@ -107,19 +107,22 @@ describe("caster charge fill", () => {
     }
   });
 
-  it("sits at chest height, spans 1.2 body widths and depth-tests behind the caster", () => {
+  it("lies flat on the ground at the feet, spans CHARGE_FILL_SPAN body widths and depth-tests behind the caster", () => {
     const { fx, word, pose, pool, data, step } = fixture(); fx.sync(word, "fire"); step();
     const p = pool(), pos = p.mesh.geometry.getAttribute("iPos");
-    expect([pos.getX(0), pos.getY(0), pos.getZ(0)]).toEqual([2, expect.closeTo(1.34), 3]);
-    expect(data().getX(0) * p.meta!.aspect).toBeCloseTo(pose.bodyWidth * 1.2);
-    expect(p.mesh.geometry.getAttribute("iLift").getX(0)).toBeLessThan(0);
+    expect([pos.getX(0), pos.getY(0), pos.getZ(0)]).toEqual([2, expect.closeTo(0.1 + CHARGE_FILL_RISE_M), 3]);
+    expect(data().getX(0) * p.meta!.aspect).toBeCloseTo(pose.bodyWidth * CHARGE_FILL_SPAN);
+    // Laid flat (element-clips' ground card), a hair above the ground, a little toward the eye.
+    expect(p.mesh.material.customProgramCacheKey()).toBe("element-ground-card");
+    expect(CHARGE_FILL_RISE_M).toBeGreaterThan(0);
+    expect(p.mesh.geometry.getAttribute("iLift").getX(0)).toBeGreaterThan(0);
     expect(fx.player.group.renderOrder).toBe(CHARGE_FILL_ORDER);
     expect(CHARGE_FILL_ORDER).toBeLessThan(0);
     expect(p.mesh.renderOrder).toBe(CHARGE_FILL_ORDER);
     expect(p.mesh.material.depthTest).toBe(true); expect(p.mesh.material.depthWrite).toBe(false);
     expect(p.mesh.material.fragmentShader).toContain("vxTagKeep");
     pose.x = -3; pose.y = 1; pose.z = 7; step();
-    expect([pos.getX(0), pos.getY(0), pos.getZ(0)]).toEqual([-3, expect.closeTo(2.24), 7]);
+    expect([pos.getX(0), pos.getY(0), pos.getZ(0)]).toEqual([-3, expect.closeTo(1 + CHARGE_FILL_RISE_M), 7]);
   });
 
   it("caps the combined channels at 0.9 during rapid word and element changes", () => {

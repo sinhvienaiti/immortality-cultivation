@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tu Tiên · Perf Stress</title>
+    <link rel="icon" href="data:," />
+    <style>html,body{margin:0;height:100%;background:#0b0f16;overflow:hidden}#ic-lab{position:absolute;inset:0}</style>
+  </head>
+  <body>
+    <!-- Perf stress (docs/work/tasks/perf-stress.md): the skills lab plus src/lab/stress.ts (one lane, ~200 props, 13 walkers; ?auto=1 casts Five Thunders every 6 s). -->
+    <!-- Dev-only skills lab: src/lab/skills-main.ts (not in the build inputs, vite.config.ts). -->
+    <div id="ic-lab"></div>
+    <script type="module" src="/src/lab/stress.ts"></script>
+    <script type="module" src="/src/lab/skills-main.ts"></script>
+  </body>
+</html>
